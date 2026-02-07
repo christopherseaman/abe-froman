@@ -36,8 +36,13 @@ class _ACPClient(Client):
 
     async def request_permission(
         self, options: Any, session_id: str, tool_call: Any, **kwargs: Any
-    ) -> dict:
-        return {"outcome": {"outcome": "approved"}}
+    ) -> Any:
+        from acp.schema import AllowedOutcome, RequestPermissionResponse
+
+        option_id = options[0].id if options else "allow"
+        return RequestPermissionResponse(
+            outcome=AllowedOutcome(option_id=option_id, outcome="selected"),
+        )
 
     async def session_update(
         self, session_id: str, update: Any, **kwargs: Any
@@ -48,9 +53,8 @@ class _ACPClient(Client):
         from acp.schema import AgentMessageChunk, TextContentBlock
 
         if isinstance(update, AgentMessageChunk):
-            for block in getattr(update, "content", []):
-                if isinstance(block, TextContentBlock):
-                    self.accumulator.append(block.text)
+            if isinstance(update.content, TextContentBlock):
+                self.accumulator.append(update.content.text)
 
 
 class ACPBackend:
