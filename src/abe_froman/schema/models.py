@@ -1,0 +1,138 @@
+from __future__ import annotations
+
+from typing import Annotated, Any, Literal, Self
+
+from pydantic import BaseModel, Field, model_validator
+
+
+class PromptExecution(BaseModel):
+    type: Literal["prompt"] = "prompt"
+    prompt_file: str
+
+
+class CommandExecution(BaseModel):
+    type: Literal["command"] = "command"
+    command: str
+    args: list[str] = []
+
+
+class GateOnlyExecution(BaseModel):
+    type: Literal["gate_only"] = "gate_only"
+
+
+Execution = Annotated[
+    PromptExecution | CommandExecution | GateOnlyExecution,
+    Field(discriminator="type"),
+]
+
+
+def _normalize_prompt_shorthand(instance: Any) -> Any:
+    """Convert prompt_file shorthand to PromptExecution.
+
+    Shared by Phase and FinalPhase — both support the prompt_file
+    convenience field that auto-converts to execution.type=prompt.
+    """
+    if instance.prompt_file and instance.execution is None:
+        instance.execution = PromptExecution(prompt_file=instance.prompt_file)
+        instance.prompt_file = None
+    return instance
+
+
+class QualityGate(BaseModel):
+    validator: str
+    threshold: float = Field(ge=0.0, le=1.0)
+    blocking: bool = False
+    max_retries: int | None = None  # None = defer to Settings.max_retries
+
+
+class OutputContract(BaseModel):
+    base_directory: str
+    required_files: list[str] = []
+
+
+class SubphaseTemplate(BaseModel):
+    prompt_file: str
+    quality_gate: QualityGate | None = None
+
+
+class FinalPhase(BaseModel):
+    id: str
+    name: str
+    description: str | None = None
+    prompt_file: str | None = None
+    execution: Execution | None = None
+    quality_gate: QualityGate | None = None
+
+    @model_validator(mode="after")
+    def normalize_prompt_file(self) -> Self:
+        return _normalize_prompt_shorthand(self)
+
+
+class DynamicPhaseConfig(BaseModel):
+    enabled: bool = False
+    manifest_path: str | None = None
+    template: SubphaseTemplate | None = None
+    final_phases: list[FinalPhase] = []
+
+
+class Settings(BaseModel):
+    output_directory: str = "output"
+    max_retries: int = 3
+    default_model: str = "sonnet"
+    executor: str = "stub"
+
+
+class Phase(BaseModel):
+    id: str
+    name: str
+    description: str | None = None
+    model: str | None = None
+    prompt_file: str | None = None
+    execution: Execution | None = None
+    depends_on: list[str] = []
+    quality_gate: QualityGate | None = None
+    output_contract: OutputContract | None = None
+    output_schema: dict[str, Any] | None = None
+    dynamic_subphases: DynamicPhaseConfig | None = None
+
+    @model_validator(mode="after")
+    def normalize_prompt_file(self) -> Self:
+        return _normalize_prompt_shorthand(self)
+
+    def effective_max_retries(self, settings: Settings) -> int:
+        """Resolve max_retries: gate override > settings default."""
+        if self.quality_gate and self.quality_gate.max_retries is not None:
+            return self.quality_gate.max_retries
+        return settings.max_retries
+
+
+class WorkflowConfig(BaseModel):
+    name: str
+    version: str
+    phases: list[Phase]
+    settings: Settings = Settings()
+
+    @model_validator(mode="after")
+    def validate_phase_references(self) -> Self:
+        phase_ids = {p.id for p in self.phases}
+
+        if len(phase_ids) != len(self.phases):
+            seen = set()
+            for p in self.phases:
+                if p.id in seen:
+                    raise ValueError(f"Duplicate phase id: {p.id}")
+                seen.add(p.id)
+
+        for phase in self.phases:
+            for dep in phase.depends_on:
+                if dep == phase.id:
+                    raise ValueError(
+                        f"Phase '{phase.id}' has a self-dependency"
+                    )
+                if dep not in phase_ids:
+                    raise ValueError(
+                        f"Phase '{phase.id}' depends on '{dep}' "
+                        f"which references nonexistent phase"
+                    )
+
+        return self

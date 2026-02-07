@@ -1,0 +1,188 @@
+{
+  "name": "CFRA Default Workflow",
+  "description": "Complete CFRA workflow from input validation through completion",
+  "version": "1.0.0",
+  "executionModes": {
+    "default": "swarm",
+    "gate-default": "swarm",
+    "js-default": "js",
+    
+    "swarm": {
+      "command": "npx claude-flow",
+      "args": ["swarm", "$(cat {tempPromptFile})"],
+      "flags": ["--output-format", "stream-json", "--parallel", "--distributed", "--auto-spawn",
+                "--max-agents", "10", "--mode", "hierarchical", "--strategy", "research"],
+      "promptFormat": "tempfile"
+    },
+    
+    "claude": {
+      "command": "claude",
+      "args": ["$(cat {tempPromptFile})"],
+      "flags": ["--print", "--output-format", "stream-json", "--dangerously-skip-permissions"],
+      "promptFormat": "tempfile"
+    },
+    
+    "js": {
+      "command": "node",
+      "args": ["{scriptFile}"],
+      "flags": [],
+      "promptFormat": "none"
+    }
+  },
+  "phases": [
+    {
+      "id": "phase-0",
+      "name": "Input Validation",
+      "description": "Validate EARS input files and requirements - no output files needed",
+      "command": "node",
+      "args": ["gates/gate-0-input-validator.js"],
+      "outputContract": {
+        "description": "Input validation only - validates ears-outputs/ directory structure and content",
+        "requiredFiles": [],
+        "validationOnly": true
+      },
+      "qualityGate": {
+        "file": "gates/gate-0-input-validator.js",
+        "threshold": 0.8
+      }
+    },
+    {
+      "id": "phase-1",
+      "name": "API & Comparative Research",
+      "description": "Research APIs, competitive analysis, and technical patterns",
+      "promptFile": "phases/phase-1-research.md",
+      "manifestDriven": true,
+      "outputContract": "manifest-driven",
+      "qualityGate": {
+        "file": "gates/gate-1-research-validator.md",
+        "threshold": 0.95
+      }
+    },
+    {
+      "id": "phase-2",
+      "name": "User Story Generation",
+      "description": "Complete user story generation: component analysis → manifest-driven subcomponent stories → gap filling → final summary",
+      "promptFile": "phases/phase-2a-component-analysis.md",
+      "dynamicPhaseGeneration": {
+        "enabled": true,
+        "manifestPath": "prd/user-stories/manifest.json",
+        "subcomponentTemplate": {
+          "promptFile": "phases/phase-2b-subcomponent-template.md",
+          "qualityGate": {
+            "file": "gates/gate-2b-subcomponent-validator.md",
+            "threshold": 0.8
+          }
+        },
+        "finalPhases": [
+          {
+            "id": "gap-analysis",
+            "name": "Gap Analysis & Coverage Enhancement",
+            "description": "Proactively identify coverage gaps and generate additional stories to fill them",
+            "promptFile": "phases/phase-2c-gap-analysis.md",
+            "qualityGate": {
+              "file": "gates/gate-2c-gap-analysis-validator.md",
+              "threshold": 0.85
+            }
+          },
+          {
+            "id": "coverage-validation",
+            "name": "Coverage Validation Gate",
+            "description": "GATE ONLY: Validate SOW coverage ≥90% and User Flow coverage ≥95% - blocks progression if not met",
+            "gateOnly": true,
+            "qualityGate": {
+              "file": "gates/gate-2c-coverage-validator.md",
+              "threshold": 0.9,
+              "blocking": true
+            }
+          },
+          {
+            "id": "final-summary",
+            "name": "Final User Stories Summary",
+            "description": "Generate index.md and prd-summary.md summary documents",
+            "promptFile": "phases/phase-2d-final-summary.md",
+            "qualityGate": {
+              "file": "gates/gate-2b-final-validator.js",
+              "threshold": 0.9
+            }
+          }
+        ],
+        "stopAfterGeneration": true
+      },
+      "qualityGate": {
+        "file": "gates/gate-2a-component-analysis-validator.js",
+        "threshold": 0.9
+      }
+    },
+    {
+      "id": "phase-3-1",
+      "name": "Data Schema Specifications",
+      "description": "Generate database schema with entities, relationships, and constraints",
+      "promptFile": "phases/phase-3-1-data-schema.md"
+    },
+    {
+      "id": "phase-3-2", 
+      "name": "Data In Transit Specifications",
+      "description": "Generate API contracts, event streams, and integration message formats",
+      "promptFile": "phases/phase-3-2-data-in-transit.md"
+    },
+    {
+      "id": "phase-3-3",
+      "name": "Integration Functions Specifications", 
+      "description": "Generate external system integration functions and workflows",
+      "promptFile": "phases/phase-3-3-integration-functions.md"
+    },
+    {
+      "id": "phase-3-4",
+      "name": "UX Specifications",
+      "description": "Generate UI component specifications and user experience workflows", 
+      "promptFile": "phases/phase-3-4-ux-specifications.md"
+    },
+    {
+      "id": "phase-3-5",
+      "name": "Application States Specifications",
+      "description": "Generate state machines and workflow management specifications",
+      "promptFile": "phases/phase-3-5-application-states.md"
+    },
+    {
+      "id": "phase-3-6",
+      "name": "Core Functions Specifications",
+      "description": "Generate business logic and algorithmic function specifications",
+      "promptFile": "phases/phase-3-6-core-functions.md"
+    },
+    {
+      "id": "phase-3-7",
+      "name": "Analytics Specifications",
+      "description": "Generate analytics, reporting, and business intelligence specifications",
+      "promptFile": "phases/phase-3-7-analytics.md"
+    },
+    {
+      "id": "phase-3-8", 
+      "name": "Security Specifications",
+      "description": "Generate security architecture and compliance specifications",
+      "promptFile": "phases/phase-3-8-security.md"
+    },
+    {
+      "id": "phase-4",
+      "name": "Specification Reconciliation & Gap Analysis", 
+      "description": "Reconcile all domain specs, resolve conflicts, and fill gaps for complete coverage",
+      "promptFile": "phases/phase-4-reconciliation.md"
+    },
+    {
+      "id": "phase-5",
+      "name": "Implementation Strategy & Planning",
+      "description": "Create technology-agnostic implementation roadmap with epics and tasks", 
+      "promptFile": "phases/phase-5-implementation-strategy.md"
+    }
+  ],
+  "settings": {
+    "checkInterval": false,
+    "progressMonitoring": false,
+    "outputDirectory": "prd",
+    "namespace": "cfra-production-detached",
+    "enhancedRetrySystem": {
+      "enableFailureContext": true,
+      "maxRetries": 3
+    }
+  }
+}
+

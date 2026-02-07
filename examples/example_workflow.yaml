@@ -1,0 +1,148 @@
+name: "CFRA Default Workflow"
+version: "1.0.0"
+
+phases:
+  - id: phase-0
+    name: "Input Validation"
+    description: "Validate EARS input files and requirements"
+    execution:
+      type: command
+      command: node
+      args: ["gates/gate-0-input-validator.js"]
+    quality_gate:
+      validator: "gates/gate-0-input-validator.js"
+      threshold: 0.8
+
+  - id: phase-1
+    name: "API & Comparative Research"
+    description: "Research APIs, competitive analysis, and technical patterns"
+    model: "sonnet"
+    prompt_file: "phases/phase-1-research.md"
+    depends_on: ["phase-0"]
+    quality_gate:
+      validator: "gates/gate-1-research-validator.md"
+      threshold: 0.95
+    output_contract:
+      base_directory: "prd/research/"
+      required_files: ["api-research.md", "competitive-analysis.md"]
+
+  - id: phase-2
+    name: "User Story Generation"
+    description: "Component analysis, manifest-driven subcomponent stories, gap filling, summary"
+    prompt_file: "phases/phase-2a-component-analysis.md"
+    depends_on: ["phase-1"]
+    quality_gate:
+      validator: "gates/gate-2a-component-analysis-validator.js"
+      threshold: 0.9
+    output_contract:
+      base_directory: "prd/user-stories/"
+      required_files: ["manifest.json"]
+    dynamic_subphases:
+      enabled: true
+      manifest_path: "prd/user-stories/manifest.json"
+      template:
+        prompt_file: "phases/phase-2b-subcomponent-template.md"
+        quality_gate:
+          validator: "gates/gate-2b-subcomponent-validator.md"
+          threshold: 0.8
+      final_phases:
+        - id: gap-analysis
+          name: "Gap Analysis & Coverage Enhancement"
+          prompt_file: "phases/phase-2c-gap-analysis.md"
+          quality_gate:
+            validator: "gates/gate-2c-gap-analysis-validator.md"
+            threshold: 0.85
+        - id: coverage-validation
+          name: "Coverage Validation Gate"
+          execution:
+            type: gate_only
+          quality_gate:
+            validator: "gates/gate-2c-coverage-validator.md"
+            threshold: 0.9
+            blocking: true
+        - id: final-summary
+          name: "Final User Stories Summary"
+          prompt_file: "phases/phase-2d-final-summary.md"
+          quality_gate:
+            validator: "gates/gate-2b-final-validator.js"
+            threshold: 0.9
+
+  - id: phase-3-1
+    name: "Data Schema Specifications"
+    description: "Generate database schema with entities, relationships, and constraints"
+    prompt_file: "phases/phase-3-1-data-schema.md"
+    depends_on: ["phase-2"]
+
+  - id: phase-3-2
+    name: "Data In Transit Specifications"
+    description: "Generate API contracts, event streams, and integration message formats"
+    prompt_file: "phases/phase-3-2-data-in-transit.md"
+    depends_on: ["phase-2"]
+
+  - id: phase-3-3
+    name: "Integration Functions Specifications"
+    description: "Generate external system integration functions and workflows"
+    prompt_file: "phases/phase-3-3-integration-functions.md"
+    depends_on: ["phase-2"]
+
+  - id: phase-3-4
+    name: "UX Specifications"
+    description: "Generate UI component specifications and user experience workflows"
+    prompt_file: "phases/phase-3-4-ux-specifications.md"
+    depends_on: ["phase-2"]
+
+  - id: phase-3-5
+    name: "Application States Specifications"
+    description: "Generate state machines and workflow management specifications"
+    prompt_file: "phases/phase-3-5-application-states.md"
+    depends_on: ["phase-2"]
+
+  - id: phase-3-6
+    name: "Core Functions Specifications"
+    description: "Generate business logic and algorithmic function specifications"
+    prompt_file: "phases/phase-3-6-core-functions.md"
+    depends_on: ["phase-2"]
+
+  - id: phase-3-7
+    name: "Analytics Specifications"
+    description: "Generate analytics, reporting, and business intelligence specifications"
+    prompt_file: "phases/phase-3-7-analytics.md"
+    depends_on: ["phase-2"]
+
+  - id: phase-3-8
+    name: "Security Specifications"
+    description: "Generate security architecture and compliance specifications"
+    prompt_file: "phases/phase-3-8-security.md"
+    depends_on: ["phase-2"]
+
+  - id: phase-4
+    name: "Specification Reconciliation & Gap Analysis"
+    description: "Reconcile all domain specs, resolve conflicts, and fill gaps"
+    prompt_file: "phases/phase-4-reconciliation.md"
+    depends_on:
+      - phase-3-1
+      - phase-3-2
+      - phase-3-3
+      - phase-3-4
+      - phase-3-5
+      - phase-3-6
+      - phase-3-7
+      - phase-3-8
+
+  - id: phase-5
+    name: "Implementation Strategy & Planning"
+    description: "Create technology-agnostic implementation roadmap with epics and tasks"
+    prompt_file: "phases/phase-5-implementation-strategy.md"
+    depends_on: ["phase-4"]
+    output_schema:
+      type: object
+      properties:
+        epics:
+          type: array
+        timeline:
+          type: object
+
+settings:
+  output_directory: "prd"
+  max_retries: 3
+  default_model: "sonnet"
