@@ -21,6 +21,7 @@ class WorkflowState(TypedDict):
     phase_structured_outputs: Annotated[dict[str, Any], _merge_dicts]
     gate_scores: Annotated[dict[str, float], _merge_dicts]
     retries: Annotated[dict[str, int], _merge_dicts]
+    subphase_outputs: Annotated[dict[str, Any], _merge_dicts]
     errors: Annotated[list[dict], operator.add]
     workdir: str
     dry_run: bool
@@ -45,6 +46,7 @@ def make_initial_state(
         "phase_structured_outputs": {},
         "gate_scores": {},
         "retries": {},
+        "subphase_outputs": {},
         "errors": [],
         "workdir": workdir,
         "dry_run": dry_run,
