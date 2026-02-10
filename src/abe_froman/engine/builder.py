@@ -182,6 +182,8 @@ def _make_gate_router(phase: Phase, max_retries: int):
             return "pass"
         elif retries < max_retries:
             return "retry"
+        elif not phase.quality_gate.blocking:
+            return "pass"
         else:
             return "fail"
 

@@ -1,0 +1,26 @@
+name: "Joke Generator"
+version: "0.1.0"
+
+phases:
+  - id: generate
+    name: "Generate Jokes"
+    prompt_file: "examples/jokes/generate.md"
+    output_schema:
+      type: object
+      properties:
+        jokes:
+          type: array
+    quality_gate:
+      validator: "examples/jokes/gates/validate_jokes.py"
+      threshold: 1.0
+      blocking: true
+      max_retries: 2
+
+  - id: select
+    name: "Select Best Joke"
+    prompt_file: "examples/jokes/select.md"
+    depends_on: ["generate"]
+
+settings:
+  default_model: "sonnet"
+  executor: "acp"

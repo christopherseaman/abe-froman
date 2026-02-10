@@ -13,8 +13,12 @@ async def evaluate_gate_script(
     validator_path: str,
     phase_id: str,
     workdir: str,
+    phase_output: str = "",
 ) -> float:
-    """Run a .py or .js validator script and parse its score from stdout."""
+    """Run a .py or .js validator script and parse its score from stdout.
+
+    The phase output is passed via stdin so validators can inspect it.
+    """
     path = Path(validator_path)
     suffix = path.suffix.lower()
 
@@ -25,15 +29,20 @@ async def evaluate_gate_script(
     else:
         raise ValueError(f"Unsupported validator type: {suffix}")
 
+    import os
+
+    env = {**os.environ, "PHASE_ID": phase_id}
+
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
+            stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=workdir,
-            env={"PHASE_ID": phase_id},
+            env=env,
         )
-        stdout, stderr = await proc.communicate()
+        stdout, stderr = await proc.communicate(input=phase_output.encode())
     except (FileNotFoundError, OSError):
         return 0.0
 
@@ -73,7 +82,7 @@ async def evaluate_gate(
     suffix = path.suffix.lower()
 
     if suffix in (".py", ".js"):
-        return await evaluate_gate_script(gate.validator, phase_id, workdir)
+        return await evaluate_gate_script(gate.validator, phase_id, workdir, phase_output)
     elif suffix == ".md":
         # Stub: prompt-based validation will be implemented with Claude executor
         return 1.0
