@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 import pytest
@@ -277,6 +278,336 @@ class TestGateNodePassFail:
 # ---------------------------------------------------------------------------
 # Integration: multi-step joke workflow with ACP + deterministic gate
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# JS validator and environment variable tests
+# ---------------------------------------------------------------------------
+
+
+class TestGateJSValidator:
+    @pytest.mark.asyncio
+    async def test_js_validator_returns_score(self, tmp_path):
+        import shutil
+
+        if shutil.which("node") is None:
+            pytest.skip("node not available")
+        script = tmp_path / "validator.js"
+        script.write_text('process.stdout.write("0.85")')
+        gate = QualityGate(validator=str(script), threshold=0.8)
+        score = await evaluate_gate(gate, "p1", workdir=str(tmp_path))
+        assert score == 0.85
+
+    @pytest.mark.asyncio
+    async def test_js_validator_not_found(self):
+        gate = QualityGate(validator="/tmp/does_not_exist_99999.js", threshold=0.8)
+        score = await evaluate_gate(gate, "p1")
+        assert score == 0.0
+
+
+class TestGateEnvironment:
+    @pytest.mark.asyncio
+    async def test_phase_id_env_var(self, tmp_path):
+        script = tmp_path / "env_check.py"
+        script.write_text(
+            "import os\n"
+            "print('1.0' if os.environ.get('PHASE_ID') == 'my-phase' else '0.0')\n"
+        )
+        gate = QualityGate(validator=str(script), threshold=0.8)
+        score = await evaluate_gate(gate, "my-phase", workdir=str(tmp_path))
+        assert score == 1.0
+
+    @pytest.mark.asyncio
+    async def test_workflow_name_env_var(self, tmp_path):
+        script = tmp_path / "env_check.py"
+        script.write_text(
+            "import os\n"
+            "print('1.0' if os.environ.get('WORKFLOW_NAME') == 'test-wf' else '0.0')\n"
+        )
+        gate = QualityGate(validator=str(script), threshold=0.8)
+        score = await evaluate_gate(
+            gate, "p1", workdir=str(tmp_path), workflow_name="test-wf",
+        )
+        assert score == 1.0
+
+    @pytest.mark.asyncio
+    async def test_attempt_number_env_var(self, tmp_path):
+        script = tmp_path / "env_check.py"
+        script.write_text(
+            "import os\n"
+            "print('1.0' if os.environ.get('ATTEMPT_NUMBER') == '1' else '0.0')\n"
+        )
+        gate = QualityGate(validator=str(script), threshold=0.8)
+        score = await evaluate_gate(
+            gate, "p1", workdir=str(tmp_path), attempt_number=1,
+        )
+        assert score == 1.0
+
+    @pytest.mark.asyncio
+    async def test_workdir_env_var(self, tmp_path):
+        script = tmp_path / "env_check.py"
+        script.write_text(
+            "import os\n"
+            f"print('1.0' if os.environ.get('WORKDIR') == '{tmp_path}' else '0.0')\n"
+        )
+        gate = QualityGate(validator=str(script), threshold=0.8)
+        score = await evaluate_gate(gate, "p1", workdir=str(tmp_path))
+        assert score == 1.0
+
+    @pytest.mark.asyncio
+    async def test_attempt_number_on_retry(self, tmp_path):
+        """Integration: gate fails then passes, verify ATTEMPT_NUMBER increments."""
+        attempt_counter = tmp_path / "attempt.txt"
+        attempt_counter.write_text("0")
+        counter_script = tmp_path / "run.py"
+        counter_script.write_text(
+            f"count = int(open('{attempt_counter}').read().strip())\n"
+            f"open('{attempt_counter}', 'w').write(str(count + 1))\n"
+            f"print('output')\n"
+        )
+        # Validator passes only when ATTEMPT_NUMBER is "2" (i.e., first retry)
+        validator = tmp_path / "validator.py"
+        validator.write_text(
+            "import os\n"
+            "attempt = os.environ.get('ATTEMPT_NUMBER', '0')\n"
+            "print('1.0' if attempt == '2' else '0.0')\n"
+        )
+        config = make_config(
+            [
+                {
+                    "id": "a",
+                    "name": "A",
+                    "execution": {
+                        "type": "command",
+                        "command": "python3",
+                        "args": [str(counter_script)],
+                    },
+                    "quality_gate": {
+                        "validator": str(validator),
+                        "threshold": 1.0,
+                        "blocking": True,
+                        "max_retries": 3,
+                    },
+                },
+            ],
+        )
+        executor = DispatchExecutor(workdir=str(tmp_path))
+        graph = build_workflow_graph(config, executor)
+        result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
+
+        assert "a" in result["completed_phases"]
+        assert result["gate_scores"]["a"] == 1.0
+
+    @pytest.mark.asyncio
+    async def test_explicit_nonzero_exit(self, tmp_path):
+        script = tmp_path / "exit1.py"
+        script.write_text("import sys; sys.exit(1)")
+        gate = QualityGate(validator=str(script), threshold=0.8)
+        score = await evaluate_gate(gate, "p1", workdir=str(tmp_path))
+        assert score == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Integration: multi-step joke workflow with ACP + deterministic gate
+# ---------------------------------------------------------------------------
+
+
+class TestRetryBackoff:
+    """Tests for stepped retry backoff delays."""
+
+    def test_get_retry_delay_empty_list(self):
+        from abe_froman.engine.builder import _get_retry_delay
+
+        assert _get_retry_delay(1, []) == 0.0
+        assert _get_retry_delay(5, []) == 0.0
+
+    def test_get_retry_delay_single_element(self):
+        from abe_froman.engine.builder import _get_retry_delay
+
+        assert _get_retry_delay(1, [10.0]) == 10.0
+        assert _get_retry_delay(2, [10.0]) == 10.0
+        assert _get_retry_delay(5, [10.0]) == 10.0
+
+    def test_get_retry_delay_multiple_elements(self):
+        from abe_froman.engine.builder import _get_retry_delay
+
+        backoff = [10.0, 30.0, 60.0]
+        assert _get_retry_delay(1, backoff) == 10.0
+        assert _get_retry_delay(2, backoff) == 30.0
+        assert _get_retry_delay(3, backoff) == 60.0
+        assert _get_retry_delay(4, backoff) == 60.0  # clamps to last
+
+    @pytest.mark.asyncio
+    async def test_retry_backoff_delays_applied(self, tmp_path, monkeypatch):
+        """Verify asyncio.sleep is called with correct delay values on retry."""
+        validator = tmp_path / "validator.py"
+        # Fail first two attempts, pass on third
+        validator.write_text(
+            "import sys, os\n"
+            "attempt = int(os.environ.get('ATTEMPT', '0'))\n"
+            "print('1.0' if attempt >= 2 else '0.0')\n"
+        )
+
+        # Track attempt count via a file
+        attempt_counter = tmp_path / "attempt.txt"
+        attempt_counter.write_text("0")
+        counter_script = tmp_path / "run.py"
+        counter_script.write_text(
+            f"count = int(open('{attempt_counter}').read().strip())\n"
+            f"open('{attempt_counter}', 'w').write(str(count + 1))\n"
+            f"print('output')\n"
+        )
+
+        # Validator that reads the attempt file
+        validator.write_text(
+            f"count = int(open('{attempt_counter}').read().strip())\n"
+            "print('1.0' if count >= 3 else '0.0')\n"
+        )
+
+        config = make_config(
+            [
+                {
+                    "id": "a",
+                    "name": "A",
+                    "execution": {
+                        "type": "command",
+                        "command": "python3",
+                        "args": [str(counter_script)],
+                    },
+                    "quality_gate": {
+                        "validator": str(validator),
+                        "threshold": 1.0,
+                        "blocking": True,
+                        "max_retries": 3,
+                    },
+                },
+            ],
+            retry_backoff=[0.1, 0.2],
+        )
+
+        sleep_calls = []
+        original_sleep = asyncio.sleep
+
+        async def mock_sleep(delay):
+            sleep_calls.append(delay)
+            await original_sleep(0)  # yield control without waiting
+
+        monkeypatch.setattr(asyncio, "sleep", mock_sleep)
+
+        executor = DispatchExecutor(workdir=str(tmp_path))
+        graph = build_workflow_graph(config, executor)
+        result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
+
+        assert "a" in result["completed_phases"]
+        # Two retries before passing: delay 0.1 for retry 1, 0.2 for retry 2
+        assert sleep_calls == [0.1, 0.2]
+
+    @pytest.mark.asyncio
+    async def test_retry_backoff_clamps_to_last_value(self, tmp_path, monkeypatch):
+        """With single-element backoff and multiple retries, all use that value."""
+        attempt_counter = tmp_path / "attempt.txt"
+        attempt_counter.write_text("0")
+        counter_script = tmp_path / "run.py"
+        counter_script.write_text(
+            f"count = int(open('{attempt_counter}').read().strip())\n"
+            f"open('{attempt_counter}', 'w').write(str(count + 1))\n"
+            f"print('output')\n"
+        )
+        validator = tmp_path / "validator.py"
+        validator.write_text(
+            f"count = int(open('{attempt_counter}').read().strip())\n"
+            "print('1.0' if count >= 4 else '0.0')\n"
+        )
+
+        config = make_config(
+            [
+                {
+                    "id": "a",
+                    "name": "A",
+                    "execution": {
+                        "type": "command",
+                        "command": "python3",
+                        "args": [str(counter_script)],
+                    },
+                    "quality_gate": {
+                        "validator": str(validator),
+                        "threshold": 1.0,
+                        "blocking": True,
+                        "max_retries": 4,
+                    },
+                },
+            ],
+            retry_backoff=[0.1],
+        )
+
+        sleep_calls = []
+        original_sleep = asyncio.sleep
+
+        async def mock_sleep(delay):
+            sleep_calls.append(delay)
+            await original_sleep(0)
+
+        monkeypatch.setattr(asyncio, "sleep", mock_sleep)
+
+        executor = DispatchExecutor(workdir=str(tmp_path))
+        graph = build_workflow_graph(config, executor)
+        result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
+
+        assert "a" in result["completed_phases"]
+        assert sleep_calls == [0.1, 0.1, 0.1]
+
+    @pytest.mark.asyncio
+    async def test_empty_backoff_no_delay(self, tmp_path, monkeypatch):
+        """Default empty backoff means no sleep calls."""
+        attempt_counter = tmp_path / "attempt.txt"
+        attempt_counter.write_text("0")
+        counter_script = tmp_path / "run.py"
+        counter_script.write_text(
+            f"count = int(open('{attempt_counter}').read().strip())\n"
+            f"open('{attempt_counter}', 'w').write(str(count + 1))\n"
+            f"print('output')\n"
+        )
+        validator = tmp_path / "validator.py"
+        validator.write_text(
+            f"count = int(open('{attempt_counter}').read().strip())\n"
+            "print('1.0' if count >= 2 else '0.0')\n"
+        )
+
+        config = make_config(
+            [
+                {
+                    "id": "a",
+                    "name": "A",
+                    "execution": {
+                        "type": "command",
+                        "command": "python3",
+                        "args": [str(counter_script)],
+                    },
+                    "quality_gate": {
+                        "validator": str(validator),
+                        "threshold": 1.0,
+                        "blocking": True,
+                        "max_retries": 2,
+                    },
+                },
+            ],
+        )
+
+        sleep_calls = []
+        original_sleep = asyncio.sleep
+
+        async def mock_sleep(delay):
+            sleep_calls.append(delay)
+            await original_sleep(0)
+
+        monkeypatch.setattr(asyncio, "sleep", mock_sleep)
+
+        executor = DispatchExecutor(workdir=str(tmp_path))
+        graph = build_workflow_graph(config, executor)
+        result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
+
+        assert "a" in result["completed_phases"]
+        assert sleep_calls == []
 
 
 class TestJokeWorkflowIntegration:

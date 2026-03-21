@@ -10,6 +10,13 @@ class PromptBackendResult:
 
     output: str
     structured_output: dict[str, Any] | None = None
+    tokens_used: dict[str, int] | None = None
+
+
+class OverloadError(Exception):
+    """Raised by a PromptBackend when the API returns 529/overloaded."""
+
+    pass
 
 
 @runtime_checkable

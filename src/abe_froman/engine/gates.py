@@ -14,6 +14,8 @@ async def evaluate_gate_script(
     phase_id: str,
     workdir: str,
     phase_output: str = "",
+    workflow_name: str = "",
+    attempt_number: int = 1,
 ) -> float:
     """Run a .py or .js validator script and parse its score from stdout.
 
@@ -31,7 +33,13 @@ async def evaluate_gate_script(
 
     import os
 
-    env = {**os.environ, "PHASE_ID": phase_id}
+    env = {
+        **os.environ,
+        "PHASE_ID": phase_id,
+        "WORKFLOW_NAME": workflow_name,
+        "ATTEMPT_NUMBER": str(attempt_number),
+        "WORKDIR": workdir,
+    }
 
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -71,6 +79,8 @@ async def evaluate_gate(
     phase_id: str,
     workdir: str = ".",
     phase_output: str = "",
+    workflow_name: str = "",
+    attempt_number: int = 1,
 ) -> float:
     """Evaluate a quality gate and return its score.
 
@@ -82,7 +92,10 @@ async def evaluate_gate(
     suffix = path.suffix.lower()
 
     if suffix in (".py", ".js"):
-        return await evaluate_gate_script(gate.validator, phase_id, workdir, phase_output)
+        return await evaluate_gate_script(
+            gate.validator, phase_id, workdir, phase_output,
+            workflow_name=workflow_name, attempt_number=attempt_number,
+        )
     elif suffix == ".md":
         # Stub: prompt-based validation will be implemented with Claude executor
         return 1.0

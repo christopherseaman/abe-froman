@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
 from abe_froman.schema.models import Phase
@@ -12,6 +12,7 @@ class PhaseResult:
     output: str = ""
     error: str | None = None
     structured_output: dict[str, Any] | None = None
+    tokens_used: dict[str, int] | None = None
 
 
 @runtime_checkable

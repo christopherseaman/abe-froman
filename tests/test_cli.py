@@ -1,7 +1,10 @@
+import json
+
 import pytest
 from click.testing import CliRunner
 
 from abe_froman.cli.main import cli
+from abe_froman.engine.persistence import STATE_FILENAME
 
 
 @pytest.fixture
@@ -109,3 +112,111 @@ class TestRunCommand:
         result = runner.invoke(cli, ["run", str(config), "--workdir", str(tmp_path)])
         assert result.exit_code != 0
         assert "Failed:" in result.output
+
+
+class TestTokenSummary:
+    def test_token_summary_displayed(self, runner, tmp_path):
+        """Token usage from a prompt-stub phase should show in CLI output."""
+        config = tmp_path / "workflow.yaml"
+        config.write_text(
+            "name: Test\nversion: '1.0'\nphases:\n"
+            "  - id: a\n    name: A\n    prompt_file: t.md\n"
+        )
+        (tmp_path / "t.md").write_text("hello")
+
+        result = runner.invoke(
+            cli, ["run", str(config), "--workdir", str(tmp_path)]
+        )
+        assert result.exit_code == 0
+        # Stub backend returns None for tokens_used, so no token line
+        assert "Tokens:" not in result.output
+
+    def test_no_token_summary_for_command_phases(self, runner, tmp_path):
+        config = tmp_path / "workflow.yaml"
+        config.write_text(
+            "name: Test\nversion: '1.0'\nphases:\n"
+            "  - id: a\n    name: A\n"
+            "    execution:\n      type: command\n      command: echo\n      args: ['hi']\n"
+        )
+        result = runner.invoke(
+            cli, ["run", str(config), "--workdir", str(tmp_path)]
+        )
+        assert result.exit_code == 0
+        assert "Tokens:" not in result.output
+
+
+class TestRunOptions:
+    def test_executor_unknown_raises(self, runner, tmp_path):
+        config = tmp_path / "simple.yaml"
+        config.write_text(
+            "name: Test\nversion: '1.0'\nphases:\n"
+            "  - id: phase-1\n    name: Phase 1\n"
+            "    execution:\n      type: command\n      command: echo\n      args: ['hi']\n"
+        )
+        result = runner.invoke(
+            cli, ["run", str(config), "--executor", "bogus", "--workdir", str(tmp_path)]
+        )
+        assert result.exit_code != 0
+
+
+class TestResumeCommand:
+    def _simple_config(self, tmp_path):
+        config = tmp_path / "simple.yaml"
+        config.write_text(
+            "name: Test\nversion: '1.0'\nphases:\n"
+            "  - id: a\n    name: A\n"
+            "    execution:\n      type: command\n      command: echo\n      args: ['hi']\n"
+        )
+        return config
+
+    def test_resume_without_state_file_errors(self, runner, tmp_path):
+        config = self._simple_config(tmp_path)
+        result = runner.invoke(
+            cli, ["run", str(config), "--resume", "--workdir", str(tmp_path)]
+        )
+        assert result.exit_code != 0
+        assert "No state file" in result.output
+
+    def test_start_without_state_file_errors(self, runner, tmp_path):
+        config = self._simple_config(tmp_path)
+        result = runner.invoke(
+            cli, ["run", str(config), "--start", "a", "--workdir", str(tmp_path)]
+        )
+        assert result.exit_code != 0
+        assert "state file" in result.output
+
+    def test_resume_and_start_mutually_exclusive(self, runner, tmp_path):
+        config = self._simple_config(tmp_path)
+        result = runner.invoke(
+            cli, ["run", str(config), "--resume", "--start", "a",
+                  "--workdir", str(tmp_path)]
+        )
+        assert result.exit_code != 0
+        assert "Cannot use both" in result.output
+
+    def test_resume_prints_cached_count(self, runner, tmp_path):
+        config = self._simple_config(tmp_path)
+        # Create a state file with one completed phase
+        (tmp_path / STATE_FILENAME).write_text(json.dumps({
+            "version": 1,
+            "config_name": "Test",
+            "config_version": "1.0",
+            "saved_at": "2026-01-01T00:00:00Z",
+            "state": {
+                "completed_phases": ["a"],
+                "failed_phases": [],
+                "phase_outputs": {"a": "hi"},
+                "phase_structured_outputs": {},
+                "gate_scores": {},
+                "retries": {},
+                "subphase_outputs": {},
+                "errors": [],
+                "workdir": str(tmp_path),
+                "dry_run": False,
+            },
+        }))
+        result = runner.invoke(
+            cli, ["run", str(config), "--resume", "--workdir", str(tmp_path)]
+        )
+        assert result.exit_code == 0
+        assert "Resuming: 1 phases already completed" in result.output

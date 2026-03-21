@@ -3,29 +3,45 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from abe_froman.executor.prompt_backend import PromptBackendResult
+from acp import spawn_agent_process, text_block
+from acp.interfaces import Client
 
-try:
-    from acp import spawn_agent_process, text_block
-    from acp.interfaces import Client
+from abe_froman.executor.prompt_backend import OverloadError, PromptBackendResult
 
-    HAS_ACP = True
-except ImportError:
-    HAS_ACP = False
-    Client = object  # type: ignore[assignment, misc]
+
+def _is_overload_error(exc: Exception) -> bool:
+    """Detect 529/overload errors from exception message or attributes."""
+    msg = str(exc).lower()
+    if "529" in msg or "overload" in msg:
+        return True
+    status = getattr(exc, "status_code", None) or getattr(exc, "status", None)
+    if status == 529:
+        return True
+    return False
 
 
 class _ResponseAccumulator:
-    """Collects text chunks from session_update callbacks."""
+    """Collects text chunks and usage metadata from session_update callbacks."""
 
     def __init__(self) -> None:
         self.chunks: list[str] = []
+        self.input_tokens: int = 0
+        self.output_tokens: int = 0
 
     def append(self, text: str) -> None:
         self.chunks.append(text)
 
+    def add_usage(self, input_tokens: int, output_tokens: int) -> None:
+        self.input_tokens += input_tokens
+        self.output_tokens += output_tokens
+
     def text(self) -> str:
         return "".join(self.chunks)
+
+    def tokens_used(self) -> dict[str, int] | None:
+        if self.input_tokens or self.output_tokens:
+            return {"input": self.input_tokens, "output": self.output_tokens}
+        return None
 
 
 class _ACPClient(Client):
@@ -49,12 +65,17 @@ class _ACPClient(Client):
     ) -> None:
         if self.accumulator is None:
             return
-        # Import lazily to avoid issues when ACP is not installed
         from acp.schema import AgentMessageChunk, TextContentBlock
 
         if isinstance(update, AgentMessageChunk):
             if isinstance(update.content, TextContentBlock):
                 self.accumulator.append(update.content.text)
+            usage = getattr(update, "usage", None)
+            if usage is not None:
+                inp = getattr(usage, "input_tokens", 0) or 0
+                out = getattr(usage, "output_tokens", 0) or 0
+                if inp or out:
+                    self.accumulator.add_usage(inp, out)
 
 
 class ACPBackend:
@@ -69,11 +90,6 @@ class ACPBackend:
         program: str = "npx",
         args: tuple[str, ...] = ("@zed-industries/claude-code-acp",),
     ):
-        if not HAS_ACP:
-            raise ImportError(
-                "agent-client-protocol is not installed. "
-                "Install with: uv add agent-client-protocol"
-            )
         self._program = program
         self._args = args
         self._client = _ACPClient()
@@ -105,15 +121,20 @@ class ACPBackend:
         accumulator = _ResponseAccumulator()
         self._client.accumulator = accumulator
 
-        await self._conn.prompt(
-            session_id=self._session_id,
-            prompt=[text_block(prompt)],
-        )
+        try:
+            await self._conn.prompt(
+                session_id=self._session_id,
+                prompt=[text_block(prompt)],
+            )
+        except Exception as e:
+            if _is_overload_error(e):
+                raise OverloadError(str(e)) from e
+            raise
 
         output = accumulator.text()
         self._client.accumulator = None
 
-        return PromptBackendResult(output=output)
+        return PromptBackendResult(output=output, tokens_used=accumulator.tokens_used())
 
     async def close(self) -> None:
         if self._ctx_manager is not None:

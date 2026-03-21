@@ -7,9 +7,11 @@ import click
 import yaml
 
 from abe_froman.engine.builder import build_workflow_graph
+from abe_froman.engine.persistence import load_state, state_file_path
+from abe_froman.engine.resume import prepare_resume_state, prepare_start_state
+from abe_froman.engine.runner import run_workflow
 from abe_froman.engine.state import make_initial_state
 from abe_froman.executor.dispatch import DispatchExecutor
-from abe_froman.executor.mock import MockExecutor
 from abe_froman.schema.models import WorkflowConfig
 
 
@@ -83,16 +85,20 @@ def graph(config_file: str):
 @click.option(
     "--dry-run", is_flag=True, help="Validate and trace without executing"
 )
-@click.option("--phase", "-p", help="Run a specific phase only")
 @click.option("--model", "-m", help="Override default model")
 @click.option("--executor", "-e", help="Prompt executor backend (stub, acp)")
+@click.option("--resume", is_flag=True, help="Resume from last saved state")
+@click.option("--start", "start_phase", help="Start from a specific phase")
+@click.option("--log", "log_file", type=click.Path(), help="JSONL log output file")
 def run(
     config_file: str,
     workdir: str,
     dry_run: bool,
-    phase: str | None,
     model: str | None,
     executor: str | None,
+    resume: bool,
+    start_phase: str | None,
+    log_file: str | None,
 ):
     """Run a workflow from a configuration file."""
     try:
@@ -100,13 +106,44 @@ def run(
     except Exception as e:
         raise click.ClickException(str(e))
 
+    if resume and start_phase:
+        raise click.ClickException("Cannot use both --resume and --start")
+
     if model:
         config.settings.default_model = model
 
     executor_type = executor or config.settings.executor
 
+    if resume:
+        saved = load_state(workdir)
+        if saved is None:
+            raise click.ClickException(
+                f"No state file found at {state_file_path(workdir)}"
+            )
+        state = prepare_resume_state(saved, config, workdir)
+        click.echo(
+            f"Resuming: {len(state['completed_phases'])} phases already completed"
+        )
+    elif start_phase:
+        saved = load_state(workdir)
+        if saved is None:
+            raise click.ClickException(
+                f"--start requires a prior state file at {state_file_path(workdir)}"
+            )
+        state = prepare_start_state(saved, config, start_phase, workdir)
+        click.echo(
+            f"Starting from {start_phase}: "
+            f"{len(state['completed_phases'])} upstream phases cached"
+        )
+    else:
+        state = make_initial_state(
+            workflow_name=config.name,
+            workdir=workdir,
+            dry_run=dry_run,
+        )
+
     if dry_run:
-        executor_obj = MockExecutor()
+        executor_obj = None
     else:
         from abe_froman.executor.backends.factory import create_prompt_backend
 
@@ -118,20 +155,11 @@ def run(
         )
 
     compiled = build_workflow_graph(config, executor_obj)
-
-    state = make_initial_state(
-        workflow_name=config.name,
-        workdir=workdir,
-        dry_run=dry_run,
-        current_phase_id=phase,
+    result = asyncio.run(
+        run_workflow(compiled, state, config, persist=not dry_run, log_file=log_file)
     )
 
-    # TODO: LangGraph checkpointing for workflow resume on failure
-    #   builder.compile(checkpointer=SqliteSaver(...)) enables resume from
-    #   last successful state. Requires thread_id tracking per run.
-    result = asyncio.run(compiled.ainvoke(state))
-
-    if hasattr(executor_obj, "close"):
+    if executor_obj is not None:
         asyncio.run(executor_obj.close())
 
     completed = result.get("completed_phases", [])
@@ -142,6 +170,12 @@ def run(
         click.echo(f"Dry run completed: {len(completed)} phases traced")
     else:
         click.echo(f"Completed: {len(completed)} phases")
+
+    token_usage = result.get("token_usage", {})
+    if token_usage:
+        total_in = sum(t.get("input", 0) for t in token_usage.values())
+        total_out = sum(t.get("output", 0) for t in token_usage.values())
+        click.echo(f"  Tokens: {total_in + total_out:,} total ({total_in:,} in, {total_out:,} out)")
 
     if completed:
         click.echo(f"  Phases: {', '.join(completed)}")

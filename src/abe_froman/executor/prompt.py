@@ -6,8 +6,21 @@ from pathlib import Path
 from typing import Any
 
 from abe_froman.executor.base import PhaseResult
-from abe_froman.executor.prompt_backend import PromptBackend
+from abe_froman.executor.prompt_backend import OverloadError, PromptBackend
 from abe_froman.schema.models import Phase, PromptExecution, Settings
+
+MODEL_DOWNGRADE_CHAIN = ["opus", "sonnet", "haiku"]
+
+
+def downgrade_model(current: str) -> str | None:
+    """Return the next model in the downgrade chain, or None if at the bottom."""
+    try:
+        idx = MODEL_DOWNGRADE_CHAIN.index(current)
+    except ValueError:
+        return None
+    if idx + 1 < len(MODEL_DOWNGRADE_CHAIN):
+        return MODEL_DOWNGRADE_CHAIN[idx + 1]
+    return None
 
 
 def render_template(template: str, context: dict[str, Any]) -> str:
@@ -63,11 +76,36 @@ class PromptExecutor:
                 error=f"Prompt file not found: {prompt_path}",
             )
 
+        if self._settings.preamble_file:
+            preamble_path = Path(self._workdir) / self._settings.preamble_file
+            try:
+                preamble = preamble_path.read_text()
+                template = preamble + "\n\n" + template
+            except FileNotFoundError:
+                return PhaseResult(
+                    success=False,
+                    error=f"Preamble file not found: {preamble_path}",
+                )
+
         rendered = render_template(template, context)
         model = resolve_model(phase, self._settings)
 
+        current_model = model
         try:
-            result = await self._backend.send_prompt(rendered, model, self._workdir)
+            while True:
+                try:
+                    result = await self._backend.send_prompt(
+                        rendered, current_model, self._workdir
+                    )
+                    break
+                except OverloadError:
+                    next_model = downgrade_model(current_model)
+                    if next_model is None:
+                        return PhaseResult(
+                            success=False,
+                            error=f"API overloaded, exhausted model chain (last: {current_model})",
+                        )
+                    current_model = next_model
         except Exception as e:
             return PhaseResult(success=False, error=f"Backend error: {e}")
 
@@ -82,6 +120,7 @@ class PromptExecutor:
             success=True,
             output=result.output,
             structured_output=structured,
+            tokens_used=result.tokens_used,
         )
 
     async def close(self) -> None:

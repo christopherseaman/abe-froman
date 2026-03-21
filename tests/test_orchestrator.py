@@ -11,29 +11,7 @@ from abe_froman.engine.state import make_initial_state
 from abe_froman.executor.dispatch import DispatchExecutor
 from abe_froman.schema.models import Phase
 
-from helpers import make_config
-
-
-def cmd_phase(id, name="", depends_on=None, output="ok", **kwargs):
-    """Shorthand for a command phase that echoes a known string."""
-    return {
-        "id": id,
-        "name": name or id,
-        "execution": {"type": "command", "command": "echo", "args": ["-n", output]},
-        "depends_on": depends_on or [],
-        **kwargs,
-    }
-
-
-def fail_phase(id, name="", depends_on=None, **kwargs):
-    """Shorthand for a command phase that always fails."""
-    return {
-        "id": id,
-        "name": name or id,
-        "execution": {"type": "command", "command": "false"},
-        "depends_on": depends_on or [],
-        **kwargs,
-    }
+from helpers import cmd_phase, fail_phase, make_config
 
 
 # ---------------------------------------------------------------------------
@@ -341,3 +319,372 @@ class TestDispatchExecutor:
         result = await executor.execute(phase, {})
         assert result.success is True
         assert "prompt-stub" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Gate retry re-execution
+# ---------------------------------------------------------------------------
+
+
+class TestGateRetryExecution:
+    @pytest.mark.asyncio
+    async def test_retry_re_executes_phase(self, tmp_path):
+        """Validator uses a counter file: returns 0.0 on first call, 1.0 on second."""
+        counter = tmp_path / "counter.txt"
+        counter.write_text("0")
+
+        validator = tmp_path / "counting_validator.py"
+        validator.write_text(
+            "from pathlib import Path\n"
+            f"counter = Path(r'{counter}')\n"
+            "n = int(counter.read_text().strip())\n"
+            "n += 1\n"
+            "counter.write_text(str(n))\n"
+            "print('1.0' if n >= 2 else '0.0')\n"
+        )
+
+        config = make_config([
+            cmd_phase(
+                "p1", output="data",
+                quality_gate={
+                    "validator": str(validator),
+                    "threshold": 1.0,
+                    "blocking": True,
+                    "max_retries": 2,
+                },
+            ),
+        ])
+        executor = DispatchExecutor(workdir=str(tmp_path))
+        graph = build_workflow_graph(config, executor)
+        result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
+
+        assert "p1" in result["completed_phases"]
+        assert int(counter.read_text().strip()) == 2
+
+
+# ---------------------------------------------------------------------------
+# Retry context injection
+# ---------------------------------------------------------------------------
+
+
+class TestRetryContextInjection:
+    @pytest.mark.asyncio
+    async def test_retry_injects_retry_reason(self, tmp_path):
+        """On retry, executor receives _retry_reason in context."""
+        counter = tmp_path / "counter.txt"
+        counter.write_text("0")
+
+        validator = tmp_path / "counting_validator.py"
+        validator.write_text(
+            "from pathlib import Path\n"
+            f"counter = Path(r'{counter}')\n"
+            "n = int(counter.read_text().strip())\n"
+            "n += 1\n"
+            "counter.write_text(str(n))\n"
+            "print('1.0' if n >= 2 else '0.3')\n"
+        )
+
+        from mock_executor import MockExecutor
+        from abe_froman.executor.base import PhaseResult
+
+        mock = MockExecutor(results={
+            "p1": PhaseResult(success=True, output="data"),
+        })
+        config = make_config([
+            {
+                "id": "p1",
+                "name": "P1",
+                "prompt_file": "t.md",
+                "quality_gate": {
+                    "validator": str(validator),
+                    "threshold": 1.0,
+                    "blocking": True,
+                    "max_retries": 2,
+                },
+            },
+        ])
+        graph = build_workflow_graph(config, mock)
+        result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
+
+        assert "p1" in result["completed_phases"]
+        # Phase was executed twice (initial + retry)
+        assert mock.execution_order.count("p1") == 2
+        # MockExecutor overwrites context per phase ID, so last call wins —
+        # the retry call should have _retry_reason
+        assert "_retry_reason" in mock.received_contexts["p1"]
+
+    @pytest.mark.asyncio
+    async def test_retry_reason_contains_score_and_threshold(self, tmp_path):
+        """_retry_reason includes the previous score and threshold."""
+        counter = tmp_path / "counter.txt"
+        counter.write_text("0")
+
+        validator = tmp_path / "counting_validator.py"
+        validator.write_text(
+            "from pathlib import Path\n"
+            f"counter = Path(r'{counter}')\n"
+            "n = int(counter.read_text().strip())\n"
+            "n += 1\n"
+            "counter.write_text(str(n))\n"
+            "print('1.0' if n >= 2 else '0.30')\n"
+        )
+
+        from mock_executor import MockExecutor
+        from abe_froman.executor.base import PhaseResult
+
+        mock = MockExecutor(results={
+            "p1": PhaseResult(success=True, output="data"),
+        })
+        config = make_config([
+            {
+                "id": "p1",
+                "name": "P1",
+                "prompt_file": "t.md",
+                "quality_gate": {
+                    "validator": str(validator),
+                    "threshold": 1.0,
+                    "blocking": True,
+                    "max_retries": 2,
+                },
+            },
+        ])
+        graph = build_workflow_graph(config, mock)
+        result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
+
+        assert "p1" in result["completed_phases"]
+        # MockExecutor overwrites context on each call, so last call has _retry_reason
+        ctx = mock.received_contexts["p1"]
+        assert "_retry_reason" in ctx
+        assert "0.30" in ctx["_retry_reason"]
+        assert "threshold=1.0" in ctx["_retry_reason"]
+        assert "retry 1 of 2" in ctx["_retry_reason"].lower()
+
+    @pytest.mark.asyncio
+    async def test_no_retry_reason_on_first_attempt(self, tmp_path):
+        """First execution should not have _retry_reason in context."""
+        script = tmp_path / "pass.py"
+        script.write_text("print(1.0)")
+
+        from mock_executor import MockExecutor
+        from abe_froman.executor.base import PhaseResult
+
+        mock = MockExecutor(results={
+            "p1": PhaseResult(success=True, output="data"),
+        })
+        config = make_config([
+            {
+                "id": "p1",
+                "name": "P1",
+                "prompt_file": "t.md",
+                "quality_gate": {
+                    "validator": str(script),
+                    "threshold": 0.8,
+                    "blocking": True,
+                },
+            },
+        ])
+        graph = build_workflow_graph(config, mock)
+        result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
+
+        assert "p1" in result["completed_phases"]
+        assert "_retry_reason" not in mock.received_contexts["p1"]
+
+
+# ---------------------------------------------------------------------------
+# Context propagation via MockExecutor
+# ---------------------------------------------------------------------------
+
+
+class TestContextPropagation:
+    @pytest.mark.asyncio
+    async def test_dependency_output_in_executor_context(self):
+        from mock_executor import MockExecutor
+        from abe_froman.executor.base import PhaseResult
+
+        mock = MockExecutor(results={
+            "a": PhaseResult(success=True, output="a-output"),
+        })
+        config = make_config([
+            {"id": "a", "name": "A", "prompt_file": "t.md"},
+            {"id": "b", "name": "B", "prompt_file": "t.md", "depends_on": ["a"]},
+        ])
+        graph = build_workflow_graph(config, mock)
+        result = await graph.ainvoke(make_initial_state())
+
+        assert "a" in result["completed_phases"]
+        assert "b" in result["completed_phases"]
+        assert mock.received_contexts["b"]["a"] == "a-output"
+
+    @pytest.mark.asyncio
+    async def test_structured_output_flows_to_dependent(self):
+        from mock_executor import MockExecutor
+        from abe_froman.executor.base import PhaseResult
+
+        mock = MockExecutor(results={
+            "a": PhaseResult(
+                success=True, output="text",
+                structured_output={"key": "val"},
+            ),
+        })
+        config = make_config([
+            {"id": "a", "name": "A", "prompt_file": "t.md"},
+            {"id": "b", "name": "B", "prompt_file": "t.md", "depends_on": ["a"]},
+        ])
+        graph = build_workflow_graph(config, mock)
+        result = await graph.ainvoke(make_initial_state())
+
+        assert "b" in result["completed_phases"]
+        assert mock.received_contexts["b"]["a_structured"] == {"key": "val"}
+
+
+# ---------------------------------------------------------------------------
+# Output contract enforcement
+# ---------------------------------------------------------------------------
+
+
+class TestTokenUsageAccumulation:
+    @pytest.mark.asyncio
+    async def test_token_usage_accumulated_in_state(self):
+        from mock_executor import MockExecutor
+        from abe_froman.executor.base import PhaseResult
+
+        mock = MockExecutor(results={
+            "a": PhaseResult(
+                success=True, output="a-out",
+                tokens_used={"input": 100, "output": 50},
+            ),
+            "b": PhaseResult(
+                success=True, output="b-out",
+                tokens_used={"input": 200, "output": 75},
+            ),
+        })
+        config = make_config([
+            {"id": "a", "name": "A", "prompt_file": "t.md"},
+            {"id": "b", "name": "B", "prompt_file": "t.md", "depends_on": ["a"]},
+        ])
+        graph = build_workflow_graph(config, mock)
+        result = await graph.ainvoke(make_initial_state())
+
+        assert result["token_usage"] == {
+            "a": {"input": 100, "output": 50},
+            "b": {"input": 200, "output": 75},
+        }
+
+    @pytest.mark.asyncio
+    async def test_token_usage_empty_for_command_phases(self):
+        config = make_config([cmd_phase("p1", output="ok")])
+        executor = DispatchExecutor()
+        graph = build_workflow_graph(config, executor)
+        result = await graph.ainvoke(make_initial_state())
+
+        assert "p1" in result["completed_phases"]
+        assert result.get("token_usage", {}) == {}
+
+    @pytest.mark.asyncio
+    async def test_token_usage_none_not_stored(self):
+        from mock_executor import MockExecutor
+        from abe_froman.executor.base import PhaseResult
+
+        mock = MockExecutor(results={
+            "a": PhaseResult(success=True, output="out", tokens_used=None),
+        })
+        config = make_config([
+            {"id": "a", "name": "A", "prompt_file": "t.md"},
+        ])
+        graph = build_workflow_graph(config, mock)
+        result = await graph.ainvoke(make_initial_state())
+
+        assert result.get("token_usage", {}) == {}
+
+
+class TestOutputContract:
+    @pytest.mark.asyncio
+    async def test_contract_pass_continues_to_gate(self, tmp_path):
+        """Files exist → gate runs → phase completes."""
+        out = tmp_path / "out"
+        out.mkdir()
+        (out / "result.txt").write_text("done")
+
+        script = tmp_path / "pass.py"
+        script.write_text("print(1.0)")
+
+        config = make_config([
+            cmd_phase(
+                "p1", output="data",
+                output_contract={"base_directory": "out", "required_files": ["result.txt"]},
+                quality_gate={"validator": str(script), "threshold": 0.8},
+            ),
+        ])
+        executor = DispatchExecutor(workdir=str(tmp_path))
+        graph = build_workflow_graph(config, executor)
+        result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
+        assert "p1" in result["completed_phases"]
+        assert result["gate_scores"]["p1"] == 1.0
+
+    @pytest.mark.asyncio
+    async def test_contract_fail_blocks_phase(self, tmp_path):
+        """Missing files → phase fails, gate never runs."""
+        config = make_config([
+            cmd_phase(
+                "p1", output="data",
+                output_contract={"base_directory": "out", "required_files": ["missing.txt"]},
+                quality_gate={"validator": "never_called.py", "threshold": 0.8},
+            ),
+        ])
+        executor = DispatchExecutor(workdir=str(tmp_path))
+        graph = build_workflow_graph(config, executor)
+        result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
+        assert "p1" in result["failed_phases"]
+        assert "p1" not in result.get("gate_scores", {})
+        assert any("contract violated" in e["error"].lower() for e in result["errors"])
+
+    @pytest.mark.asyncio
+    async def test_contract_fail_skips_dependent(self, tmp_path):
+        """Contract failure cascades — downstream phase also fails."""
+        config = make_config([
+            cmd_phase(
+                "a", output="data",
+                output_contract={"base_directory": "out", "required_files": ["missing.txt"]},
+            ),
+            cmd_phase("b", output="ok", depends_on=["a"]),
+        ])
+        executor = DispatchExecutor(workdir=str(tmp_path))
+        graph = build_workflow_graph(config, executor)
+        result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
+        assert "a" in result["failed_phases"]
+        assert "b" in result["failed_phases"]
+
+    @pytest.mark.asyncio
+    async def test_contract_without_gate(self, tmp_path):
+        """Contract checked even when no quality_gate is defined."""
+        config = make_config([
+            cmd_phase(
+                "p1", output="data",
+                output_contract={"base_directory": "out", "required_files": ["missing.txt"]},
+            ),
+        ])
+        executor = DispatchExecutor(workdir=str(tmp_path))
+        graph = build_workflow_graph(config, executor)
+        result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
+        assert "p1" in result["failed_phases"]
+
+    @pytest.mark.asyncio
+    async def test_contract_fail_no_retry(self, tmp_path):
+        """Contract failure is a hard fail — does NOT trigger gate retry."""
+        config = make_config([
+            cmd_phase(
+                "p1", output="data",
+                output_contract={"base_directory": "out", "required_files": ["missing.txt"]},
+                quality_gate={
+                    "validator": "never_called.py", "threshold": 0.8,
+                    "blocking": True, "max_retries": 3,
+                },
+            ),
+        ])
+        executor = DispatchExecutor(workdir=str(tmp_path))
+        graph = build_workflow_graph(config, executor)
+        result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
+        assert "p1" in result["failed_phases"]
+        assert result.get("retries", {}).get("p1", 0) == 0
+
+

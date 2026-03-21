@@ -2,9 +2,14 @@
 
 import pytest
 
-from abe_froman.executor.base import PhaseResult
-from abe_froman.executor.prompt import PromptExecutor, render_template, resolve_model
-from abe_froman.executor.prompt_backend import PromptBackend, PromptBackendResult
+from abe_froman.executor.prompt import (
+    MODEL_DOWNGRADE_CHAIN,
+    PromptExecutor,
+    downgrade_model,
+    render_template,
+    resolve_model,
+)
+from abe_froman.executor.prompt_backend import OverloadError, PromptBackend, PromptBackendResult
 from abe_froman.executor.backends.stub import StubBackend
 from abe_froman.schema.models import Phase, Settings
 
@@ -45,6 +50,19 @@ class TestRenderTemplate:
         result = render_template("count={{n}}", {"n": 42})
         assert result == "count=42"
 
+    def test_value_containing_braces(self):
+        """Substituted value containing {{ }} must not trigger double-substitution."""
+        result = render_template("{{x}}", {"x": "{{y}}"})
+        assert result == "{{y}}"
+
+    def test_hyphenated_phase_id_in_template(self):
+        """Hyphenated phase IDs like {{research-phase}} are not matched by the
+        \\w+ regex in render_template. This is a known limitation — the regex
+        treats the hyphen as a delimiter, so the placeholder is left intact.
+        Phase IDs with hyphens will not be substituted in prompt templates."""
+        result = render_template("{{research-phase}}", {"research-phase": "output"})
+        assert result == "{{research-phase}}"
+
 
 # ---------------------------------------------------------------------------
 # resolve_model
@@ -71,16 +89,26 @@ class TestResolveModel:
 class MemoryBackend:
     """Test backend that records calls and returns configurable responses."""
 
-    def __init__(self, response: str = "backend-output", structured: dict | None = None):
+    def __init__(
+        self,
+        response: str = "backend-output",
+        structured: dict | None = None,
+        tokens: dict[str, int] | None = None,
+    ):
         self._response = response
         self._structured = structured
+        self._tokens = tokens
         self.calls: list[tuple[str, str, str]] = []
 
     async def send_prompt(
         self, prompt: str, model: str, workdir: str
     ) -> PromptBackendResult:
         self.calls.append((prompt, model, workdir))
-        return PromptBackendResult(output=self._response, structured_output=self._structured)
+        return PromptBackendResult(
+            output=self._response,
+            structured_output=self._structured,
+            tokens_used=self._tokens,
+        )
 
     async def close(self) -> None:
         pass
@@ -223,6 +251,43 @@ class TestPromptExecutor:
         assert result.structured_output is None
 
     @pytest.mark.asyncio
+    async def test_tokens_used_threaded_to_phase_result(self, tmp_path):
+        prompt_file = tmp_path / "t.md"
+        prompt_file.write_text("prompt")
+
+        backend = MemoryBackend(
+            response="output",
+            tokens={"input": 500, "output": 120},
+        )
+        executor = PromptExecutor(
+            backend=backend,
+            settings=Settings(),
+            workdir=str(tmp_path),
+        )
+        phase = Phase(id="p1", name="P1", prompt_file="t.md")
+        result = await executor.execute(phase, {})
+
+        assert result.success is True
+        assert result.tokens_used == {"input": 500, "output": 120}
+
+    @pytest.mark.asyncio
+    async def test_tokens_used_none_when_backend_returns_none(self, tmp_path):
+        prompt_file = tmp_path / "t.md"
+        prompt_file.write_text("prompt")
+
+        backend = MemoryBackend(response="output")
+        executor = PromptExecutor(
+            backend=backend,
+            settings=Settings(),
+            workdir=str(tmp_path),
+        )
+        phase = Phase(id="p1", name="P1", prompt_file="t.md")
+        result = await executor.execute(phase, {})
+
+        assert result.success is True
+        assert result.tokens_used is None
+
+    @pytest.mark.asyncio
     async def test_wrong_execution_type_returns_error(self):
         backend = MemoryBackend()
         executor = PromptExecutor(backend=backend, settings=Settings())
@@ -263,3 +328,182 @@ class TestStubBackend:
 class TestMemoryBackendProtocol:
     def test_satisfies_protocol(self):
         assert isinstance(MemoryBackend(), PromptBackend)
+
+
+# ---------------------------------------------------------------------------
+# downgrade_model
+# ---------------------------------------------------------------------------
+
+
+class TestDowngradeModel:
+    def test_downgrade_opus_to_sonnet(self):
+        assert downgrade_model("opus") == "sonnet"
+
+    def test_downgrade_sonnet_to_haiku(self):
+        assert downgrade_model("sonnet") == "haiku"
+
+    def test_downgrade_haiku_returns_none(self):
+        assert downgrade_model("haiku") is None
+
+    def test_downgrade_unknown_model_returns_none(self):
+        assert downgrade_model("gpt-4") is None
+
+
+# ---------------------------------------------------------------------------
+# Overload downgrade integration
+# ---------------------------------------------------------------------------
+
+
+class _OverloadBackend:
+    """Test backend that raises OverloadError for specific models."""
+
+    def __init__(self, overload_models: set[str]):
+        self.calls: list[str] = []
+        self._overload_models = overload_models
+
+    async def send_prompt(self, prompt: str, model: str, workdir: str) -> PromptBackendResult:
+        self.calls.append(model)
+        if model in self._overload_models:
+            raise OverloadError(f"529 overloaded for {model}")
+        return PromptBackendResult(output=f"ok from {model}")
+
+    async def close(self) -> None:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Preamble injection
+# ---------------------------------------------------------------------------
+
+
+class TestPreambleInjection:
+    @pytest.mark.asyncio
+    async def test_preamble_prepended_to_prompt(self, tmp_path):
+        (tmp_path / "preamble.md").write_text("SHARED CONTEXT")
+        (tmp_path / "prompt.md").write_text("Do the thing")
+
+        backend = MemoryBackend()
+        executor = PromptExecutor(
+            backend=backend,
+            settings=Settings(preamble_file="preamble.md"),
+            workdir=str(tmp_path),
+        )
+        phase = Phase(id="p1", name="P1", prompt_file="prompt.md")
+        result = await executor.execute(phase, {})
+
+        assert result.success is True
+        assert backend.calls[0][0] == "SHARED CONTEXT\n\nDo the thing"
+
+    @pytest.mark.asyncio
+    async def test_preamble_with_template_variables(self, tmp_path):
+        (tmp_path / "preamble.md").write_text("Preamble text")
+        (tmp_path / "prompt.md").write_text("Use {{dep}} here")
+
+        backend = MemoryBackend()
+        executor = PromptExecutor(
+            backend=backend,
+            settings=Settings(preamble_file="preamble.md"),
+            workdir=str(tmp_path),
+        )
+        phase = Phase(id="p1", name="P1", prompt_file="prompt.md")
+        result = await executor.execute(phase, {"dep": "injected"})
+
+        assert result.success is True
+        assert backend.calls[0][0] == "Preamble text\n\nUse injected here"
+
+    @pytest.mark.asyncio
+    async def test_preamble_file_not_found_returns_error(self, tmp_path):
+        (tmp_path / "prompt.md").write_text("prompt")
+
+        backend = MemoryBackend()
+        executor = PromptExecutor(
+            backend=backend,
+            settings=Settings(preamble_file="missing_preamble.md"),
+            workdir=str(tmp_path),
+        )
+        phase = Phase(id="p1", name="P1", prompt_file="prompt.md")
+        result = await executor.execute(phase, {})
+
+        assert result.success is False
+        assert "Preamble file not found" in result.error
+
+    @pytest.mark.asyncio
+    async def test_no_preamble_setting_unchanged_behavior(self, tmp_path):
+        (tmp_path / "prompt.md").write_text("Just the prompt")
+
+        backend = MemoryBackend()
+        executor = PromptExecutor(
+            backend=backend,
+            settings=Settings(),
+            workdir=str(tmp_path),
+        )
+        phase = Phase(id="p1", name="P1", prompt_file="prompt.md")
+        result = await executor.execute(phase, {})
+
+        assert result.success is True
+        assert backend.calls[0][0] == "Just the prompt"
+
+    def test_preamble_in_config_yaml(self):
+        from abe_froman.schema.models import WorkflowConfig
+
+        config = WorkflowConfig(
+            name="test",
+            version="1.0",
+            phases=[Phase(id="p1", name="P1", prompt_file="t.md")],
+            settings=Settings(preamble_file="preamble.md"),
+        )
+        assert config.settings.preamble_file == "preamble.md"
+
+
+class TestOverloadDowngrade:
+    @pytest.mark.asyncio
+    async def test_overload_triggers_downgrade(self, tmp_path):
+        prompt_file = tmp_path / "t.md"
+        prompt_file.write_text("prompt")
+
+        backend = _OverloadBackend(overload_models={"opus"})
+        executor = PromptExecutor(
+            backend=backend,
+            settings=Settings(default_model="opus"),
+            workdir=str(tmp_path),
+        )
+        phase = Phase(id="p1", name="P1", prompt_file="t.md")
+        result = await executor.execute(phase, {})
+
+        assert result.success is True
+        assert result.output == "ok from sonnet"
+        assert backend.calls == ["opus", "sonnet"]
+
+    @pytest.mark.asyncio
+    async def test_overload_exhausts_chain(self, tmp_path):
+        prompt_file = tmp_path / "t.md"
+        prompt_file.write_text("prompt")
+
+        backend = _OverloadBackend(overload_models={"opus", "sonnet", "haiku"})
+        executor = PromptExecutor(
+            backend=backend,
+            settings=Settings(default_model="opus"),
+            workdir=str(tmp_path),
+        )
+        phase = Phase(id="p1", name="P1", prompt_file="t.md")
+        result = await executor.execute(phase, {})
+
+        assert result.success is False
+        assert "exhausted" in result.error
+        assert backend.calls == ["opus", "sonnet", "haiku"]
+
+    @pytest.mark.asyncio
+    async def test_non_overload_error_not_caught_by_downgrade(self, tmp_path):
+        prompt_file = tmp_path / "t.md"
+        prompt_file.write_text("prompt")
+
+        executor = PromptExecutor(
+            backend=ErrorBackend(),
+            settings=Settings(default_model="opus"),
+            workdir=str(tmp_path),
+        )
+        phase = Phase(id="p1", name="P1", prompt_file="t.md")
+        result = await executor.execute(phase, {})
+
+        assert result.success is False
+        assert "connection failed" in result.error

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import operator
-from typing import Annotated, Any
+from typing import Annotated, Any, NotRequired
 
 from typing_extensions import TypedDict
 
@@ -14,7 +14,6 @@ def _merge_dicts(left: dict, right: dict) -> dict:
 
 class WorkflowState(TypedDict):
     workflow_name: str
-    current_phase_id: str | None
     completed_phases: Annotated[list[str], operator.add]
     failed_phases: Annotated[list[str], operator.add]
     phase_outputs: Annotated[dict[str, Any], _merge_dicts]
@@ -22,9 +21,11 @@ class WorkflowState(TypedDict):
     gate_scores: Annotated[dict[str, float], _merge_dicts]
     retries: Annotated[dict[str, int], _merge_dicts]
     subphase_outputs: Annotated[dict[str, Any], _merge_dicts]
+    token_usage: Annotated[dict[str, dict[str, int]], _merge_dicts]
     errors: Annotated[list[dict], operator.add]
     workdir: str
     dry_run: bool
+    _subphase_item: NotRequired[dict[str, Any]]
 
 
 def make_initial_state(
@@ -39,7 +40,6 @@ def make_initial_state(
     """
     state: dict[str, Any] = {
         "workflow_name": workflow_name,
-        "current_phase_id": None,
         "completed_phases": [],
         "failed_phases": [],
         "phase_outputs": {},
@@ -47,6 +47,7 @@ def make_initial_state(
         "gate_scores": {},
         "retries": {},
         "subphase_outputs": {},
+        "token_usage": {},
         "errors": [],
         "workdir": workdir,
         "dry_run": dry_run,

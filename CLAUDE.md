@@ -25,10 +25,13 @@ YAML Config → Pydantic Schema → LangGraph StateGraph
 
 ```bash
 uv sync                                    # install deps
-uv run pytest tests/ -v                    # run all tests (~140 tests, ~60s)
+uv run pytest tests/ -v                    # run all tests (~260 tests, ~60s)
 uv run abe-froman validate config.yaml     # validate a workflow config
 uv run abe-froman run config.yaml --dry-run # dry run
 uv run abe-froman run config.yaml -e acp   # run with Claude via ACP
+uv run abe-froman run config.yaml --resume        # resume from last failure
+uv run abe-froman run config.yaml --start=phase-3 # restart from specific phase
+uv run abe-froman run config.yaml --log out.jsonl  # run with JSONL event log
 uv run abe-froman graph config.yaml        # print dependency graph
 ```
 
@@ -44,6 +47,7 @@ phases:                       # required, list of phases
     description: "..."        # optional
     model: "opus"             # optional, overrides settings.default_model
     depends_on: ["other-id"]  # optional, list of phase IDs this depends on
+    timeout: 30.0             # optional, seconds, overrides settings.default_timeout
 
     # Execution — pick ONE approach:
     prompt_file: "path/to/prompt.md"   # shorthand for type: prompt
@@ -75,7 +79,7 @@ phases:                       # required, list of phases
       type: object
       properties: { ... }
 
-    # Dynamic subphases — optional (Phase 6, not yet implemented)
+    # Dynamic subphases — optional
     dynamic_subphases:
       enabled: true
       manifest_path: "manifest.json"
@@ -89,6 +93,9 @@ settings:                     # optional, all fields have defaults
   max_retries: 3              # default: 3
   default_model: "sonnet"     # default: "sonnet"
   executor: "stub"            # default: "stub", options: "stub", "acp"
+  default_timeout: 300        # optional, seconds, None = no timeout
+  preamble_file: "preamble.md" # optional, prepended to all prompt phases
+  retry_backoff: [10, 30, 60]  # optional, delay seconds per retry attempt
 ```
 
 ### Execution types
@@ -113,9 +120,19 @@ Based on this, generate a summary.
 
 The variable name matches the `id` of the dependency phase. Its value is the raw output from that phase.
 
+On retry, the orchestrator auto-injects `{{_retry_reason}}` with the previous gate score, threshold, and attempt number. Templates can use this to give the model feedback on why the previous attempt failed.
+
+Both `prompt_file` and `quality_gate.validator` paths resolve relative to the working directory (`--workdir`), not the config file location.
+
 ### Quality gate validators
 
-**Script validators** (`.py`, `.js`) receive the phase output on stdin and must print a score to stdout:
+**Script validators** (`.py`, `.js`) receive the phase output on stdin and must print a score to stdout.
+
+Environment variables available to validators:
+- `PHASE_ID` — the phase's unique identifier
+- `WORKFLOW_NAME` — the workflow's `name` field from config
+- `ATTEMPT_NUMBER` — current attempt number (starts at 1, increments on retry)
+- `WORKDIR` — the working directory path
 
 ```python
 # gates/validate.py — reads stdin, prints 0.0–1.0
@@ -141,6 +158,10 @@ Score can be a plain float or JSON `{"score": 0.75}`.
 - `src/abe_froman/engine/state.py` — WorkflowState TypedDict with LangGraph reducers
 - `src/abe_froman/engine/builder.py` — YAML → LangGraph StateGraph construction
 - `src/abe_froman/engine/gates.py` — Quality gate evaluation + routing
+- `src/abe_froman/engine/persistence.py` — State save/load/clear to `.abe-froman-state.json`
+- `src/abe_froman/engine/resume.py` — Resume/start-from state preparation
+- `src/abe_froman/engine/logging.py` — Structured JSONL event logger
+- `src/abe_froman/engine/runner.py` — Streaming execution with state persistence and optional JSONL logging
 - `src/abe_froman/executor/base.py` — PhaseExecutor Protocol + PhaseResult
 - `src/abe_froman/executor/dispatch.py` — Routes execution by phase type
 - `src/abe_froman/executor/command.py` — Subprocess executor
@@ -160,6 +181,40 @@ Score can be a plain float or JSON `{"score": 0.75}`.
 - **Model per phase** with `settings.default_model` fallback
 - **`{{variable}}` templating** in prompt files for parameterized execution
 - **PromptBackend Protocol** — swappable backends (stub, acp, future: API key, OpenAI, etc.)
+
+## Known Limitations
+
+- **Hyphenated phase IDs in templates:** `{{research-phase}}` won't be substituted — the `\w+` regex in `render_template` doesn't match hyphens. Use underscores in phase IDs that need template substitution.
+- **Prompt validators stubbed:** `.md` gate validators always return 1.0.
+- **Subphase quality gates:** Record scores but do not trigger retries. Retry routing only works for top-level phase gates.
+
+## Backlog
+
+Prioritized features for future development. See `docs/backlog-adapter-inspiration.md` for full details.
+
+### P1 — Next up
+
+1. ~~**Resume from failed phase**~~ — **DONE**. `--resume` and `--start=<phase-id>` flags. State persisted to `.abe-froman-state.json` after each phase via `astream`. Cleared on success, preserved on failure.
+2. ~~**Enhanced retry with failure context**~~ — **DONE**. On retry, `{{_retry_reason}}` is auto-injected into context with previous gate score, threshold, and attempt number.
+3. ~~**Output contract enforcement**~~ — **DONE**. After execution, before gate evaluation, `validate_output_contract()` checks required files exist. Contract failure is always blocking (hard fail, no retry).
+4. ~~**Model downgrade on API overload**~~ — **DONE**. PromptExecutor catches OverloadError and auto-downgrades model tier (opus → sonnet → haiku). Backends detect 529/overload and raise OverloadError.
+
+### P2 — Planned
+
+5. ~~**Phase execution timeout**~~ — **DONE**. Per-phase `timeout` field and `settings.default_timeout`, enforced via `asyncio.wait_for()` on both executor and gate calls. Timeout failures are hard failures (no retry). Subphases inherit parent phase timeout.
+6. ~~**Structured JSONL logging**~~ — **DONE**. `--log` flag writes JSONL events (`workflow_start`, `phase_completed`, `phase_failed`, `gate_evaluated`, `phase_retried`, `workflow_end`) via state-diff detection in the runner's `astream` loop.
+7. ~~**Output directory scaffolding**~~ — **DONE**. `scaffold_output_directory()` in `contracts.py` pre-creates `base_directory` (with `parents=True`) before execution. Called in `_make_phase_node()` after context setup, before `executor.execute()`.
+8. ~~**Preamble injection**~~ — **DONE**. `settings.preamble_file` prepended to all prompt phases for shared project context. PromptExecutor prepends preamble contents before template rendering. Missing preamble file is a hard failure.
+
+### P3 — Nice to have
+
+9. ~~**Stepped retry backoff**~~ — **DONE**. `settings.retry_backoff` list of delay values in seconds. Applied via `asyncio.sleep()` before retry execution in `_make_phase_node`. Clamps to last value for attempts beyond list length. Empty list (default) = no delay.
+10. ~~**Token usage tracking**~~ — **DONE**. Per-phase token counts (`input`/`output`) flow from `PromptBackendResult` → `PhaseResult` → `WorkflowState.token_usage`. CLI prints totals after run. JSONL `phase_completed` events include `tokens` field. ACP backend captures usage if exposed; stub/command phases return `None` gracefully.
+11. Execution mode fallback chain (ACP → direct API on failure)
+12. Post-workflow cleanup (remove intermediate artifacts on success)
+13. ~~**Extended env var injection into validators**~~ — **DONE**. Gate validator scripts receive `PHASE_ID`, `WORKFLOW_NAME`, `ATTEMPT_NUMBER`, and `WORKDIR` as environment variables.
+14. Git integration for outputs (auto-push to branch on completion)
+15. Health check endpoint (for container orchestration)
 
 ## Testing
 

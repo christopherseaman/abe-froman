@@ -12,7 +12,7 @@ from abe_froman.engine.builder import build_workflow_graph
 from abe_froman.engine.state import make_initial_state
 from abe_froman.executor.dispatch import DispatchExecutor
 
-from helpers import make_config
+from helpers import cmd_phase, make_config
 
 
 # ---------------------------------------------------------------------------
@@ -41,17 +41,6 @@ def dynamic_parent(id, manifest_items, *, template_prompt="template.md",
     if final_phases:
         phase["dynamic_subphases"]["final_phases"] = final_phases
     return phase
-
-
-def cmd_phase(id, output="ok", depends_on=None, **kwargs):
-    """Shorthand for a command phase that echoes a known string."""
-    return {
-        "id": id,
-        "name": id,
-        "execution": {"type": "command", "command": "echo", "args": ["-n", output]},
-        "depends_on": depends_on or [],
-        **kwargs,
-    }
 
 
 # ---------------------------------------------------------------------------

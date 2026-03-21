@@ -13,29 +13,24 @@ dependencies = [
     { name = "pyyaml" },
 ]
 
-[package.optional-dependencies]
-acp = [
-    { name = "agent-client-protocol" },
-]
-
 [package.dev-dependencies]
 dev = [
+    { name = "agent-client-protocol" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "agent-client-protocol", marker = "extra == 'acp'", specifier = ">=0.5" },
     { name = "click", specifier = ">=8.0" },
     { name = "langgraph", specifier = ">=1.0" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pyyaml", specifier = ">=6.0" },
 ]
-provides-extras = ["acp"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "agent-client-protocol", specifier = ">=0.5" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-asyncio", specifier = ">=0.24" },
 ]

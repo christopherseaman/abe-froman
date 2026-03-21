@@ -80,6 +80,9 @@ class Settings(BaseModel):
     max_retries: int = 3
     default_model: str = "sonnet"
     executor: str = "stub"
+    default_timeout: float | None = None  # seconds, None = no timeout
+    preamble_file: str | None = None
+    retry_backoff: list[float] = []  # delay in seconds per retry attempt
 
 
 class Phase(BaseModel):
@@ -94,10 +97,17 @@ class Phase(BaseModel):
     output_contract: OutputContract | None = None
     output_schema: dict[str, Any] | None = None
     dynamic_subphases: DynamicPhaseConfig | None = None
+    timeout: float | None = None  # seconds, None = use default
 
     @model_validator(mode="after")
     def normalize_prompt_file(self) -> Self:
         return _normalize_prompt_shorthand(self)
+
+    def effective_timeout(self, settings: Settings) -> float | None:
+        """Phase timeout > settings default_timeout. None = no timeout."""
+        if self.timeout is not None:
+            return self.timeout
+        return settings.default_timeout
 
     def effective_max_retries(self, settings: Settings) -> int:
         """Resolve max_retries: gate override > settings default."""
