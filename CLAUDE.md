@@ -218,8 +218,22 @@ Prioritized features for future development. See `docs/backlog-adapter-inspirati
 
 ## Testing
 
+### Facts about the current suite
 - All tests use real execution — no mocks of external systems
 - Command phases use real subprocesses (`echo`, `cat`, `false`)
 - Gate validators are real Python scripts that inspect stdin
 - ACP integration tests spawn real claude-code-acp processes
 - E2E joke workflow: generate → deterministic gate → select, all through ACP
+
+### Testing Guidelines (apply to any new tests)
+
+1. **No mocks of external systems.** Tests use real subprocess / real ACP / real validators. `MockExecutor` is a custom test double implementing the `PhaseExecutor` Protocol, NOT `unittest.mock`.
+2. **Tests validate output, not just "runs without errors."** Every test asserts specific values — output strings, state keys, file contents, graph shape. A test that only checks "no exception raised" is not a meaningful test.
+3. **Known-good AND known-bad fixtures for function-level tests.** Every helper gets a pair of tests: success path with expected output, failure/edge case with expected outcome. Use `@pytest.mark.parametrize` for routing tables (score/threshold/retry combinations).
+4. **Multi-function end-to-end tests** use simple workflows scoped to each scenario (linear, diamond, dynamic subphase, resume, ACP). E2E tests assert concrete output values and state, not just "test completed."
+5. **No separate test codepaths in functions.** Functions must not have `if testing:` branches. If a function can't be tested without special-casing, redesign it.
+6. **No fallbacks or workarounds to make tests pass.** No `try/except: pytest.skip(...)` to mask missing dependencies. No `@pytest.mark.skipif(not_installed)` for ACP — it's a hard pre-req enforced at collection time.
+7. **If testing is not possible** (missing auth, unreliable environment): STOP and raise the question. Do not paper over.
+8. **Quality over count.** Test count is not a substitute for good tests. A small number of tests that validate meaningful output beats many tests that only check for absence of exceptions.
+9. **Layer boundary tests** (`tests/architecture/test_layers.py`) enforce the three-layer split at CI time via AST walking. New source files must respect the import rules: `schema/` imports no langgraph; `compile/` only imports langgraph/schema/runtime; `runtime/` imports no compile/langgraph.
+10. **ACP tests require `@zed-industries/claude-code-acp`** installed globally (`npm i -g @zed-industries/claude-code-acp`). The pre-flight check in `tests/conftest.py` exits with install instructions if it's missing. Developers can explicitly opt out with `pytest --ignore=tests/acp`.
