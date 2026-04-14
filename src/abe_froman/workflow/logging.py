@@ -1,0 +1,67 @@
+"""Structured JSONL event logging for workflow execution."""
+
+from __future__ import annotations
+
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import IO, Any
+
+
+class JsonlLogger:
+    """Emits structured JSONL events to a file, one JSON object per line."""
+
+    def __init__(self, dest: str | Path | IO[str]) -> None:
+        if isinstance(dest, (str, Path)):
+            self._file: IO[str] = open(dest, "a")
+            self._owns_file = True
+        else:
+            self._file = dest
+            self._owns_file = False
+
+    def close(self) -> None:
+        if self._owns_file:
+            self._file.close()
+
+    def emit(self, event: dict[str, Any]) -> None:
+        """Write a single event as a JSON line with a timestamp."""
+        record = {"ts": datetime.now(timezone.utc).isoformat(), **event}
+        self._file.write(json.dumps(record) + "\n")
+        self._file.flush()
+
+    def log_snapshot(
+        self,
+        prev: dict[str, Any],
+        curr: dict[str, Any],
+    ) -> None:
+        """Diff two state snapshots and emit events for all transitions."""
+        prev_completed = set(prev.get("completed_phases", []))
+        curr_completed = set(curr.get("completed_phases", []))
+        for phase in curr_completed - prev_completed:
+            event: dict[str, Any] = {"event": "phase_completed", "phase": phase}
+            tokens = curr.get("token_usage", {}).get(phase)
+            if tokens:
+                event["tokens"] = tokens
+            self.emit(event)
+
+        prev_failed = set(prev.get("failed_phases", []))
+        curr_failed = set(curr.get("failed_phases", []))
+        for phase in curr_failed - prev_failed:
+            error = ""
+            for err in curr.get("errors", []):
+                if err.get("phase") == phase:
+                    error = err.get("error", "")
+                    break
+            self.emit({"event": "phase_failed", "phase": phase, "error": error})
+
+        prev_gates = prev.get("gate_scores", {})
+        curr_gates = curr.get("gate_scores", {})
+        for phase, score in curr_gates.items():
+            if phase not in prev_gates or prev_gates[phase] != score:
+                self.emit({"event": "gate_evaluated", "phase": phase, "score": score})
+
+        prev_retries = prev.get("retries", {})
+        curr_retries = curr.get("retries", {})
+        for phase, count in curr_retries.items():
+            if count > prev_retries.get(phase, 0):
+                self.emit({"event": "phase_retried", "phase": phase, "attempt": count})
