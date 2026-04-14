@@ -1,22 +1,15 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
+from abe_froman.runtime.result import ExecutionResult, OverloadError
 
-@dataclass
-class PromptBackendResult:
-    """Raw result from a prompt backend."""
+# PromptBackendResult is the historical name for the unified
+# ExecutionResult. Kept as an alias so existing call sites continue to
+# work during the refactor. Deleted in Step 14.
+PromptBackendResult = ExecutionResult
 
-    output: str
-    structured_output: dict[str, Any] | None = None
-    tokens_used: dict[str, int] | None = None
-
-
-class OverloadError(Exception):
-    """Raised by a PromptBackend when the API returns 529/overloaded."""
-
-    pass
+__all__ = ["PromptBackend", "PromptBackendResult", "OverloadError"]
 
 
 @runtime_checkable
@@ -25,10 +18,14 @@ class PromptBackend(Protocol):
 
     Implementations handle only the transport layer — template rendering
     and model resolution are handled upstream by PromptExecutor.
+
+    Backends return ExecutionResult(success=True, ...) or raise
+    OverloadError for 529/overload events. They never set success=False
+    directly — the executor owns retry and classification policy.
     """
 
     async def send_prompt(
         self, prompt: str, model: str, workdir: str
-    ) -> PromptBackendResult: ...
+    ) -> ExecutionResult: ...
 
     async def close(self) -> None: ...

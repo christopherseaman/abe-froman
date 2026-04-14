@@ -1,20 +1,16 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
+from abe_froman.runtime.result import ExecutionResult
 from abe_froman.schema.models import Phase
 
-
-@dataclass
-class PhaseResult:
-    success: bool
-    output: str = ""
-    error: str | None = None
-    structured_output: dict[str, Any] | None = None
-    tokens_used: dict[str, int] | None = None
+# PhaseResult is the historical name for the unified ExecutionResult.
+# Kept as an alias so existing call sites continue to work during
+# the refactor. Deleted in Step 14.
+PhaseResult = ExecutionResult
 
 
 @runtime_checkable
 class PhaseExecutor(Protocol):
-    async def execute(self, phase: Phase, context: dict[str, Any]) -> PhaseResult: ...
+    async def execute(self, phase: Phase, context: dict[str, Any]) -> ExecutionResult: ...
