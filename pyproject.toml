@@ -23,6 +23,7 @@ packages = ["src/abe_froman"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+pythonpath = ["tests"]
 
 [dependency-groups]
 dev = [
