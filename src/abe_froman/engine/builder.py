@@ -5,6 +5,12 @@ from typing import TYPE_CHECKING, Any
 
 from langgraph.graph import END, START, StateGraph
 
+from abe_froman.compile.nodes import (
+    _get_retry_delay,
+    _make_phase_node,
+    execute_with_timeout,
+    make_failure_update,
+)
 from abe_froman.compile.routers import (
     _make_dynamic_router,
     _make_gate_router,
@@ -25,18 +31,6 @@ __all__ = [
     "_read_manifest",
     "_get_retry_delay",
 ]
-
-
-def _get_retry_delay(retry_count: int, backoff: list[float]) -> float:
-    """Return delay in seconds for the given retry attempt (1-indexed).
-
-    Uses the backoff list, clamping to the last value for attempts
-    beyond the list length. Returns 0.0 if backoff is empty.
-    """
-    if not backoff:
-        return 0.0
-    idx = min(retry_count - 1, len(backoff) - 1)
-    return backoff[idx]
 
 
 def _find_terminal_phases(config: WorkflowConfig) -> set[str]:
@@ -69,226 +63,6 @@ def _detect_cycles(config: WorkflowConfig) -> None:
     for node in adj:
         if color[node] == WHITE:
             dfs(node)
-
-
-def _make_phase_node(
-    phase: Phase,
-    config: WorkflowConfig,
-    executor: PhaseExecutor | None = None,
-):
-    """Create a node function for a phase.
-
-    The node function handles:
-    - Skipping if a dependency failed
-    - Dry-run mode (trace without executing)
-    - Calling the executor and collecting results
-    - Evaluating quality gates after execution
-    - Populating gate_scores and retries in state
-    """
-    max_retries = phase.effective_max_retries(config.settings)
-    timeout = phase.effective_timeout(config.settings)
-
-    async def node_fn(state: WorkflowState) -> dict[str, Any]:
-        # Skip if already completed (resume mode)
-        if phase.id in state.get("completed_phases", []):
-            return {}
-
-        # Skip if any dependency failed
-        failed = state.get("failed_phases", [])
-        for dep in phase.depends_on:
-            if dep in failed:
-                return {
-                    "failed_phases": [phase.id],
-                    "errors": [
-                        {
-                            "phase": phase.id,
-                            "error": f"Skipped: dependency '{dep}' failed",
-                        }
-                    ],
-                }
-
-        if state.get("dry_run", False):
-            update: dict[str, Any] = {
-                "completed_phases": [phase.id],
-                "phase_outputs": {phase.id: f"[dry-run] {phase.name}"},
-            }
-            # Set gate score to 1.0 so gate router routes to "pass"
-            if phase.quality_gate:
-                update["gate_scores"] = {phase.id: 1.0}
-            return update
-
-        if executor is None:
-            update = {
-                "completed_phases": [phase.id],
-                "phase_outputs": {phase.id: f"[no-executor] {phase.name}"},
-            }
-            if phase.quality_gate:
-                update["gate_scores"] = {phase.id: 1.0}
-            return update
-
-        from abe_froman.executor.base import PhaseResult
-
-        # Build context from dependency outputs
-        context: dict[str, Any] = {}
-        for dep in phase.depends_on:
-            if dep in state.get("phase_outputs", {}):
-                context[dep] = state["phase_outputs"][dep]
-            if dep in state.get("phase_structured_outputs", {}):
-                context[f"{dep}_structured"] = state["phase_structured_outputs"][dep]
-
-        # Inject retry context so prompts can reference {{_retry_reason}}
-        retry_count = state.get("retries", {}).get(phase.id, 0)
-
-        # Apply backoff delay before retry execution
-        if retry_count > 0:
-            delay = _get_retry_delay(retry_count, config.settings.retry_backoff)
-            if delay > 0:
-                await asyncio.sleep(delay)
-
-        if retry_count > 0 and phase.quality_gate:
-            prev_score = state.get("gate_scores", {}).get(phase.id, 0.0)
-            context["_retry_reason"] = (
-                f"Attempt {retry_count} failed quality gate "
-                f"(score={prev_score:.2f}, threshold={phase.quality_gate.threshold}). "
-                f"This is retry {retry_count} of {max_retries}."
-            )
-
-        # Scaffold output directory before execution
-        if phase.output_contract:
-            from abe_froman.engine.contracts import scaffold_output_directory
-
-            scaffold_output_directory(phase.output_contract, state.get("workdir", "."))
-
-        try:
-            if timeout is not None:
-                result: PhaseResult = await asyncio.wait_for(
-                    executor.execute(phase, context), timeout=timeout
-                )
-            else:
-                result: PhaseResult = await executor.execute(phase, context)
-        except asyncio.TimeoutError:
-            return {
-                "failed_phases": [phase.id],
-                "errors": [
-                    {
-                        "phase": phase.id,
-                        "error": f"Phase timed out after {timeout}s",
-                    }
-                ],
-            }
-
-        if not result.success:
-            return {
-                "failed_phases": [phase.id],
-                "errors": [{"phase": phase.id, "error": result.error}],
-            }
-
-        update: dict[str, Any] = {
-            "phase_outputs": {phase.id: result.output},
-        }
-        if result.structured_output is not None:
-            update["phase_structured_outputs"] = {
-                phase.id: result.structured_output
-            }
-        if result.tokens_used is not None:
-            update["token_usage"] = {phase.id: result.tokens_used}
-
-        # Validate output contract before gate evaluation
-        if phase.output_contract:
-            from abe_froman.engine.contracts import validate_output_contract
-
-            missing = validate_output_contract(
-                phase.output_contract, state.get("workdir", ".")
-            )
-            if missing:
-                return {
-                    "failed_phases": [phase.id],
-                    "errors": [
-                        {
-                            "phase": phase.id,
-                            "error": (
-                                f"Output contract violated: missing files: "
-                                f"{', '.join(missing)}"
-                            ),
-                        }
-                    ],
-                    "phase_outputs": {phase.id: result.output},
-                }
-
-        # Evaluate quality gate if present
-        if phase.quality_gate:
-            retries = state.get("retries", {}).get(phase.id, 0)
-            try:
-                if timeout is not None:
-                    score = await asyncio.wait_for(
-                        evaluate_gate(
-                            phase.quality_gate,
-                            phase.id,
-                            workdir=state.get("workdir", "."),
-                            phase_output=result.output,
-                            workflow_name=config.name,
-                            attempt_number=retries + 1,
-                        ),
-                        timeout=timeout,
-                    )
-                else:
-                    score = await evaluate_gate(
-                        phase.quality_gate,
-                        phase.id,
-                        workdir=state.get("workdir", "."),
-                        phase_output=result.output,
-                        workflow_name=config.name,
-                        attempt_number=retries + 1,
-                    )
-            except asyncio.TimeoutError:
-                return {
-                    "failed_phases": [phase.id],
-                    "errors": [
-                        {
-                            "phase": phase.id,
-                            "error": f"Quality gate timed out after {timeout}s",
-                        }
-                    ],
-                }
-            update["gate_scores"] = {phase.id: score}
-
-            if score >= phase.quality_gate.threshold:
-                update["completed_phases"] = [phase.id]
-            elif retries < max_retries:
-                update["retries"] = {phase.id: retries + 1}
-                # Don't add to completed — gate router will send back to retry
-            else:
-                if phase.quality_gate.blocking:
-                    update["failed_phases"] = [phase.id]
-                    update["errors"] = [
-                        {
-                            "phase": phase.id,
-                            "error": (
-                                f"Quality gate failed after {max_retries} retries "
-                                f"(score={score:.2f}, threshold={phase.quality_gate.threshold})"
-                            ),
-                        }
-                    ]
-                else:
-                    # Non-blocking gate: pass through with warning
-                    update["completed_phases"] = [phase.id]
-                    update["errors"] = [
-                        {
-                            "phase": phase.id,
-                            "error": (
-                                f"Quality gate below threshold after {max_retries} retries "
-                                f"(score={score:.2f}, threshold={phase.quality_gate.threshold}), "
-                                f"continuing (non-blocking)"
-                            ),
-                        }
-                    ]
-        else:
-            update["completed_phases"] = [phase.id]
-
-        return update
-
-    node_fn.__name__ = f"node_{phase.id}"
-    return node_fn
 
 
 def _make_subphase_node(
