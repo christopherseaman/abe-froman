@@ -1,24 +1,18 @@
 from __future__ import annotations
 
-import asyncio
 from typing import TYPE_CHECKING, Any
 
 from langgraph.graph import END, START, StateGraph
 
-from abe_froman.compile.nodes import (
-    _get_retry_delay,
-    _make_phase_node,
-    execute_with_timeout,
-    make_failure_update,
-)
+from abe_froman.compile.dynamic import _make_final_phase_node, _make_subphase_node
+from abe_froman.compile.nodes import _get_retry_delay, _make_phase_node
 from abe_froman.compile.routers import (
     _make_dynamic_router,
     _make_gate_router,
     _read_manifest,
 )
-from abe_froman.engine.gates import evaluate_gate
 from abe_froman.engine.state import WorkflowState
-from abe_froman.schema.models import Phase, WorkflowConfig
+from abe_froman.schema.models import WorkflowConfig
 
 if TYPE_CHECKING:
     from abe_froman.executor.base import PhaseExecutor
@@ -63,186 +57,6 @@ def _detect_cycles(config: WorkflowConfig) -> None:
     for node in adj:
         if color[node] == WHITE:
             dfs(node)
-
-
-def _make_subphase_node(
-    parent_phase: Phase,
-    config: WorkflowConfig,
-    executor: PhaseExecutor | None = None,
-):
-    """Create a template node function for dynamic subphases.
-
-    Each invocation receives a different ``_subphase_item`` via LangGraph's
-    Send — the manifest item dict for this particular subphase instance.
-    """
-    template = parent_phase.dynamic_subphases.template
-    timeout = parent_phase.effective_timeout(config.settings)
-
-    async def node_fn(state: WorkflowState) -> dict[str, Any]:
-        import json as _json
-
-        item = state.get("_subphase_item", {})
-        item_id = item.get("id", "unknown")
-        subphase_id = f"{parent_phase.id}::{item_id}"
-
-        # Skip if already completed (resume mode)
-        if subphase_id in state.get("completed_phases", []):
-            return {}
-
-        if state.get("dry_run", False):
-            return {
-                "completed_phases": [subphase_id],
-                "phase_outputs": {subphase_id: f"[dry-run] subphase {item_id}"},
-                "subphase_outputs": {subphase_id: f"[dry-run] subphase {item_id}"},
-            }
-
-        if executor is None:
-            return {
-                "completed_phases": [subphase_id],
-                "phase_outputs": {subphase_id: f"[no-executor] subphase {item_id}"},
-                "subphase_outputs": {subphase_id: f"[no-executor] subphase {item_id}"},
-            }
-
-        synthetic_phase = Phase(
-            id=subphase_id,
-            name=f"{parent_phase.name} - {item.get('name', item_id)}",
-            prompt_file=template.prompt_file,
-            model=parent_phase.model,
-        )
-
-        # Context: parent output + each manifest item field as a template var
-        context: dict[str, Any] = {}
-        parent_output = state.get("phase_outputs", {}).get(parent_phase.id, "")
-        context[parent_phase.id] = parent_output
-        for key, value in item.items():
-            context[key] = str(value)
-
-        from abe_froman.executor.base import PhaseResult
-
-        try:
-            if timeout is not None:
-                result: PhaseResult = await asyncio.wait_for(
-                    executor.execute(synthetic_phase, context), timeout=timeout
-                )
-            else:
-                result: PhaseResult = await executor.execute(synthetic_phase, context)
-        except asyncio.TimeoutError:
-            return {
-                "failed_phases": [subphase_id],
-                "errors": [
-                    {
-                        "phase": subphase_id,
-                        "error": f"Phase timed out after {timeout}s",
-                    }
-                ],
-            }
-
-        if not result.success:
-            return {
-                "failed_phases": [subphase_id],
-                "errors": [{"phase": subphase_id, "error": result.error}],
-            }
-
-        update: dict[str, Any] = {
-            "completed_phases": [subphase_id],
-            "phase_outputs": {subphase_id: result.output},
-            "subphase_outputs": {subphase_id: result.output},
-        }
-        if result.tokens_used is not None:
-            update["token_usage"] = {subphase_id: result.tokens_used}
-
-        if template.quality_gate:
-            try:
-                if timeout is not None:
-                    score = await asyncio.wait_for(
-                        evaluate_gate(
-                            template.quality_gate,
-                            subphase_id,
-                            workdir=state.get("workdir", "."),
-                            phase_output=result.output,
-                            workflow_name=config.name,
-                            attempt_number=1,
-                        ),
-                        timeout=timeout,
-                    )
-                else:
-                    score = await evaluate_gate(
-                        template.quality_gate,
-                        subphase_id,
-                        workdir=state.get("workdir", "."),
-                        phase_output=result.output,
-                        workflow_name=config.name,
-                        attempt_number=1,
-                    )
-            except asyncio.TimeoutError:
-                return {
-                    "failed_phases": [subphase_id],
-                    "errors": [
-                        {
-                            "phase": subphase_id,
-                            "error": f"Quality gate timed out after {timeout}s",
-                        }
-                    ],
-                }
-            update["gate_scores"] = {subphase_id: score}
-
-        return update
-
-    node_fn.__name__ = f"subphase_{parent_phase.id}"
-    return node_fn
-
-
-def _make_final_phase_node(
-    parent_phase: Phase,
-    final_phase,
-    config: WorkflowConfig,
-    executor: PhaseExecutor | None = None,
-):
-    """Create a node function for a final phase in a dynamic subphase group.
-
-    Final phases receive all subphase outputs for the parent in their context.
-    """
-    node_id = f"_final_{parent_phase.id}_{final_phase.id}"
-
-    # Build a synthetic Phase from the FinalPhase schema object
-    synthetic = Phase(
-        id=node_id,
-        name=final_phase.name,
-        description=final_phase.description,
-        prompt_file=final_phase.prompt_file,
-        execution=final_phase.execution,
-        quality_gate=final_phase.quality_gate,
-        model=parent_phase.model,
-    )
-
-    # Reuse _make_phase_node for execution + gate logic, but wrap it to
-    # inject subphase outputs into context.
-    inner = _make_phase_node(synthetic, config, executor)
-
-    async def node_fn(state: WorkflowState) -> dict[str, Any]:
-        # Collect all subphase outputs for this parent into phase_outputs
-        # so the inner node can pick them up via dependency context.
-        # We inject a synthetic key `_all_subphases` with aggregated output.
-        import json as _json
-
-        prefix = f"{parent_phase.id}::"
-        sub_outputs = {
-            k: v
-            for k, v in state.get("subphase_outputs", {}).items()
-            if k.startswith(prefix)
-        }
-
-        # Make subphase outputs available as phase_outputs so the inner
-        # node's context builder can find them. Also inject a summary key.
-        enriched = dict(state)
-        enriched_outputs = dict(state.get("phase_outputs", {}))
-        enriched_outputs[f"{parent_phase.id}_subphases"] = _json.dumps(sub_outputs)
-        enriched["phase_outputs"] = enriched_outputs
-
-        return await inner(enriched)
-
-    node_fn.__name__ = f"final_{parent_phase.id}_{final_phase.id}"
-    return node_fn
 
 
 def build_workflow_graph(
