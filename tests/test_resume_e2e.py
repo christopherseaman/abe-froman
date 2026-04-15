@@ -8,16 +8,16 @@ import json
 
 import pytest
 
-from abe_froman.engine.builder import build_workflow_graph
-from abe_froman.engine.persistence import (
+from abe_froman.compile.graph import build_workflow_graph
+from abe_froman.workflow.persistence import (
     STATE_FILENAME,
     load_state,
     save_state,
 )
-from abe_froman.engine.resume import prepare_resume_state, prepare_start_state
-from abe_froman.engine.runner import run_workflow
-from abe_froman.engine.state import make_initial_state
-from abe_froman.executor.dispatch import DispatchExecutor
+from abe_froman.workflow.resume import prepare_resume_state, prepare_start_state
+from abe_froman.workflow.runner import run_workflow
+from abe_froman.runtime.state import make_initial_state
+from abe_froman.runtime.executor.dispatch import DispatchExecutor
 
 from helpers import cmd_phase, fail_phase, make_config
 

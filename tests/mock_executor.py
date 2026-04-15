@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from abe_froman.executor.base import PhaseResult
+from abe_froman.runtime.executor.base import PhaseResult
 from abe_froman.schema.models import Phase
 
 

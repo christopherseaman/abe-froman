@@ -1,6 +1,6 @@
 """Unit tests for _merge_dicts and make_initial_state in engine/state.py."""
 
-from abe_froman.engine.state import _merge_dicts, make_initial_state
+from abe_froman.runtime.state import _merge_dicts, make_initial_state
 
 
 class TestMergeDicts:

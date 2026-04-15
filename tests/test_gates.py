@@ -3,11 +3,11 @@ import json
 
 import pytest
 
-from abe_froman.engine.builder import build_workflow_graph
-from abe_froman.engine.gates import evaluate_gate
-from abe_froman.engine.state import make_initial_state
-from abe_froman.executor.backends.acp import ACPBackend
-from abe_froman.executor.dispatch import DispatchExecutor
+from abe_froman.compile.graph import build_workflow_graph
+from abe_froman.runtime.gates import evaluate_gate
+from abe_froman.runtime.state import make_initial_state
+from abe_froman.runtime.executor.backends.acp import ACPBackend
+from abe_froman.runtime.executor.dispatch import DispatchExecutor
 from abe_froman.schema.models import QualityGate
 
 from helpers import make_config
@@ -416,20 +416,20 @@ class TestRetryBackoff:
     """Tests for stepped retry backoff delays."""
 
     def test_get_retry_delay_empty_list(self):
-        from abe_froman.engine.builder import _get_retry_delay
+        from abe_froman.compile.nodes import _get_retry_delay
 
         assert _get_retry_delay(1, []) == 0.0
         assert _get_retry_delay(5, []) == 0.0
 
     def test_get_retry_delay_single_element(self):
-        from abe_froman.engine.builder import _get_retry_delay
+        from abe_froman.compile.nodes import _get_retry_delay
 
         assert _get_retry_delay(1, [10.0]) == 10.0
         assert _get_retry_delay(2, [10.0]) == 10.0
         assert _get_retry_delay(5, [10.0]) == 10.0
 
     def test_get_retry_delay_multiple_elements(self):
-        from abe_froman.engine.builder import _get_retry_delay
+        from abe_froman.compile.nodes import _get_retry_delay
 
         backoff = [10.0, 30.0, 60.0]
         assert _get_retry_delay(1, backoff) == 10.0

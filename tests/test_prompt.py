@@ -2,15 +2,15 @@
 
 import pytest
 
-from abe_froman.executor.prompt import (
+from abe_froman.runtime.executor.prompt import (
     MODEL_DOWNGRADE_CHAIN,
     PromptExecutor,
     downgrade_model,
     render_template,
     resolve_model,
 )
-from abe_froman.executor.prompt_backend import OverloadError, PromptBackend, PromptBackendResult
-from abe_froman.executor.backends.stub import StubBackend
+from abe_froman.runtime.executor.prompt_backend import OverloadError, PromptBackend, PromptBackendResult
+from abe_froman.runtime.executor.backends.stub import StubBackend
 from abe_froman.schema.models import Phase, Settings
 
 

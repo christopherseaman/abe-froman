@@ -2,7 +2,7 @@
 
 import pytest
 
-from abe_froman.executor.command import CommandExecutor
+from abe_froman.runtime.executor.command import CommandExecutor
 from abe_froman.schema.models import Phase
 
 

@@ -6,8 +6,8 @@ based on score, threshold, retries, and blocking flag.
 
 import pytest
 
-from abe_froman.engine.builder import _make_gate_router
-from abe_froman.engine.state import make_initial_state
+from abe_froman.compile.routers import _make_gate_router
+from abe_froman.runtime.state import make_initial_state
 from abe_froman.schema.models import Phase, QualityGate
 
 

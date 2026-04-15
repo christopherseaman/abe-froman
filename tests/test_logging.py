@@ -5,11 +5,11 @@ from io import StringIO
 
 import pytest
 
-from abe_froman.engine.builder import build_workflow_graph
-from abe_froman.engine.logging import JsonlLogger
-from abe_froman.engine.runner import run_workflow
-from abe_froman.engine.state import make_initial_state
-from abe_froman.executor.dispatch import DispatchExecutor
+from abe_froman.compile.graph import build_workflow_graph
+from abe_froman.workflow.logging import JsonlLogger
+from abe_froman.workflow.runner import run_workflow
+from abe_froman.runtime.state import make_initial_state
+from abe_froman.runtime.executor.dispatch import DispatchExecutor
 
 from helpers import cmd_phase, fail_phase, make_config
 

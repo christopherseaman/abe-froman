@@ -1,6 +1,6 @@
 import pytest
 
-from abe_froman.engine.builder import build_workflow_graph
+from abe_froman.compile.graph import build_workflow_graph
 from abe_froman.schema.models import WorkflowConfig
 
 from helpers import make_config

@@ -1,6 +1,6 @@
 """Unit tests for output contract validation."""
 
-from abe_froman.engine.contracts import validate_output_contract
+from abe_froman.runtime.contracts import validate_output_contract
 from abe_froman.schema.models import OutputContract
 
 

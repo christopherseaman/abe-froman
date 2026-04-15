@@ -2,7 +2,7 @@
 
 import pytest
 
-from abe_froman.executor.prompt_backend import PromptBackendResult
+from abe_froman.runtime.executor.prompt_backend import PromptBackendResult
 
 
 # ---------------------------------------------------------------------------
@@ -12,7 +12,7 @@ from abe_froman.executor.prompt_backend import PromptBackendResult
 
 class TestResponseAccumulator:
     def test_collects_chunks(self):
-        from abe_froman.executor.backends.acp import _ResponseAccumulator
+        from abe_froman.runtime.executor.backends.acp import _ResponseAccumulator
 
         acc = _ResponseAccumulator()
         acc.append("Hello ")
@@ -20,7 +20,7 @@ class TestResponseAccumulator:
         assert acc.text() == "Hello world"
 
     def test_empty_accumulator(self):
-        from abe_froman.executor.backends.acp import _ResponseAccumulator
+        from abe_froman.runtime.executor.backends.acp import _ResponseAccumulator
 
         acc = _ResponseAccumulator()
         assert acc.text() == ""
@@ -33,21 +33,21 @@ class TestResponseAccumulator:
 
 class TestFactory:
     def test_stub_backend_created(self):
-        from abe_froman.executor.backends.factory import create_prompt_backend
-        from abe_froman.executor.backends.stub import StubBackend
+        from abe_froman.runtime.executor.backends.factory import create_prompt_backend
+        from abe_froman.runtime.executor.backends.stub import StubBackend
 
         backend = create_prompt_backend("stub")
         assert isinstance(backend, StubBackend)
 
     def test_acp_backend_created(self):
-        from abe_froman.executor.backends.factory import create_prompt_backend
-        from abe_froman.executor.backends.acp import ACPBackend
+        from abe_froman.runtime.executor.backends.factory import create_prompt_backend
+        from abe_froman.runtime.executor.backends.acp import ACPBackend
 
         backend = create_prompt_backend("acp")
         assert isinstance(backend, ACPBackend)
 
     def test_unknown_type_raises(self):
-        from abe_froman.executor.backends.factory import create_prompt_backend
+        from abe_froman.runtime.executor.backends.factory import create_prompt_backend
 
         with pytest.raises(ValueError, match="Unknown executor type"):
             create_prompt_backend("nonexistent")
@@ -62,7 +62,7 @@ class TestACPIntegration:
     @pytest.mark.asyncio
     async def test_send_prompt_returns_text(self):
         """Send a real prompt via ACP and verify we get a non-empty response."""
-        from abe_froman.executor.backends.acp import ACPBackend
+        from abe_froman.runtime.executor.backends.acp import ACPBackend
 
         backend = ACPBackend()
         try:
@@ -80,7 +80,7 @@ class TestACPIntegration:
     @pytest.mark.asyncio
     async def test_session_reuse_across_prompts(self):
         """Two prompts on the same backend reuse the session (no re-init)."""
-        from abe_froman.executor.backends.acp import ACPBackend
+        from abe_froman.runtime.executor.backends.acp import ACPBackend
 
         backend = ACPBackend()
         try:
@@ -105,7 +105,7 @@ class TestACPIntegration:
     @pytest.mark.asyncio
     async def test_close_resets_state(self):
         """After close(), the backend is no longer initialized."""
-        from abe_froman.executor.backends.acp import ACPBackend
+        from abe_froman.runtime.executor.backends.acp import ACPBackend
 
         backend = ACPBackend()
         try:
@@ -119,8 +119,8 @@ class TestACPIntegration:
     @pytest.mark.asyncio
     async def test_full_pipeline_via_dispatch(self, tmp_path):
         """End-to-end: DispatchExecutor → PromptExecutor → ACPBackend."""
-        from abe_froman.executor.backends.acp import ACPBackend
-        from abe_froman.executor.dispatch import DispatchExecutor
+        from abe_froman.runtime.executor.backends.acp import ACPBackend
+        from abe_froman.runtime.executor.dispatch import DispatchExecutor
         from abe_froman.schema.models import Phase, Settings
 
         prompt_file = tmp_path / "test.md"

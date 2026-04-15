@@ -2,7 +2,7 @@
 
 import pytest
 
-from abe_froman.engine.resume import (
+from abe_froman.workflow.resume import (
     _upstream_phases,
     prepare_resume_state,
     prepare_start_state,

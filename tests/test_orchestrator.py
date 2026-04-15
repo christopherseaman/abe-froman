@@ -6,9 +6,9 @@ No MockExecutor, no stub validators.
 
 import pytest
 
-from abe_froman.engine.builder import build_workflow_graph
-from abe_froman.engine.state import make_initial_state
-from abe_froman.executor.dispatch import DispatchExecutor
+from abe_froman.compile.graph import build_workflow_graph
+from abe_froman.runtime.state import make_initial_state
+from abe_froman.runtime.executor.dispatch import DispatchExecutor
 from abe_froman.schema.models import Phase
 
 from helpers import cmd_phase, fail_phase, make_config
@@ -385,7 +385,7 @@ class TestRetryContextInjection:
         )
 
         from mock_executor import MockExecutor
-        from abe_froman.executor.base import PhaseResult
+        from abe_froman.runtime.executor.base import PhaseResult
 
         mock = MockExecutor(results={
             "p1": PhaseResult(success=True, output="data"),
@@ -430,7 +430,7 @@ class TestRetryContextInjection:
         )
 
         from mock_executor import MockExecutor
-        from abe_froman.executor.base import PhaseResult
+        from abe_froman.runtime.executor.base import PhaseResult
 
         mock = MockExecutor(results={
             "p1": PhaseResult(success=True, output="data"),
@@ -466,7 +466,7 @@ class TestRetryContextInjection:
         script.write_text("print(1.0)")
 
         from mock_executor import MockExecutor
-        from abe_froman.executor.base import PhaseResult
+        from abe_froman.runtime.executor.base import PhaseResult
 
         mock = MockExecutor(results={
             "p1": PhaseResult(success=True, output="data"),
@@ -499,7 +499,7 @@ class TestContextPropagation:
     @pytest.mark.asyncio
     async def test_dependency_output_in_executor_context(self):
         from mock_executor import MockExecutor
-        from abe_froman.executor.base import PhaseResult
+        from abe_froman.runtime.executor.base import PhaseResult
 
         mock = MockExecutor(results={
             "a": PhaseResult(success=True, output="a-output"),
@@ -518,7 +518,7 @@ class TestContextPropagation:
     @pytest.mark.asyncio
     async def test_structured_output_flows_to_dependent(self):
         from mock_executor import MockExecutor
-        from abe_froman.executor.base import PhaseResult
+        from abe_froman.runtime.executor.base import PhaseResult
 
         mock = MockExecutor(results={
             "a": PhaseResult(
@@ -546,7 +546,7 @@ class TestTokenUsageAccumulation:
     @pytest.mark.asyncio
     async def test_token_usage_accumulated_in_state(self):
         from mock_executor import MockExecutor
-        from abe_froman.executor.base import PhaseResult
+        from abe_froman.runtime.executor.base import PhaseResult
 
         mock = MockExecutor(results={
             "a": PhaseResult(
@@ -583,7 +583,7 @@ class TestTokenUsageAccumulation:
     @pytest.mark.asyncio
     async def test_token_usage_none_not_stored(self):
         from mock_executor import MockExecutor
-        from abe_froman.executor.base import PhaseResult
+        from abe_froman.runtime.executor.base import PhaseResult
 
         mock = MockExecutor(results={
             "a": PhaseResult(success=True, output="out", tokens_used=None),

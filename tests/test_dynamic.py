@@ -8,9 +8,9 @@ import json
 
 import pytest
 
-from abe_froman.engine.builder import build_workflow_graph
-from abe_froman.engine.state import make_initial_state
-from abe_froman.executor.dispatch import DispatchExecutor
+from abe_froman.compile.graph import build_workflow_graph
+from abe_froman.runtime.state import make_initial_state
+from abe_froman.runtime.executor.dispatch import DispatchExecutor
 
 from helpers import cmd_phase, make_config
 
