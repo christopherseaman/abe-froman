@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from abe_froman.compile.routers import _read_manifest
+from abe_froman.compile.graph import _read_manifest
 from abe_froman.runtime.state import make_initial_state
 from abe_froman.schema.models import DynamicPhaseConfig, Phase, SubphaseTemplate
 

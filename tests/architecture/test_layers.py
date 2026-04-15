@@ -1,6 +1,6 @@
 """Layer boundary enforcement via AST walking.
 
-Ensures import rules between schema/, compile/, runtime/, and workflow/
+Ensures import rules between schema/, compile/, and runtime/
 are respected at CI time. Zero extra dependencies.
 """
 
@@ -51,22 +51,8 @@ class TestSchemaLayerIsolation:
                 f"{f.relative_to(SRC)} imports abe_froman.runtime"
             )
 
-    def test_no_workflow(self):
-        for f in _files_under("schema"):
-            imports = _imports_in_file(f)
-            assert not _starts_with(imports, "abe_froman.workflow"), (
-                f"{f.relative_to(SRC)} imports abe_froman.workflow"
-            )
-
 
 class TestCompileLayerIsolation:
-    def test_no_workflow(self):
-        for f in _files_under("compile"):
-            imports = _imports_in_file(f)
-            assert not _starts_with(imports, "abe_froman.workflow"), (
-                f"{f.relative_to(SRC)} imports abe_froman.workflow"
-            )
-
     def test_no_cli(self):
         for f in _files_under("compile"):
             imports = _imports_in_file(f)
@@ -81,13 +67,6 @@ class TestRuntimeLayerIsolation:
             imports = _imports_in_file(f)
             assert not _starts_with(imports, "abe_froman.compile"), (
                 f"{f.relative_to(SRC)} imports abe_froman.compile"
-            )
-
-    def test_no_workflow(self):
-        for f in _files_under("runtime"):
-            imports = _imports_in_file(f)
-            assert not _starts_with(imports, "abe_froman.workflow"), (
-                f"{f.relative_to(SRC)} imports abe_froman.workflow"
             )
 
     def test_no_langgraph(self):

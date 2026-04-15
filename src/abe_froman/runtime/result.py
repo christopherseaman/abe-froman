@@ -1,20 +1,16 @@
-"""Unified result type for backends, executors, and subprocesses.
+"""Execution result type and executor protocols.
 
-Conventions:
-- success=True + output  → happy path
-- success=False + error  → failure as value (executor owns retry policy)
-- Backends raise OverloadError for 529/overload; executor catches and
-  walks the model downgrade chain.
-- Backends never set success=False directly — they raise on transport
-  errors and let the executor classify them.
-
-The executor layer owns retry policy; the backend layer owns transport.
+ExecutionResult is the single result type for backends, executors, and
+subprocesses. PhaseExecutor and PromptBackend are the two duck-typed
+protocols that produce them.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
+
+from abe_froman.schema.models import Phase
 
 
 @dataclass
@@ -30,3 +26,17 @@ class OverloadError(Exception):
     """Raised by a PromptBackend when the API returns 529/overloaded."""
 
     pass
+
+
+@runtime_checkable
+class PhaseExecutor(Protocol):
+    async def execute(self, phase: Phase, context: dict[str, Any]) -> ExecutionResult: ...
+
+
+@runtime_checkable
+class PromptBackend(Protocol):
+    async def send_prompt(
+        self, prompt: str, model: str, workdir: str
+    ) -> ExecutionResult: ...
+
+    async def close(self) -> None: ...

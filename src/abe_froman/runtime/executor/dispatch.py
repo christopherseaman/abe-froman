@@ -5,7 +5,7 @@ from typing import Any
 from abe_froman.runtime.result import ExecutionResult
 from abe_froman.runtime.executor.command import CommandExecutor
 from abe_froman.runtime.executor.prompt import PromptExecutor
-from abe_froman.runtime.executor.prompt_backend import PromptBackend
+from abe_froman.runtime.result import PromptBackend
 from abe_froman.schema.models import CommandExecution, GateOnlyExecution, Phase, PromptExecution, Settings
 
 

@@ -154,22 +154,23 @@ Score can be a plain float or JSON `{"score": 0.75}`.
 
 ## Project Layout
 
-- `src/abe_froman/schema/models.py` — Pydantic models (WorkflowConfig, Phase, execution types)
-- `src/abe_froman/engine/state.py` — WorkflowState TypedDict with LangGraph reducers
-- `src/abe_froman/engine/builder.py` — YAML → LangGraph StateGraph construction
-- `src/abe_froman/engine/gates.py` — Quality gate evaluation + routing
-- `src/abe_froman/engine/persistence.py` — State save/load/clear to `.abe-froman-state.json`
-- `src/abe_froman/engine/resume.py` — Resume/start-from state preparation
-- `src/abe_froman/engine/logging.py` — Structured JSONL event logger
-- `src/abe_froman/engine/runner.py` — Streaming execution with state persistence and optional JSONL logging
-- `src/abe_froman/executor/base.py` — PhaseExecutor Protocol + PhaseResult
-- `src/abe_froman/executor/dispatch.py` — Routes execution by phase type
-- `src/abe_froman/executor/command.py` — Subprocess executor
-- `src/abe_froman/executor/prompt.py` — PromptExecutor (template rendering, model resolution)
-- `src/abe_froman/executor/prompt_backend.py` — PromptBackend Protocol
-- `src/abe_froman/executor/backends/stub.py` — Stub backend (default)
-- `src/abe_froman/executor/backends/acp.py` — ACP backend (claude-code-acp)
-- `src/abe_froman/executor/backends/factory.py` — Backend factory
+- `src/abe_froman/schema/models.py` — Pydantic DSL (WorkflowConfig, Phase, execution types)
+- `src/abe_froman/compile/graph.py` — YAML → LangGraph StateGraph (gate routers, dynamic fan-out)
+- `src/abe_froman/compile/nodes.py` — Phase node factory + pure helpers
+- `src/abe_froman/compile/dynamic.py` — Dynamic subphase node factories
+- `src/abe_froman/runtime/state.py` — WorkflowState TypedDict with LangGraph reducers
+- `src/abe_froman/runtime/result.py` — ExecutionResult, PhaseExecutor/PromptBackend protocols
+- `src/abe_froman/runtime/gates.py` — Quality gate evaluation + output contract validation
+- `src/abe_froman/runtime/persistence.py` — State save/load/clear to `.abe-froman-state.json`
+- `src/abe_froman/runtime/resume.py` — Resume/start-from state preparation
+- `src/abe_froman/runtime/logging.py` — Structured JSONL event logger
+- `src/abe_froman/runtime/runner.py` — Streaming execution with state persistence
+- `src/abe_froman/runtime/executor/dispatch.py` — Routes execution by phase type
+- `src/abe_froman/runtime/executor/command.py` — Subprocess executor
+- `src/abe_froman/runtime/executor/prompt.py` — PromptExecutor (template rendering, model downgrade)
+- `src/abe_froman/runtime/executor/backends/stub.py` — Stub backend (default)
+- `src/abe_froman/runtime/executor/backends/acp.py` — ACP backend (claude-code-acp)
+- `src/abe_froman/runtime/executor/backends/factory.py` — Backend factory
 - `src/abe_froman/cli/main.py` — Click CLI
 
 ## Key Design Decisions

@@ -15,7 +15,7 @@ from abe_froman.runtime.state import WorkflowState
 from abe_froman.schema.models import Phase, WorkflowConfig
 
 if TYPE_CHECKING:
-    from abe_froman.runtime.executor.base import PhaseExecutor
+    from abe_froman.runtime.result import PhaseExecutor
 
 
 def _make_subphase_node(

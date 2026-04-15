@@ -6,8 +6,8 @@ from io import StringIO
 import pytest
 
 from abe_froman.compile.graph import build_workflow_graph
-from abe_froman.workflow.logging import JsonlLogger
-from abe_froman.workflow.runner import run_workflow
+from abe_froman.runtime.logging import JsonlLogger
+from abe_froman.runtime.runner import run_workflow
 from abe_froman.runtime.state import make_initial_state
 from abe_froman.runtime.executor.dispatch import DispatchExecutor
 

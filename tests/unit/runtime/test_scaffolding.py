@@ -1,7 +1,7 @@
 """Tests for output directory scaffolding."""
 
 from abe_froman.compile.graph import build_workflow_graph
-from abe_froman.runtime.contracts import scaffold_output_directory
+from abe_froman.runtime.gates import scaffold_output_directory
 from abe_froman.schema.models import OutputContract
 from helpers import cmd_phase, make_config
 from mock_executor import MockExecutor

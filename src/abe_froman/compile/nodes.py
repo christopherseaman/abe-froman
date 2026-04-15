@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any
 
-from abe_froman.runtime.contracts import (
+from abe_froman.runtime.gates import (
     scaffold_output_directory,
     validate_output_contract,
 )
@@ -20,7 +20,7 @@ from abe_froman.runtime.state import WorkflowState
 from abe_froman.schema.models import Phase, Settings, WorkflowConfig
 
 if TYPE_CHECKING:
-    from abe_froman.runtime.executor.base import PhaseExecutor
+    from abe_froman.runtime.result import PhaseExecutor
 
 
 def _get_retry_delay(retry_count: int, backoff: list[float]) -> float:
@@ -33,12 +33,6 @@ def _get_retry_delay(retry_count: int, backoff: list[float]) -> float:
         return 0.0
     idx = min(retry_count - 1, len(backoff) - 1)
     return backoff[idx]
-
-
-def check_already_completed(phase: Phase, state: WorkflowState) -> dict | None:
-    if phase.id in state.get("completed_phases", []):
-        return {}
-    return None
 
 
 def check_dep_failed(phase: Phase, state: WorkflowState) -> dict | None:
@@ -63,18 +57,6 @@ def check_dry_run(phase: Phase, state: WorkflowState) -> dict | None:
     update: dict[str, Any] = {
         "completed_phases": [phase.id],
         "phase_outputs": {phase.id: f"[dry-run] {phase.name}"},
-    }
-    if phase.quality_gate:
-        update["gate_scores"] = {phase.id: 1.0}
-    return update
-
-
-def check_no_executor(phase: Phase, state: WorkflowState, executor) -> dict | None:
-    if executor is not None:
-        return None
-    update: dict[str, Any] = {
-        "completed_phases": [phase.id],
-        "phase_outputs": {phase.id: f"[no-executor] {phase.name}"},
     }
     if phase.quality_gate:
         update["gate_scores"] = {phase.id: 1.0}
@@ -247,11 +229,19 @@ def _make_phase_node(
     timeout = phase.effective_timeout(config.settings)
 
     async def node_fn(state: WorkflowState) -> dict[str, Any]:
-        for check in (check_already_completed, check_dep_failed, check_dry_run):
+        if phase.id in state.get("completed_phases", []):
+            return {}
+        for check in (check_dep_failed, check_dry_run):
             if (r := check(phase, state)) is not None:
                 return r
-        if (r := check_no_executor(phase, state, executor)) is not None:
-            return r
+        if executor is None:
+            update: dict[str, Any] = {
+                "completed_phases": [phase.id],
+                "phase_outputs": {phase.id: f"[no-executor] {phase.name}"},
+            }
+            if phase.quality_gate:
+                update["gate_scores"] = {phase.id: 1.0}
+            return update
 
         context = build_context(phase, state)
         await apply_backoff(phase, state, config.settings)

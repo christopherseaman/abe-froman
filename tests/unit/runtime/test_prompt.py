@@ -9,7 +9,7 @@ from abe_froman.runtime.executor.prompt import (
     render_template,
     resolve_model,
 )
-from abe_froman.runtime.executor.prompt_backend import OverloadError, PromptBackend
+from abe_froman.runtime.result import OverloadError, PromptBackend
 from abe_froman.runtime.result import ExecutionResult
 from abe_froman.runtime.executor.backends.stub import StubBackend
 from abe_froman.schema.models import Phase, Settings

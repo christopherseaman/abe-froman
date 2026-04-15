@@ -13,10 +13,8 @@ from abe_froman.compile.nodes import (
     assemble_success_update,
     build_context,
     build_gate_outcome_update,
-    check_already_completed,
     check_dep_failed,
     check_dry_run,
-    check_no_executor,
     classify_gate_outcome,
     execute_with_timeout,
     inject_retry_reason,
@@ -49,20 +47,6 @@ class TestGetRetryDelay:
 
     def test_single_value(self):
         assert _get_retry_delay(3, [5]) == 5
-
-
-class TestCheckAlreadyCompleted:
-    def test_already_completed(self):
-        state = {"completed_phases": ["p1"]}
-        result = check_already_completed(_phase(), state)
-        assert result == {}
-
-    def test_not_completed(self):
-        state = {"completed_phases": ["p2"]}
-        assert check_already_completed(_phase(), state) is None
-
-    def test_empty_state(self):
-        assert check_already_completed(_phase(), {}) is None
 
 
 class TestCheckDepFailed:
@@ -109,20 +93,6 @@ class TestCheckDryRun:
     def test_missing_dry_run_key(self):
         assert check_dry_run(_phase(), {}) is None
 
-
-class TestCheckNoExecutor:
-    def test_no_executor(self):
-        result = check_no_executor(_phase(), {}, None)
-        assert result["completed_phases"] == ["p1"]
-        assert "[no-executor]" in result["phase_outputs"]["p1"]
-
-    def test_no_executor_with_gate(self):
-        phase = _phase(quality_gate=_gate())
-        result = check_no_executor(phase, {}, None)
-        assert result["gate_scores"] == {"p1": 1.0}
-
-    def test_has_executor(self):
-        assert check_no_executor(_phase(), {}, object()) is None
 
 
 class TestBuildContext:

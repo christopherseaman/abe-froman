@@ -1,39 +1,42 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
-from abe_froman.runtime.result import ExecutionResult
-from abe_froman.runtime.executor.prompt_backend import OverloadError, PromptBackend
-from abe_froman.runtime.templates import (
-    MODEL_DOWNGRADE_CHAIN,
-    downgrade_model,
-    render_template,
-    resolve_model,
-)
+from abe_froman.runtime.result import ExecutionResult, OverloadError, PromptBackend
 from abe_froman.schema.models import Phase, PromptExecution, Settings
 
-__all__ = [
-    "MODEL_DOWNGRADE_CHAIN",
-    "PromptExecutor",
-    "downgrade_model",
-    "render_template",
-    "resolve_model",
-]
+MODEL_DOWNGRADE_CHAIN = ["opus", "sonnet", "haiku"]
+
+
+def downgrade_model(current: str) -> str | None:
+    try:
+        idx = MODEL_DOWNGRADE_CHAIN.index(current)
+    except ValueError:
+        return None
+    if idx + 1 < len(MODEL_DOWNGRADE_CHAIN):
+        return MODEL_DOWNGRADE_CHAIN[idx + 1]
+    return None
+
+
+def render_template(template: str, context: dict[str, Any]) -> str:
+    def replacer(match: re.Match) -> str:
+        key = match.group(1).strip()
+        if key in context:
+            return str(context[key])
+        return match.group(0)
+
+    return re.sub(r"\{\{(\s*\w+\s*)\}\}", replacer, template)
+
+
+def resolve_model(phase: Phase, settings: Settings) -> str:
+    return phase.model or settings.default_model
 
 
 class PromptExecutor:
-    """Executes PromptExecution phases by rendering templates and
-    delegating to a PromptBackend.
-
-    Shared responsibilities (not duplicated in backends):
-    - Read prompt_file from disk
-    - Render {{variable}} templates from context
-    - Resolve effective model
-    - Attempt JSON parsing for structured_output if output_schema is set
-    - Convert backend result -> ExecutionResult
-    """
+    """Renders prompt templates, resolves models, delegates to a PromptBackend."""
 
     def __init__(self, backend: PromptBackend, settings: Settings, workdir: str = "."):
         self._backend = backend
@@ -68,9 +71,8 @@ class PromptExecutor:
                 )
 
         rendered = render_template(template, context)
-        model = resolve_model(phase, self._settings)
+        current_model = resolve_model(phase, self._settings)
 
-        current_model = model
         try:
             while True:
                 try:

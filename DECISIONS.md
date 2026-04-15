@@ -15,3 +15,15 @@
 - **Do NOT split `runtime/executor/` into a top-level `executor/` package.** Keeping it under `runtime/` avoids a fifth top-level directory — executors are the prototypical runtime peer and have no business being peers to `runtime/gates.py` at the top level.
 - **Python 3.14 pydantic v1 warning**: pre-existing, not refactor-induced. Ignore for this PR.
 - **Baseline at branch creation**: 296 tests passing on `refactor` branch (verified 2026-04-14 before any source changes).
+
+## 2026-04-15 — Simplify post-refactor over-engineering
+
+- **Dissolved `workflow/` directory** into `runtime/`. Runner, persistence, resume, logging are runtime concerns, not a separate layer. Reduces top-level directories from 5 to 4.
+- **Merged `executor/base.py` + `executor/prompt_backend.py` into `runtime/result.py`**. Three files under 33 lines each, all defining executor interface contracts. One file for result type + protocols.
+- **Merged `contracts.py` into `gates.py`**. Both are phase validation — contracts validate output files, gates validate output quality. 24 lines didn't justify a separate module.
+- **Inlined `templates.py` back into `prompt.py`**. Only used by PromptExecutor; the "reusability" justification was speculative.
+- **Inlined `routers.py` back into `graph.py`**. Three functions called only from `build_workflow_graph`. The separation forced reading two files to understand graph building.
+- **Deleted `compile/phase.py`** — dead code, nothing imported `PhaseSubgraph` or `build_phase_subgraph`.
+- **Inlined trivial node helpers** (`check_already_completed`, `check_no_executor`) back into `_make_phase_node`. Kept helpers that are reused (`make_failure_update`) or have nontrivial logic.
+- **Deduplicated `resume.py`** state filtering with `_filter_state` helper. Cut ~35 lines of identical dict comprehensions.
+- **Net result**: 24 → 16 source files, same layer boundaries, same test coverage.

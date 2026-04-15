@@ -4,7 +4,7 @@ import pytest
 from click.testing import CliRunner
 
 from abe_froman.cli.main import cli
-from abe_froman.workflow.persistence import STATE_FILENAME
+from abe_froman.runtime.persistence import STATE_FILENAME
 
 
 @pytest.fixture

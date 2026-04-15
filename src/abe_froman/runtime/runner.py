@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from abe_froman.schema.models import WorkflowConfig
-from abe_froman.workflow.persistence import clear_state, save_state
+from abe_froman.runtime.persistence import clear_state, save_state
 
 
 async def run_workflow(
@@ -24,7 +24,7 @@ async def run_workflow(
     When log_file is provided, structured JSONL events are written for
     each state transition (phase completions, failures, gates, retries).
     """
-    from abe_froman.workflow.logging import JsonlLogger
+    from abe_froman.runtime.logging import JsonlLogger
 
     workdir = initial_state.get("workdir", ".")
     last_state = initial_state

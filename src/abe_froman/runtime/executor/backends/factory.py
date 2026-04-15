@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from abe_froman.runtime.executor.prompt_backend import PromptBackend
+from abe_froman.runtime.result import PromptBackend
 
 
 def create_prompt_backend(executor_type: str, **kwargs: object) -> PromptBackend:

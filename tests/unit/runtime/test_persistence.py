@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from abe_froman.workflow.persistence import (
+from abe_froman.runtime.persistence import (
     STATE_FILENAME,
     STATE_VERSION,
     clear_state,

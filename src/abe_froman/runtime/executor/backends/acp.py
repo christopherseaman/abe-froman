@@ -5,7 +5,7 @@ from typing import Any
 from acp import spawn_agent_process, text_block
 from acp.interfaces import Client
 
-from abe_froman.runtime.executor.prompt_backend import OverloadError
+from abe_froman.runtime.result import OverloadError
 from abe_froman.runtime.result import ExecutionResult
 
 
