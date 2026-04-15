@@ -385,10 +385,10 @@ class TestRetryContextInjection:
         )
 
         from mock_executor import MockExecutor
-        from abe_froman.runtime.executor.base import PhaseResult
+        from abe_froman.runtime.result import ExecutionResult
 
         mock = MockExecutor(results={
-            "p1": PhaseResult(success=True, output="data"),
+            "p1": ExecutionResult(success=True, output="data"),
         })
         config = make_config([
             {
@@ -430,10 +430,10 @@ class TestRetryContextInjection:
         )
 
         from mock_executor import MockExecutor
-        from abe_froman.runtime.executor.base import PhaseResult
+        from abe_froman.runtime.result import ExecutionResult
 
         mock = MockExecutor(results={
-            "p1": PhaseResult(success=True, output="data"),
+            "p1": ExecutionResult(success=True, output="data"),
         })
         config = make_config([
             {
@@ -466,10 +466,10 @@ class TestRetryContextInjection:
         script.write_text("print(1.0)")
 
         from mock_executor import MockExecutor
-        from abe_froman.runtime.executor.base import PhaseResult
+        from abe_froman.runtime.result import ExecutionResult
 
         mock = MockExecutor(results={
-            "p1": PhaseResult(success=True, output="data"),
+            "p1": ExecutionResult(success=True, output="data"),
         })
         config = make_config([
             {
@@ -499,10 +499,10 @@ class TestContextPropagation:
     @pytest.mark.asyncio
     async def test_dependency_output_in_executor_context(self):
         from mock_executor import MockExecutor
-        from abe_froman.runtime.executor.base import PhaseResult
+        from abe_froman.runtime.result import ExecutionResult
 
         mock = MockExecutor(results={
-            "a": PhaseResult(success=True, output="a-output"),
+            "a": ExecutionResult(success=True, output="a-output"),
         })
         config = make_config([
             {"id": "a", "name": "A", "prompt_file": "t.md"},
@@ -518,10 +518,10 @@ class TestContextPropagation:
     @pytest.mark.asyncio
     async def test_structured_output_flows_to_dependent(self):
         from mock_executor import MockExecutor
-        from abe_froman.runtime.executor.base import PhaseResult
+        from abe_froman.runtime.result import ExecutionResult
 
         mock = MockExecutor(results={
-            "a": PhaseResult(
+            "a": ExecutionResult(
                 success=True, output="text",
                 structured_output={"key": "val"},
             ),
@@ -546,14 +546,14 @@ class TestTokenUsageAccumulation:
     @pytest.mark.asyncio
     async def test_token_usage_accumulated_in_state(self):
         from mock_executor import MockExecutor
-        from abe_froman.runtime.executor.base import PhaseResult
+        from abe_froman.runtime.result import ExecutionResult
 
         mock = MockExecutor(results={
-            "a": PhaseResult(
+            "a": ExecutionResult(
                 success=True, output="a-out",
                 tokens_used={"input": 100, "output": 50},
             ),
-            "b": PhaseResult(
+            "b": ExecutionResult(
                 success=True, output="b-out",
                 tokens_used={"input": 200, "output": 75},
             ),
@@ -583,10 +583,10 @@ class TestTokenUsageAccumulation:
     @pytest.mark.asyncio
     async def test_token_usage_none_not_stored(self):
         from mock_executor import MockExecutor
-        from abe_froman.runtime.executor.base import PhaseResult
+        from abe_froman.runtime.result import ExecutionResult
 
         mock = MockExecutor(results={
-            "a": PhaseResult(success=True, output="out", tokens_used=None),
+            "a": ExecutionResult(success=True, output="out", tokens_used=None),
         })
         config = make_config([
             {"id": "a", "name": "A", "prompt_file": "t.md"},

@@ -4,7 +4,7 @@ import pytest
 
 from abe_froman.compile.graph import build_workflow_graph
 from abe_froman.runtime.state import make_initial_state
-from abe_froman.runtime.executor.base import PhaseResult
+from abe_froman.runtime.result import ExecutionResult
 from abe_froman.runtime.executor.dispatch import DispatchExecutor
 from abe_froman.schema.models import Phase, Settings
 
@@ -155,7 +155,7 @@ class SlowMockExecutor:
 
     async def execute(self, phase, context):
         await asyncio.sleep(self._delay)
-        return PhaseResult(success=True, output=f"[slow-mock] {phase.id}")
+        return ExecutionResult(success=True, output=f"[slow-mock] {phase.id}")
 
 
 class TestTimeoutPromptPhase:
@@ -211,7 +211,7 @@ class SelectiveSlowExecutor:
     async def execute(self, phase, context):
         if "::" in phase.id:
             await asyncio.sleep(self._slow_delay)
-        return PhaseResult(
+        return ExecutionResult(
             success=True,
             output=f"[mock] {phase.id}",
         )

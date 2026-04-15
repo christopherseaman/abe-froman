@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from abe_froman.runtime.executor.base import PhaseResult
+from abe_froman.runtime.result import ExecutionResult
 from abe_froman.runtime.executor.prompt_backend import OverloadError, PromptBackend
 from abe_froman.runtime.templates import (
     MODEL_DOWNGRADE_CHAIN,
@@ -32,7 +32,7 @@ class PromptExecutor:
     - Render {{variable}} templates from context
     - Resolve effective model
     - Attempt JSON parsing for structured_output if output_schema is set
-    - Convert PromptBackendResult -> PhaseResult
+    - Convert backend result -> ExecutionResult
     """
 
     def __init__(self, backend: PromptBackend, settings: Settings, workdir: str = "."):
@@ -40,9 +40,9 @@ class PromptExecutor:
         self._settings = settings
         self._workdir = workdir
 
-    async def execute(self, phase: Phase, context: dict[str, Any]) -> PhaseResult:
+    async def execute(self, phase: Phase, context: dict[str, Any]) -> ExecutionResult:
         if not isinstance(phase.execution, PromptExecution):
-            return PhaseResult(
+            return ExecutionResult(
                 success=False,
                 error=f"PromptExecutor requires PromptExecution, got {type(phase.execution).__name__}",
             )
@@ -51,7 +51,7 @@ class PromptExecutor:
         try:
             template = prompt_path.read_text()
         except FileNotFoundError:
-            return PhaseResult(
+            return ExecutionResult(
                 success=False,
                 error=f"Prompt file not found: {prompt_path}",
             )
@@ -62,7 +62,7 @@ class PromptExecutor:
                 preamble = preamble_path.read_text()
                 template = preamble + "\n\n" + template
             except FileNotFoundError:
-                return PhaseResult(
+                return ExecutionResult(
                     success=False,
                     error=f"Preamble file not found: {preamble_path}",
                 )
@@ -81,13 +81,13 @@ class PromptExecutor:
                 except OverloadError:
                     next_model = downgrade_model(current_model)
                     if next_model is None:
-                        return PhaseResult(
+                        return ExecutionResult(
                             success=False,
                             error=f"API overloaded, exhausted model chain (last: {current_model})",
                         )
                     current_model = next_model
         except Exception as e:
-            return PhaseResult(success=False, error=f"Backend error: {e}")
+            return ExecutionResult(success=False, error=f"Backend error: {e}")
 
         structured = result.structured_output
         if structured is None and phase.output_schema is not None:
@@ -96,7 +96,7 @@ class PromptExecutor:
             except (json.JSONDecodeError, TypeError):
                 pass
 
-        return PhaseResult(
+        return ExecutionResult(
             success=True,
             output=result.output,
             structured_output=structured,

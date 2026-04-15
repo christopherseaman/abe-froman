@@ -2,7 +2,7 @@
 
 import pytest
 
-from abe_froman.runtime.executor.prompt_backend import PromptBackendResult
+from abe_froman.runtime.result import ExecutionResult
 
 
 # ---------------------------------------------------------------------------
@@ -71,7 +71,7 @@ class TestACPIntegration:
                 "sonnet",
                 ".",
             )
-            assert isinstance(result, PromptBackendResult)
+            assert isinstance(result, ExecutionResult)
             assert len(result.output) > 0
             assert "pong" in result.output.lower()
         finally:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from abe_froman.runtime.executor.base import PhaseResult
+from abe_froman.runtime.result import ExecutionResult
 from abe_froman.runtime.executor.command import CommandExecutor
 from abe_froman.runtime.executor.prompt import PromptExecutor
 from abe_froman.runtime.executor.prompt_backend import PromptBackend
@@ -36,30 +36,30 @@ class DispatchExecutor:
         else:
             self._prompt_executor = None
 
-    async def execute(self, phase: Phase, context: dict[str, Any]) -> PhaseResult:
+    async def execute(self, phase: Phase, context: dict[str, Any]) -> ExecutionResult:
         execution = phase.execution
 
         if isinstance(execution, CommandExecution):
             return await self._command_executor.execute(phase, context)
 
         if isinstance(execution, GateOnlyExecution):
-            return PhaseResult(success=True, output=f"[gate-only] {phase.id}")
+            return ExecutionResult(success=True, output=f"[gate-only] {phase.id}")
 
         if isinstance(execution, PromptExecution):
             if self._prompt_executor is not None:
                 return await self._prompt_executor.execute(phase, context)
-            return PhaseResult(
+            return ExecutionResult(
                 success=True,
                 output=f"[prompt-stub] {phase.id}: {execution.prompt_file}",
             )
 
         if execution is None:
-            return PhaseResult(
+            return ExecutionResult(
                 success=False,
                 error=f"Phase '{phase.id}' has no execution configuration",
             )
 
-        return PhaseResult(
+        return ExecutionResult(
             success=False,
             error=f"Unknown execution type: {type(execution).__name__}",
         )

@@ -9,7 +9,8 @@ from abe_froman.runtime.executor.prompt import (
     render_template,
     resolve_model,
 )
-from abe_froman.runtime.executor.prompt_backend import OverloadError, PromptBackend, PromptBackendResult
+from abe_froman.runtime.executor.prompt_backend import OverloadError, PromptBackend
+from abe_froman.runtime.result import ExecutionResult
 from abe_froman.runtime.executor.backends.stub import StubBackend
 from abe_froman.schema.models import Phase, Settings
 
@@ -102,9 +103,9 @@ class MemoryBackend:
 
     async def send_prompt(
         self, prompt: str, model: str, workdir: str
-    ) -> PromptBackendResult:
+    ) -> ExecutionResult:
         self.calls.append((prompt, model, workdir))
-        return PromptBackendResult(
+        return ExecutionResult(
             output=self._response,
             structured_output=self._structured,
             tokens_used=self._tokens,
@@ -117,7 +118,7 @@ class MemoryBackend:
 class ErrorBackend:
     """Backend that always raises."""
 
-    async def send_prompt(self, prompt: str, model: str, workdir: str) -> PromptBackendResult:
+    async def send_prompt(self, prompt: str, model: str, workdir: str) -> ExecutionResult:
         raise RuntimeError("connection failed")
 
     async def close(self) -> None:
@@ -361,11 +362,11 @@ class _OverloadBackend:
         self.calls: list[str] = []
         self._overload_models = overload_models
 
-    async def send_prompt(self, prompt: str, model: str, workdir: str) -> PromptBackendResult:
+    async def send_prompt(self, prompt: str, model: str, workdir: str) -> ExecutionResult:
         self.calls.append(model)
         if model in self._overload_models:
             raise OverloadError(f"529 overloaded for {model}")
-        return PromptBackendResult(output=f"ok from {model}")
+        return ExecutionResult(output=f"ok from {model}")
 
     async def close(self) -> None:
         pass

@@ -5,7 +5,8 @@ from typing import Any
 from acp import spawn_agent_process, text_block
 from acp.interfaces import Client
 
-from abe_froman.runtime.executor.prompt_backend import OverloadError, PromptBackendResult
+from abe_froman.runtime.executor.prompt_backend import OverloadError
+from abe_froman.runtime.result import ExecutionResult
 
 
 def _is_overload_error(exc: Exception) -> bool:
@@ -114,7 +115,7 @@ class ACPBackend:
 
     async def send_prompt(
         self, prompt: str, model: str, workdir: str
-    ) -> PromptBackendResult:
+    ) -> ExecutionResult:
         await self._ensure_initialized(workdir)
 
         accumulator = _ResponseAccumulator()
@@ -133,7 +134,7 @@ class ACPBackend:
         output = accumulator.text()
         self._client.accumulator = None
 
-        return PromptBackendResult(output=output, tokens_used=accumulator.tokens_used())
+        return ExecutionResult(output=output, tokens_used=accumulator.tokens_used())
 
     async def close(self) -> None:
         if self._ctx_manager is not None:

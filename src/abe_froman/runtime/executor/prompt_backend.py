@@ -4,12 +4,7 @@ from typing import Protocol, runtime_checkable
 
 from abe_froman.runtime.result import ExecutionResult, OverloadError
 
-# PromptBackendResult is the historical name for the unified
-# ExecutionResult. Kept as an alias so existing call sites continue to
-# work during the refactor. Deleted in Step 14.
-PromptBackendResult = ExecutionResult
-
-__all__ = ["PromptBackend", "PromptBackendResult", "OverloadError"]
+__all__ = ["PromptBackend", "ExecutionResult", "OverloadError"]
 
 
 @runtime_checkable

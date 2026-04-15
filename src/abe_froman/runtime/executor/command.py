@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from abe_froman.runtime.executor.base import PhaseResult
+from abe_froman.runtime.result import ExecutionResult
 from abe_froman.schema.models import CommandExecution, Phase
 
 
@@ -13,9 +13,9 @@ class CommandExecutor:
     def __init__(self, workdir: str = "."):
         self.workdir = workdir
 
-    async def execute(self, phase: Phase, context: dict[str, Any]) -> PhaseResult:
+    async def execute(self, phase: Phase, context: dict[str, Any]) -> ExecutionResult:
         if not isinstance(phase.execution, CommandExecution):
-            return PhaseResult(
+            return ExecutionResult(
                 success=False,
                 error=f"CommandExecutor requires CommandExecution, got {type(phase.execution).__name__}",
             )
@@ -32,17 +32,17 @@ class CommandExecutor:
             stdout, stderr = await proc.communicate()
 
             if proc.returncode == 0:
-                return PhaseResult(
+                return ExecutionResult(
                     success=True,
                     output=stdout.decode(),
                 )
             else:
-                return PhaseResult(
+                return ExecutionResult(
                     success=False,
                     output=stdout.decode(),
                     error=f"Exit code {proc.returncode}: {stderr.decode()}",
                 )
         except FileNotFoundError as e:
-            return PhaseResult(success=False, error=str(e))
+            return ExecutionResult(success=False, error=str(e))
         except OSError as e:
-            return PhaseResult(success=False, error=str(e))
+            return ExecutionResult(success=False, error=str(e))
