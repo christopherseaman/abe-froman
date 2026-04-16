@@ -3,9 +3,56 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from abe_froman.schema.models import OutputContract, QualityGate
+
+
+@dataclass
+class GateResult:
+    score: float
+    feedback: str | None = None
+    pass_criteria_met: list[str] = field(default_factory=list)
+    pass_criteria_unmet: list[str] = field(default_factory=list)
+
+
+def _parse_script_output(output: str) -> GateResult:
+    """Parse validator stdout into a GateResult.
+
+    Accepts three shapes:
+      - bare float (e.g. "0.85")
+      - JSON with "score" only (legacy)
+      - JSON with full feedback schema
+    """
+    stripped = output.strip()
+    try:
+        return GateResult(score=float(stripped))
+    except ValueError:
+        pass
+
+    try:
+        data = json.loads(stripped)
+    except (json.JSONDecodeError, TypeError):
+        return GateResult(score=0.0)
+
+    if not isinstance(data, dict) or "score" not in data:
+        return GateResult(score=0.0)
+
+    try:
+        score = float(data["score"])
+    except (TypeError, ValueError):
+        return GateResult(score=0.0)
+
+    met = data.get("pass_criteria_met", []) or []
+    unmet = data.get("pass_criteria_unmet", []) or []
+    return GateResult(
+        score=score,
+        feedback=data.get("feedback"),
+        pass_criteria_met=list(met) if isinstance(met, list) else [],
+        pass_criteria_unmet=list(unmet) if isinstance(unmet, list) else [],
+    )
 
 
 async def evaluate_gate_script(
@@ -15,10 +62,11 @@ async def evaluate_gate_script(
     phase_output: str = "",
     workflow_name: str = "",
     attempt_number: int = 1,
-) -> float:
-    """Run a .py or .js validator script and parse its score from stdout.
+) -> GateResult:
+    """Run a .py or .js validator script and parse its response.
 
     The phase output is passed via stdin so validators can inspect it.
+    Returns a GateResult; bare-float output is wrapped with feedback=None.
     """
     path = Path(validator_path)
     suffix = path.suffix.lower()
@@ -49,27 +97,93 @@ async def evaluate_gate_script(
             cwd=workdir,
             env=env,
         )
-        stdout, stderr = await proc.communicate(input=phase_output.encode())
+        stdout, _stderr = await proc.communicate(input=phase_output.encode())
     except (FileNotFoundError, OSError):
-        return 0.0
+        return GateResult(score=0.0)
 
     if proc.returncode != 0:
-        return 0.0
+        return GateResult(score=0.0)
 
-    output = stdout.decode().strip()
+    return _parse_script_output(stdout.decode())
+
+
+def _parse_llm_gate_response(raw: str) -> GateResult:
+    """Parse an LLM gate response as JSON matching the feedback schema.
+
+    Loud failure on malformed output: returns GateResult(score=0.0,
+    feedback="gate returned unparseable response: <detail>") rather than
+    silently passing or scoring None.
+    """
+    stripped = raw.strip()
     try:
-        return float(output)
-    except ValueError:
-        pass
+        data = json.loads(stripped)
+    except (json.JSONDecodeError, TypeError) as e:
+        return GateResult(
+            score=0.0,
+            feedback=f"gate returned unparseable response: {e}",
+        )
+
+    if not isinstance(data, dict) or "score" not in data:
+        return GateResult(
+            score=0.0,
+            feedback="gate returned unparseable response: missing 'score' field",
+        )
 
     try:
-        data = json.loads(output)
-        if isinstance(data, dict) and "score" in data:
-            return float(data["score"])
-    except (json.JSONDecodeError, TypeError, ValueError):
-        pass
+        score = float(data["score"])
+    except (TypeError, ValueError) as e:
+        return GateResult(
+            score=0.0,
+            feedback=f"gate returned unparseable response: score not numeric ({e})",
+        )
 
-    return 0.0
+    met = data.get("pass_criteria_met", []) or []
+    unmet = data.get("pass_criteria_unmet", []) or []
+    return GateResult(
+        score=score,
+        feedback=data.get("feedback"),
+        pass_criteria_met=list(met) if isinstance(met, list) else [],
+        pass_criteria_unmet=list(unmet) if isinstance(unmet, list) else [],
+    )
+
+
+async def evaluate_gate_llm(
+    gate: QualityGate,
+    phase_id: str,
+    workdir: str,
+    phase_output: str,
+    backend: Any,
+    default_model: str,
+    attempt_number: int = 1,
+) -> GateResult:
+    """Evaluate a .md prompt-based quality gate via an LLM backend.
+
+    The gate's .md file is rendered as a Jinja2 template with the phase
+    output, phase id, and attempt number available as context. The backend's
+    response must be JSON matching the feedback schema.
+    """
+    from abe_froman.runtime.executor.prompt import render_template
+
+    template_path = Path(workdir) / gate.validator
+    template_text = template_path.read_text()
+    rendered = render_template(
+        template_text,
+        {
+            "output": phase_output,
+            "phase_id": phase_id,
+            "attempt": attempt_number,
+        },
+    )
+
+    model = gate.model or default_model
+    result = await backend.send_prompt(rendered, model, workdir)
+    if not result.success:
+        return GateResult(
+            score=0.0,
+            feedback=f"gate backend error: {result.error}",
+        )
+
+    return _parse_llm_gate_response(result.output)
 
 
 async def evaluate_gate(
@@ -79,12 +193,13 @@ async def evaluate_gate(
     phase_output: str = "",
     workflow_name: str = "",
     attempt_number: int = 1,
-) -> float:
-    """Evaluate a quality gate and return its score.
+    backend: Any = None,
+    default_model: str = "sonnet",
+) -> GateResult:
+    """Evaluate a quality gate and return a GateResult.
 
-    For now, script-based validators (.py/.js) are dispatched to subprocess.
-    Prompt-based validators (.md) are stubbed to return 1.0 (full implementation
-    requires Claude executor integration).
+    Script-based validators (.py/.js) are dispatched to subprocess.
+    Prompt-based validators (.md) are dispatched to the provided backend.
     """
     path = Path(gate.validator)
     suffix = path.suffix.lower()
@@ -95,7 +210,16 @@ async def evaluate_gate(
             workflow_name=workflow_name, attempt_number=attempt_number,
         )
     elif suffix == ".md":
-        return 1.0
+        if backend is None:
+            raise ValueError(
+                f"LLM gate validator '{gate.validator}' requires a PromptBackend "
+                f"but none was provided"
+            )
+        return await evaluate_gate_llm(
+            gate, phase_id, workdir, phase_output,
+            backend=backend, default_model=default_model,
+            attempt_number=attempt_number,
+        )
     else:
         raise ValueError(f"Unsupported validator type: {suffix}")
 

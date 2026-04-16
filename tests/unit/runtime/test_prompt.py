@@ -25,9 +25,10 @@ class TestRenderTemplate:
         result = render_template("Hello {{name}}", {"name": "world"})
         assert result == "Hello world"
 
-    def test_leaves_unknown_variables_intact(self):
+    def test_unknown_variables_render_empty(self):
+        """Jinja2 default Undefined renders missing vars as empty string."""
         result = render_template("Hello {{name}}", {})
-        assert result == "Hello {{name}}"
+        assert result == "Hello "
 
     def test_multiple_variables(self):
         result = render_template(
@@ -56,13 +57,14 @@ class TestRenderTemplate:
         result = render_template("{{x}}", {"x": "{{y}}"})
         assert result == "{{y}}"
 
-    def test_hyphenated_phase_id_in_template(self):
-        """Hyphenated phase IDs like {{research-phase}} are not matched by the
-        \\w+ regex in render_template. This is a known limitation — the regex
-        treats the hyphen as a delimiter, so the placeholder is left intact.
-        Phase IDs with hyphens will not be substituted in prompt templates."""
-        result = render_template("{{research-phase}}", {"research-phase": "output"})
-        assert result == "{{research-phase}}"
+    def test_hyphenated_phase_id_errors(self):
+        """Jinja2 parses {{research-phase}} as subtraction (research minus phase).
+        This is a known limitation — prompt templates must use underscores for
+        phase IDs that need substitution. Documented in CLAUDE.md."""
+        from jinja2 import UndefinedError
+
+        with pytest.raises((UndefinedError, TypeError)):
+            render_template("{{research-phase}}", {})
 
 
 # ---------------------------------------------------------------------------
@@ -213,7 +215,7 @@ class TestPromptExecutor:
         assert result.structured_output == {"key": "value"}
 
     @pytest.mark.asyncio
-    async def test_json_parsed_when_output_schema_set(self, tmp_path):
+    async def test_json_parsed_when_parse_flag_set(self, tmp_path):
         prompt_file = tmp_path / "t.md"
         prompt_file.write_text("prompt")
 
@@ -225,14 +227,14 @@ class TestPromptExecutor:
         )
         phase = Phase(
             id="p1", name="P1", prompt_file="t.md",
-            output_schema={"type": "object"},
+            parse_output_as_json=True,
         )
         result = await executor.execute(phase, {})
 
         assert result.structured_output == {"score": 0.95}
 
     @pytest.mark.asyncio
-    async def test_non_json_output_with_schema_leaves_structured_none(self, tmp_path):
+    async def test_non_json_output_with_flag_leaves_structured_none(self, tmp_path):
         prompt_file = tmp_path / "t.md"
         prompt_file.write_text("prompt")
 
@@ -244,7 +246,7 @@ class TestPromptExecutor:
         )
         phase = Phase(
             id="p1", name="P1", prompt_file="t.md",
-            output_schema={"type": "object"},
+            parse_output_as_json=True,
         )
         result = await executor.execute(phase, {})
 

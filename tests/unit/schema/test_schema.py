@@ -194,15 +194,14 @@ class TestModelSelection:
         assert settings.default_model == "sonnet"
 
 
-class TestOutputSchema:
-    def test_phase_output_schema(self):
-        schema = {"type": "object", "properties": {"x": {"type": "string"}}}
-        phase = Phase(id="p1", name="P1", prompt_file="t.md", output_schema=schema)
-        assert phase.output_schema == schema
+class TestParseOutputAsJson:
+    def test_phase_parse_output_as_json_true(self):
+        phase = Phase(id="p1", name="P1", prompt_file="t.md", parse_output_as_json=True)
+        assert phase.parse_output_as_json is True
 
-    def test_output_schema_default_none(self):
+    def test_parse_output_as_json_default_false(self):
         phase = Phase(id="p1", name="P1", prompt_file="t.md")
-        assert phase.output_schema is None
+        assert phase.parse_output_as_json is False
 
 
 class TestDependencyValidation:
@@ -355,12 +354,11 @@ class TestFullExampleParse:
         phase3_ids = {p.id for p in config.phases if p.id.startswith("phase-3")}
         assert phase3_ids == set(phase4.depends_on)
 
-    def test_example_output_schema(self, example_workflow_path):
+    def test_example_parse_output_as_json(self, example_workflow_path):
         with open(example_workflow_path) as f:
             raw = yaml.safe_load(f)
         config = WorkflowConfig(**raw)
 
         phase_map = {p.id: p for p in config.phases}
         phase5 = phase_map["phase-5"]
-        assert phase5.output_schema is not None
-        assert phase5.output_schema["type"] == "object"
+        assert phase5.parse_output_as_json is True

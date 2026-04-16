@@ -95,7 +95,7 @@ class Phase(BaseModel):
     depends_on: list[str] = []
     quality_gate: QualityGate | None = None
     output_contract: OutputContract | None = None
-    output_schema: dict[str, Any] | None = None
+    parse_output_as_json: bool = False
     dynamic_subphases: DynamicPhaseConfig | None = None
     timeout: float | None = None  # seconds, None = use default
 

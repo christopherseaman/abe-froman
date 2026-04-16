@@ -79,10 +79,10 @@ class TestGateStdinPassing:
 
 class TestGateEvaluation:
     @pytest.mark.asyncio
-    async def test_md_validator_stub_returns_pass(self):
+    async def test_md_validator_not_supported(self):
         gate = QualityGate(validator="gates/v.md", threshold=0.8)
-        score = await evaluate_gate(gate, "p1")
-        assert score == 1.0
+        with pytest.raises(ValueError, match="Unsupported"):
+            await evaluate_gate(gate, "p1")
 
     @pytest.mark.asyncio
     async def test_unsupported_extension_raises(self):

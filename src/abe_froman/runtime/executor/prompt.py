@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 from typing import Any
+
+from jinja2 import Template
 
 from abe_froman.runtime.result import ExecutionResult, OverloadError, PromptBackend
 from abe_froman.schema.models import Phase, PromptExecution, Settings
@@ -22,13 +23,7 @@ def downgrade_model(current: str) -> str | None:
 
 
 def render_template(template: str, context: dict[str, Any]) -> str:
-    def replacer(match: re.Match) -> str:
-        key = match.group(1).strip()
-        if key in context:
-            return str(context[key])
-        return match.group(0)
-
-    return re.sub(r"\{\{(\s*\w+\s*)\}\}", replacer, template)
+    return Template(template, keep_trailing_newline=True).render(**context)
 
 
 def resolve_model(phase: Phase, settings: Settings) -> str:
@@ -92,7 +87,7 @@ class PromptExecutor:
             return ExecutionResult(success=False, error=f"Backend error: {e}")
 
         structured = result.structured_output
-        if structured is None and phase.output_schema is not None:
+        if structured is None and phase.parse_output_as_json:
             try:
                 structured = json.loads(result.output)
             except (json.JSONDecodeError, TypeError):

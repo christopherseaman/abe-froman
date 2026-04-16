@@ -229,7 +229,7 @@ class TestGateIntegration:
 class TestStructuredOutput:
     @pytest.mark.asyncio
     async def test_json_output_parsed_as_structured(self, tmp_path):
-        """Command produces JSON → stored as structured_output when schema set."""
+        """Command produces JSON → stored as structured_output when flag set."""
         payload = tmp_path / "data.json"
         payload.write_text('{"result": "value"}')
         config = make_config([
@@ -237,7 +237,7 @@ class TestStructuredOutput:
                 "id": "p1",
                 "name": "P1",
                 "execution": {"type": "command", "command": "cat", "args": [str(payload)]},
-                "output_schema": {"type": "object"},
+                "parse_output_as_json": True,
             },
         ])
         # DispatchExecutor doesn't auto-parse JSON for command phases.

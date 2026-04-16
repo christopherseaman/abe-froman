@@ -66,7 +66,7 @@ phases:                       # required, list of phases
 
     # Quality gate — optional
     quality_gate:
-      validator: "gates/check.py"     # .py/.js = subprocess, .md = prompt (stub)
+      validator: "gates/check.py"     # .py or .js subprocess
       threshold: 0.8                  # 0.0–1.0, gate passes when score >= threshold
       blocking: false                 # true = failure stops workflow, false = warn and continue
       max_retries: 3                  # optional, overrides settings.max_retries
@@ -75,9 +75,7 @@ phases:                       # required, list of phases
     output_contract:
       base_directory: "output/dir"
       required_files: ["file1.md"]
-    output_schema:                    # JSON schema hint for structured output
-      type: object
-      properties: { ... }
+    parse_output_as_json: true        # attempt to JSON-parse phase output into structured_output
 
     # Dynamic subphases — optional
     dynamic_subphases:
@@ -143,8 +141,6 @@ print("1.0" if valid(data) else "0.0")
 
 Score can be a plain float or JSON `{"score": 0.75}`.
 
-**Prompt validators** (`.md`) are stubbed to 1.0 for now.
-
 ### Gate routing
 
 - `score >= threshold` → **pass** → continue to dependents
@@ -185,8 +181,7 @@ Score can be a plain float or JSON `{"score": 0.75}`.
 
 ## Known Limitations
 
-- **Hyphenated phase IDs in templates:** `{{research-phase}}` won't be substituted — the `\w+` regex in `render_template` doesn't match hyphens. Use underscores in phase IDs that need template substitution.
-- **Prompt validators stubbed:** `.md` gate validators always return 1.0.
+- **Hyphenated phase IDs in templates:** `{{research-phase}}` is parsed by Jinja2 as subtraction (`research` minus `phase`) and will error. Use underscores in phase IDs that need template substitution.
 - **Subphase quality gates:** Record scores but do not trigger retries. Retry routing only works for top-level phase gates.
 
 ## Backlog

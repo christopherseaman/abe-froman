@@ -11,7 +11,7 @@
 - **Flexible output contracts**
     - Glob patterns: `required_files: ["docs/*.md", "reports/**/*.pdf"]`
     - Size / non-empty checks: `{path: "out.json", min_bytes: 10}`
-    - JSON-schema validation of structured outputs (today `output_schema` is prompt-only)
+    - JSON-schema validation of structured outputs (today `parse_output_as_json` only attempts a `json.loads`, no schema check)
     - Optional files (tracked but non-failing)
     - Templated paths resolved from dep outputs or vars
     - Forbidden files to catch leftover artifacts
@@ -29,14 +29,9 @@
     - If broken, check for unnecessary sync nodes in the builder or serialization in `runner.py` `astream`
     - Lock in behavior with `tests/test_parallel.py`
 
-- **Hyphenated phase IDs in templates**
-    - `executor/prompt.py:38` regex is `\w+`; change to `[\w-]+`
-    - CLAUDE.md known limitation #1
-
 - **Prompt-based gate validators**
-    - `engine/gates.py:100` stubs `.md` validators to `1.0`
-    - Wire through `PromptExecutor` with a tight context budget
-    - CLAUDE.md known limitation #2
+    - Wire through `PromptExecutor` with a tight context budget to evaluate gate quality via Claude against a rubric
+    - Previously stubbed in `runtime/gates.py`; removed pending real implementation
 
 ## Features
 
