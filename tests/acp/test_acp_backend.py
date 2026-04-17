@@ -1,15 +1,25 @@
-"""Tests for ACP backend — real integration tests against claude-code-acp."""
+"""Tests for ACP backend — real integration tests against claude-code-acp.
 
+Flakiness vectors (documented for CI triage):
+- LLM non-determinism: Claude may embellish "say exactly X" prompts
+- Process startup: spawn_agent_process needs ~5-10s cold start
+- API rate limits: back-to-back runs can hit 429/529
+- Async cleanup: Python 3.14 aclose() warning on context manager exit
+
+All live-API tests are marked @pytest.mark.acp so CI can isolate them
+via ``pytest -m acp`` or ``pytest -m "not acp"``.  Each carries a 120s
+asyncio timeout to prevent indefinite hangs.
+"""
+
+import asyncio
 import re
 
 import pytest
 
 from abe_froman.runtime.result import ExecutionResult
 
+ACP_TIMEOUT = 120
 
-# Common refusal phrasing Claude emits when it declines a prompt. If any of these
-# appear we want the test to fail even if the asserted target word is also present
-# (e.g. "I can't respond with only 'pong' but here it is: pong").
 _REFUSAL_MARKERS = (
     "i can't",
     "i cannot",
@@ -91,6 +101,7 @@ class TestFactory:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.acp
 class TestACPIntegration:
     @pytest.mark.asyncio
     async def test_send_prompt_returns_text(self):
@@ -99,11 +110,12 @@ class TestACPIntegration:
 
         backend = ACPBackend()
         try:
-            result = await backend.send_prompt(
-                'Respond with exactly the word "pong" and nothing else.',
-                "sonnet",
-                ".",
-            )
+            async with asyncio.timeout(ACP_TIMEOUT):
+                result = await backend.send_prompt(
+                    'Respond with exactly the word "pong" and nothing else.',
+                    "sonnet",
+                    ".",
+                )
             assert isinstance(result, ExecutionResult)
             _assert_non_refusal_contains(result.output, r"\bpong\b")
         finally:
@@ -116,16 +128,17 @@ class TestACPIntegration:
 
         backend = ACPBackend()
         try:
-            r1 = await backend.send_prompt(
-                'Respond with exactly "one".',
-                "sonnet",
-                ".",
-            )
-            r2 = await backend.send_prompt(
-                'Respond with exactly "two".',
-                "sonnet",
-                ".",
-            )
+            async with asyncio.timeout(ACP_TIMEOUT):
+                r1 = await backend.send_prompt(
+                    'Respond with exactly "one".',
+                    "sonnet",
+                    ".",
+                )
+                r2 = await backend.send_prompt(
+                    'Respond with exactly "two".',
+                    "sonnet",
+                    ".",
+                )
             _assert_non_refusal_contains(r1.output, r"\bone\b")
             _assert_non_refusal_contains(r2.output, r"\btwo\b")
         finally:
@@ -138,7 +151,8 @@ class TestACPIntegration:
 
         backend = ACPBackend()
         try:
-            await backend.send_prompt("Say hi.", "sonnet", ".")
+            async with asyncio.timeout(ACP_TIMEOUT):
+                await backend.send_prompt("Say hi.", "sonnet", ".")
         finally:
             await backend.close()
             await backend.close()
@@ -161,8 +175,9 @@ class TestACPIntegration:
             workdir=str(tmp_path), prompt_backend=backend, settings=settings,
         )
         try:
-            phase = Phase(id="test", name="Test", prompt_file="test.md")
-            result = await executor.execute(phase, {})
+            async with asyncio.timeout(ACP_TIMEOUT):
+                phase = Phase(id="test", name="Test", prompt_file="test.md")
+                result = await executor.execute(phase, {})
             assert result.success is True
             _assert_non_refusal_contains(result.output, r"\babe\s+froman\b")
         finally:

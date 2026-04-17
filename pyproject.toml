@@ -26,6 +26,9 @@ packages = ["src/abe_froman"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["tests"]
+markers = [
+    "acp: tests requiring a live ACP adapter + Claude API (may be slow/flaky)",
+]
 
 [dependency-groups]
 dev = [
