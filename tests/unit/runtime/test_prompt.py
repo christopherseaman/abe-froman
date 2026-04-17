@@ -3,7 +3,6 @@
 import pytest
 
 from abe_froman.runtime.executor.prompt import (
-    MODEL_DOWNGRADE_CHAIN,
     PromptExecutor,
     downgrade_model,
     render_template,
@@ -361,17 +360,23 @@ class TestMemoryBackendProtocol:
 
 
 class TestDowngradeModel:
+    CHAIN = ["opus", "sonnet", "haiku"]
+
     def test_downgrade_opus_to_sonnet(self):
-        assert downgrade_model("opus") == "sonnet"
+        assert downgrade_model("opus", self.CHAIN) == "sonnet"
 
     def test_downgrade_sonnet_to_haiku(self):
-        assert downgrade_model("sonnet") == "haiku"
+        assert downgrade_model("sonnet", self.CHAIN) == "haiku"
 
     def test_downgrade_haiku_returns_none(self):
-        assert downgrade_model("haiku") is None
+        assert downgrade_model("haiku", self.CHAIN) is None
 
     def test_downgrade_unknown_model_returns_none(self):
-        assert downgrade_model("gpt-4") is None
+        assert downgrade_model("gpt-4", self.CHAIN) is None
+
+    def test_custom_chain(self):
+        assert downgrade_model("a", ["a", "b", "c"]) == "b"
+        assert downgrade_model("c", ["a", "b", "c"]) is None
 
 
 # ---------------------------------------------------------------------------

@@ -84,6 +84,7 @@ class Settings(BaseModel):
     default_timeout: float | None = None  # seconds, None = no timeout
     preamble_file: str | None = None
     retry_backoff: list[float] = []  # delay in seconds per retry attempt
+    model_downgrade_chain: list[str] = ["opus", "sonnet", "haiku"]
     max_parallel_jobs: int = 4  # foreman global concurrency cap
     per_model_limits: dict[str, int] = {}  # foreman per-model caps, e.g. {"opus": 2}
 

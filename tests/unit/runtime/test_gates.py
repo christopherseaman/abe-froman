@@ -612,15 +612,15 @@ class TestScriptGateStructuredFeedback:
 # ---------------------------------------------------------------------------
 
 
-class TestLLMGateParser:
-    """_parse_llm_gate_response is pure: string in, GateResult out.
+class TestGateOutputParser:
+    """_parse_gate_output is pure: string in, GateResult out.
 
     No backend needed. Integration with a real backend (ACP) is covered
     separately in tests/acp/.
     """
 
     def test_full_schema_parsed(self):
-        from abe_froman.runtime.gates import _parse_llm_gate_response
+        from abe_froman.runtime.gates import _parse_gate_output
 
         raw = json.dumps({
             "score": 0.85,
@@ -628,47 +628,61 @@ class TestLLMGateParser:
             "pass_criteria_met": ["clarity", "concision"],
             "pass_criteria_unmet": [],
         })
-        result = _parse_llm_gate_response(raw)
+        result = _parse_gate_output(raw)
         assert result.score == 0.85
         assert result.feedback == "solid work"
         assert result.pass_criteria_met == ["clarity", "concision"]
         assert result.pass_criteria_unmet == []
 
     def test_score_only_parsed(self):
-        from abe_froman.runtime.gates import _parse_llm_gate_response
+        from abe_froman.runtime.gates import _parse_gate_output
 
-        result = _parse_llm_gate_response(json.dumps({"score": 0.5}))
+        result = _parse_gate_output(json.dumps({"score": 0.5}))
         assert result.score == 0.5
         assert result.feedback is None
 
-    def test_malformed_json_loud_failure(self):
-        from abe_froman.runtime.gates import _parse_llm_gate_response
+    def test_bare_float_accepted_for_scripts(self):
+        from abe_froman.runtime.gates import _parse_gate_output
 
-        result = _parse_llm_gate_response("this is not json at all")
+        result = _parse_gate_output("0.85", allow_bare_float=True)
+        assert result.score == 0.85
+        assert result.feedback is None
+
+    def test_bare_float_rejected_for_llm(self):
+        from abe_froman.runtime.gates import _parse_gate_output
+
+        result = _parse_gate_output("0.85")
+        assert result.score == 0.0
+        assert "score" in result.feedback
+
+    def test_malformed_json_loud_failure(self):
+        from abe_froman.runtime.gates import _parse_gate_output
+
+        result = _parse_gate_output("this is not json at all")
         assert result.score == 0.0
         assert result.feedback is not None
         assert "unparseable" in result.feedback
 
     def test_missing_score_loud_failure(self):
-        from abe_froman.runtime.gates import _parse_llm_gate_response
+        from abe_froman.runtime.gates import _parse_gate_output
 
-        result = _parse_llm_gate_response(json.dumps({"feedback": "ok"}))
+        result = _parse_gate_output(json.dumps({"feedback": "ok"}))
         assert result.score == 0.0
-        assert "missing 'score'" in result.feedback
+        assert "missing" in result.feedback and "score" in result.feedback
 
     def test_non_numeric_score_loud_failure(self):
-        from abe_froman.runtime.gates import _parse_llm_gate_response
+        from abe_froman.runtime.gates import _parse_gate_output
 
-        result = _parse_llm_gate_response(json.dumps({"score": "high"}))
+        result = _parse_gate_output(json.dumps({"score": "high"}))
         assert result.score == 0.0
-        assert "not numeric" in result.feedback
+        assert "score" in result.feedback
 
     def test_non_dict_top_level_loud_failure(self):
-        from abe_froman.runtime.gates import _parse_llm_gate_response
+        from abe_froman.runtime.gates import _parse_gate_output
 
-        result = _parse_llm_gate_response(json.dumps([1, 2, 3]))
+        result = _parse_gate_output(json.dumps([1, 2, 3]))
         assert result.score == 0.0
-        assert "missing 'score'" in result.feedback
+        assert "score" in result.feedback
 
 
 class TestMDGateDispatchGuard:

@@ -7,6 +7,20 @@
     - Investigate: session lifecycle races, stdio buffering, stale `_session_id` on multi-prompt flows, Python 3.14 async-generator `aclose()` warning
     - Decide: fix root cause, or gate ACP tests behind a stricter pre-flight
 
+- **ACP process-tree leaks / zombie subprocesses under long runs**
+    - Symptoms: after repeated ACP phases (especially at `max_parallel_jobs > 1`), user-session RSS grows and `node` / `claude` PIDs linger after `ACPBackend.close()` — contributed to the OOM kill observed on host `carnac` 2026-04-16 06:51:33 (`user@1002.service: The kernel OOM killer killed some processes`) on a no-swap VM with `ManagedOOMMemoryPressureLimit=50%`
+    - Contributing factor: Python 3.14 `aclose()` warning from the ACP SDK — async-generator cleanup does not reliably reap the `npm exec → node → claude` child tree
+    - Investigate: teardown ordering in `ACPBackend.close()`; use a process group or `PR_SET_PDEATHSIG` so the whole tree dies when the Python parent exits; SIGTERM → wait → SIGKILL escalation
+    - Add a teardown assertion (test fixture or runtime check) that no ACP-spawned PIDs survive backend close
+    - Decide: fix in-backend, or ship host-level mitigation (swap + relaxed oomd) as the supported recommendation
+
+- **Worktree garbage collection**
+    - Today: `ForemanExecutor` never removes trees under `<workdir>/.abe-foreman/` — disk + inodes accumulate indefinitely across runs
+    - CLI: `abe-froman worktree list` — table of (phase_id, created, last_used, size, branch)
+    - CLI: `abe-froman worktree prune [--older-than 7d] [--phase <id>] [--dry-run]` — `git worktree remove` + directory delete, with safety checks for uncommitted changes
+    - Optional auto-GC: `settings.cleanup_worktrees_on_success: bool` — prune at `workflow_end` only when the final state is all-completed (preserve on partial failure so users can inspect)
+    - Must preserve the across-retries reuse that foreman relies on (keys trees by `phase_id`); GC runs against *completed* workflow threads only
+
 ## Gate-evaluation extensibility (after structured-feedback MVP lands)
 
 - **Customizable gate return schemas**

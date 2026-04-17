@@ -165,8 +165,8 @@ class TestGateRouting:
             ("a", END),
         }
 
-    def test_gate_with_multiple_dependents_uses_passthrough(self):
-        """Gate with fan-out: a routes through _after_a, which then splits to b and c."""
+    def test_gate_with_multiple_dependents_fans_out(self):
+        """Gate with fan-out: a routes directly to b and c on pass (no passthrough node)."""
         config = make_config(
             [
                 {
@@ -181,17 +181,14 @@ class TestGateRouting:
         )
         graph = build_workflow_graph(config)
         nodes = graph.get_graph().nodes
-        assert "_after_a" in nodes
+        assert "_after_a" not in nodes
 
         edges = _edges(graph)
-        # Passthrough distribution must be unconditional
-        passthrough = {(s, t) for s, t in edges if s == "_after_a"}
-        assert passthrough == {("_after_a", "b"), ("_after_a", "c")}
-        # Downstream phases must reach END
         assert {("b", END), ("c", END)} <= edges
-        # Gate routing conditional edges: pass → _after_a, retry → a, fail → END
+        # Gate routes directly: pass → b+c, retry → a, fail → END
         assert _conditional_edges(graph) == {
-            ("a", "_after_a"),
+            ("a", "b"),
+            ("a", "c"),
             ("a", "a"),
             ("a", END),
         }

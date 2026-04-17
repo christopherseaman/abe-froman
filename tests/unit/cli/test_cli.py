@@ -61,11 +61,10 @@ class TestGraphCommand:
         assert "graph TD" in result.output
 
     def test_graph_shows_gate_edges(self, runner, example_workflow_path):
-        """Gated phases produce conditional pass/retry/fail edges."""
+        """Gated phases produce conditional (dotted) edges in mermaid output."""
         result = runner.invoke(cli, ["graph", str(example_workflow_path)])
         assert result.exit_code == 0
-        assert "pass" in result.output
-        assert "retry" in result.output
+        assert "-.->" in result.output
 
     def test_graph_shows_start_and_end(self, runner, example_workflow_path):
         """Mermaid output contains LangGraph's start/end terminal nodes."""

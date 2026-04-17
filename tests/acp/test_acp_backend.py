@@ -35,24 +35,28 @@ def _assert_non_refusal_contains(output: str, target_pattern: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# _ResponseAccumulator (our own code, no external deps)
+# _ACPCallbacks (our own code, no external deps)
 # ---------------------------------------------------------------------------
 
 
-class TestResponseAccumulator:
+class TestACPCallbacks:
     def test_collects_chunks(self):
-        from abe_froman.runtime.executor.backends.acp import _ResponseAccumulator
+        from abe_froman.runtime.executor.backends.acp import _ACPCallbacks
 
-        acc = _ResponseAccumulator()
-        acc.append("Hello ")
-        acc.append("world")
-        assert acc.text() == "Hello world"
+        cb = _ACPCallbacks()
+        cb.chunks.extend(["Hello ", "world"])
+        assert cb.text() == "Hello world"
 
-    def test_empty_accumulator(self):
-        from abe_froman.runtime.executor.backends.acp import _ResponseAccumulator
+    def test_reset_clears_state(self):
+        from abe_froman.runtime.executor.backends.acp import _ACPCallbacks
 
-        acc = _ResponseAccumulator()
-        assert acc.text() == ""
+        cb = _ACPCallbacks()
+        cb.chunks.append("data")
+        cb.input_tokens = 10
+        cb.output_tokens = 20
+        cb.reset()
+        assert cb.text() == ""
+        assert cb.tokens_used() is None
 
 
 # ---------------------------------------------------------------------------

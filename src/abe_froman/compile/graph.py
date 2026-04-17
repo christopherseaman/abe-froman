@@ -48,13 +48,15 @@ def _detect_cycles(config: WorkflowConfig) -> None:
             dfs(node)
 
 
-def _make_gate_router(phase: Phase):
-    def router(state: WorkflowState) -> str:
+def _make_gate_router(phase: Phase, pass_targets: list[str] | None = None):
+    targets = pass_targets or [END]
+
+    def router(state: WorkflowState) -> str | list[str]:
         if phase.id in state.get("failed_phases", []):
-            return "fail"
+            return END
         if phase.id in state.get("completed_phases", []):
-            return "pass"
-        return "retry"
+            return targets[0] if len(targets) == 1 else targets
+        return phase.id
 
     return router
 
@@ -240,35 +242,11 @@ def build_workflow_graph(
         dependents = [
             p.id for p in config.phases if phase.id in p.depends_on
         ]
+        pass_targets = dependents if dependents else [END]
 
-        if phase.id in terminal_ids:
-            builder.add_conditional_edges(
-                phase.id,
-                _make_gate_router(phase),
-                {"pass": END, "retry": phase.id, "fail": END},
-            )
-        elif len(dependents) == 1:
-            builder.add_conditional_edges(
-                phase.id,
-                _make_gate_router(phase),
-                {"pass": dependents[0], "retry": phase.id, "fail": END},
-            )
-        else:
-            passthrough_id = f"_after_{phase.id}"
-
-            async def passthrough(state: WorkflowState) -> dict[str, Any]:
-                return {}
-
-            passthrough.__name__ = f"passthrough_{phase.id}"
-            builder.add_node(passthrough_id, passthrough)
-
-            builder.add_conditional_edges(
-                phase.id,
-                _make_gate_router(phase),
-                {"pass": passthrough_id, "retry": phase.id, "fail": END},
-            )
-            for dep_id in dependents:
-                builder.add_edge(passthrough_id, dep_id)
+        router = _make_gate_router(phase, pass_targets)
+        all_targets = [phase.id, END] + dependents
+        builder.add_conditional_edges(phase.id, router, all_targets)
 
     for phase in config.phases:
         if (

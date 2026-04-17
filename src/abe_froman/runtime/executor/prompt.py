@@ -8,16 +8,14 @@ from jinja2 import Template
 from abe_froman.runtime.result import ExecutionResult, OverloadError, PromptBackend
 from abe_froman.schema.models import Phase, PromptExecution, Settings
 
-MODEL_DOWNGRADE_CHAIN = ["opus", "sonnet", "haiku"]
 
-
-def downgrade_model(current: str) -> str | None:
+def downgrade_model(current: str, chain: list[str]) -> str | None:
     try:
-        idx = MODEL_DOWNGRADE_CHAIN.index(current)
+        idx = chain.index(current)
     except ValueError:
         return None
-    if idx + 1 < len(MODEL_DOWNGRADE_CHAIN):
-        return MODEL_DOWNGRADE_CHAIN[idx + 1]
+    if idx + 1 < len(chain):
+        return chain[idx + 1]
     return None
 
 
@@ -80,7 +78,9 @@ class PromptExecutor:
                     )
                     break
                 except OverloadError:
-                    next_model = downgrade_model(current_model)
+                    next_model = downgrade_model(
+                        current_model, self._settings.model_downgrade_chain
+                    )
                     if next_model is None:
                         return ExecutionResult(
                             success=False,

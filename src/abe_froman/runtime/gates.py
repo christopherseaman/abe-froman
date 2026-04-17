@@ -18,33 +18,31 @@ class GateResult:
     pass_criteria_unmet: list[str] = field(default_factory=list)
 
 
-def _parse_script_output(output: str) -> GateResult:
-    """Parse validator stdout into a GateResult.
+def _parse_gate_output(raw: str, *, allow_bare_float: bool = False) -> GateResult:
+    """Parse gate output into a GateResult.
 
-    Accepts three shapes:
-      - bare float (e.g. "0.85")
-      - JSON with "score" only (legacy)
-      - JSON with full feedback schema
+    Accepts: bare float (script gates only), JSON with "score", or full
+    feedback JSON. Loud failure on malformed output (score=0.0 + diagnostic).
     """
-    stripped = output.strip()
-    try:
-        return GateResult(score=float(stripped))
-    except ValueError:
-        pass
+    stripped = raw.strip()
+    if allow_bare_float:
+        try:
+            return GateResult(score=float(stripped))
+        except ValueError:
+            pass
 
-    snippet = stripped[:200]
     try:
         data = json.loads(stripped)
     except (json.JSONDecodeError, TypeError):
         return GateResult(
             score=0.0,
-            feedback=f"validator output unparseable: {snippet!r}",
+            feedback=f"gate returned unparseable response: {stripped[:200]!r}",
         )
 
     if not isinstance(data, dict) or "score" not in data:
         return GateResult(
             score=0.0,
-            feedback="validator response missing or non-numeric 'score' field",
+            feedback="gate response missing or non-numeric 'score' field",
         )
 
     try:
@@ -52,7 +50,7 @@ def _parse_script_output(output: str) -> GateResult:
     except (TypeError, ValueError):
         return GateResult(
             score=0.0,
-            feedback="validator response missing or non-numeric 'score' field",
+            feedback="gate response missing or non-numeric 'score' field",
         )
 
     met = data.get("pass_criteria_met", []) or []
@@ -121,47 +119,7 @@ async def evaluate_gate_script(
             feedback=f"validator exited with code {proc.returncode}: {snippet}",
         )
 
-    return _parse_script_output(stdout.decode())
-
-
-def _parse_llm_gate_response(raw: str) -> GateResult:
-    """Parse an LLM gate response as JSON matching the feedback schema.
-
-    Loud failure on malformed output: returns GateResult(score=0.0,
-    feedback="gate returned unparseable response: <detail>") rather than
-    silently passing or scoring None.
-    """
-    stripped = raw.strip()
-    try:
-        data = json.loads(stripped)
-    except (json.JSONDecodeError, TypeError) as e:
-        return GateResult(
-            score=0.0,
-            feedback=f"gate returned unparseable response: {e}",
-        )
-
-    if not isinstance(data, dict) or "score" not in data:
-        return GateResult(
-            score=0.0,
-            feedback="gate returned unparseable response: missing 'score' field",
-        )
-
-    try:
-        score = float(data["score"])
-    except (TypeError, ValueError) as e:
-        return GateResult(
-            score=0.0,
-            feedback=f"gate returned unparseable response: score not numeric ({e})",
-        )
-
-    met = data.get("pass_criteria_met", []) or []
-    unmet = data.get("pass_criteria_unmet", []) or []
-    return GateResult(
-        score=score,
-        feedback=data.get("feedback"),
-        pass_criteria_met=list(met) if isinstance(met, list) else [],
-        pass_criteria_unmet=list(unmet) if isinstance(unmet, list) else [],
-    )
+    return _parse_gate_output(stdout.decode(), allow_bare_float=True)
 
 
 async def evaluate_gate_llm(
@@ -206,7 +164,7 @@ async def evaluate_gate_llm(
             feedback=f"gate backend error: {result.error}",
         )
 
-    return _parse_llm_gate_response(result.output)
+    return _parse_gate_output(result.output)
 
 
 async def evaluate_gate(

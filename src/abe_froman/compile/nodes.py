@@ -113,16 +113,6 @@ def inject_retry_reason(
     return context
 
 
-async def apply_backoff(
-    phase: Phase, state: WorkflowState, settings: Settings
-) -> None:
-    retry_count = state.get("retries", {}).get(phase.id, 0)
-    if retry_count > 0:
-        delay = _get_retry_delay(retry_count, settings.retry_backoff)
-        if delay > 0:
-            await asyncio.sleep(delay)
-
-
 async def execute_with_timeout(
     executor, phase: Phase, context: dict[str, Any], timeout: float | None
 ) -> ExecutionResult | str:
@@ -274,7 +264,11 @@ def _make_phase_node(
             return update
 
         context = build_context(phase, state)
-        await apply_backoff(phase, state, config.settings)
+        retry_count = state.get("retries", {}).get(phase.id, 0)
+        if retry_count > 0:
+            delay = _get_retry_delay(retry_count, config.settings.retry_backoff)
+            if delay > 0:
+                await asyncio.sleep(delay)
         context = inject_retry_reason(context, phase, state, max_retries)
 
         if phase.output_contract:

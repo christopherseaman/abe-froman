@@ -14,45 +14,20 @@ logger = logging.getLogger(__name__)
 
 
 def _is_overload_error(exc: Exception) -> bool:
-    """Detect 529/overload errors from exception message or attributes."""
     msg = str(exc).lower()
     if "529" in msg or "overload" in msg:
         return True
     status = getattr(exc, "status_code", None) or getattr(exc, "status", None)
-    if status == 529:
-        return True
-    return False
+    return status == 529
 
 
-class _ResponseAccumulator:
-    """Collects text chunks and usage metadata from session_update callbacks."""
+class _ACPCallbacks(Client):
+    """ACP Client that collects text chunks and token usage inline."""
 
     def __init__(self) -> None:
         self.chunks: list[str] = []
         self.input_tokens: int = 0
         self.output_tokens: int = 0
-
-    def append(self, text: str) -> None:
-        self.chunks.append(text)
-
-    def add_usage(self, input_tokens: int, output_tokens: int) -> None:
-        self.input_tokens += input_tokens
-        self.output_tokens += output_tokens
-
-    def text(self) -> str:
-        return "".join(self.chunks)
-
-    def tokens_used(self) -> dict[str, int] | None:
-        if self.input_tokens or self.output_tokens:
-            return {"input": self.input_tokens, "output": self.output_tokens}
-        return None
-
-
-class _ACPClient(Client):
-    """Minimal ACP Client that accumulates agent responses."""
-
-    def __init__(self) -> None:
-        self.accumulator: _ResponseAccumulator | None = None
 
     async def request_permission(
         self, options: Any, session_id: str, tool_call: Any, **kwargs: Any
@@ -67,26 +42,37 @@ class _ACPClient(Client):
     async def session_update(
         self, session_id: str, update: Any, **kwargs: Any
     ) -> None:
-        if self.accumulator is None:
-            return
         from acp.schema import AgentMessageChunk, TextContentBlock
 
         if isinstance(update, AgentMessageChunk):
             if isinstance(update.content, TextContentBlock):
-                self.accumulator.append(update.content.text)
+                self.chunks.append(update.content.text)
             usage = getattr(update, "usage", None)
             if usage is not None:
                 inp = getattr(usage, "input_tokens", 0) or 0
                 out = getattr(usage, "output_tokens", 0) or 0
                 if inp or out:
-                    self.accumulator.add_usage(inp, out)
+                    self.input_tokens += inp
+                    self.output_tokens += out
+
+    def reset(self) -> None:
+        self.chunks.clear()
+        self.input_tokens = 0
+        self.output_tokens = 0
+
+    def text(self) -> str:
+        return "".join(self.chunks)
+
+    def tokens_used(self) -> dict[str, int] | None:
+        if self.input_tokens or self.output_tokens:
+            return {"input": self.input_tokens, "output": self.output_tokens}
+        return None
 
 
 class ACPBackend:
     """ACP backend using claude-code-acp adapter.
 
-    Manages a single ACP process lifecycle. The process is spawned lazily
-    on the first send_prompt call and reused for subsequent calls.
+    Spawns lazily on first send_prompt, reuses for subsequent calls.
     """
 
     def __init__(
@@ -96,7 +82,7 @@ class ACPBackend:
     ):
         self._program = program
         self._args = args
-        self._client = _ACPClient()
+        self._callbacks = _ACPCallbacks()
         self._conn: Any = None
         self._proc: Any = None
         self._session_id: str | None = None
@@ -105,16 +91,13 @@ class ACPBackend:
         self._init_lock = asyncio.Lock()
 
     async def _ensure_initialized(self, workdir: str) -> None:
-        """Lazy init: spawn process and create session on first use."""
         if self._initialized:
             return
-
         async with self._init_lock:
             if self._initialized:
                 return
-
             self._ctx_manager = spawn_agent_process(
-                self._client, self._program, *self._args
+                self._callbacks, self._program, *self._args
             )
             self._conn, self._proc = await self._ctx_manager.__aenter__()
             await self._conn.initialize(protocol_version=1)
@@ -127,9 +110,7 @@ class ACPBackend:
         timeout: float | None = None,
     ) -> ExecutionResult:
         await self._ensure_initialized(workdir)
-
-        accumulator = _ResponseAccumulator()
-        self._client.accumulator = accumulator
+        self._callbacks.reset()
 
         try:
             coro = self._conn.prompt(
@@ -144,10 +125,11 @@ class ACPBackend:
             if _is_overload_error(e):
                 raise OverloadError(str(e)) from e
             raise
-        finally:
-            self._client.accumulator = None
 
-        return ExecutionResult(output=accumulator.text(), tokens_used=accumulator.tokens_used())
+        return ExecutionResult(
+            output=self._callbacks.text(),
+            tokens_used=self._callbacks.tokens_used(),
+        )
 
     async def close(self) -> None:
         if self._ctx_manager is not None:
