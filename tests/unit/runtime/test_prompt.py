@@ -153,6 +153,67 @@ class TestPromptExecutor:
         assert backend.calls[0] == ("Hello world", "sonnet", str(tmp_path))
 
     @pytest.mark.asyncio
+    async def test_per_call_workdir_overrides_prompt_file_resolution(self, tmp_path):
+        """Per-call workdir changes where the prompt_file is read from AND
+        is forwarded to the backend as the effective workdir."""
+        base = tmp_path / "base"
+        base.mkdir()
+        override = tmp_path / "override"
+        override.mkdir()
+        (base / "p.md").write_text("BASE prompt")
+        (override / "p.md").write_text("OVERRIDE prompt")
+
+        backend = MemoryBackend()
+        executor = PromptExecutor(
+            backend=backend,
+            settings=Settings(default_model="sonnet"),
+            workdir=str(base),
+        )
+        phase = Phase(id="p", name="P", prompt_file="p.md")
+        result = await executor.execute(phase, {}, workdir=str(override))
+
+        assert result.success is True
+        assert len(backend.calls) == 1
+        prompt, _model, seen_workdir = backend.calls[0]
+        assert prompt == "OVERRIDE prompt"
+        assert seen_workdir == str(override)
+
+    @pytest.mark.asyncio
+    async def test_per_call_workdir_none_falls_back_to_constructor(self, tmp_path):
+        (tmp_path / "p.md").write_text("base prompt")
+        backend = MemoryBackend()
+        executor = PromptExecutor(
+            backend=backend, settings=Settings(default_model="sonnet"),
+            workdir=str(tmp_path),
+        )
+        phase = Phase(id="p", name="P", prompt_file="p.md")
+        await executor.execute(phase, {}, workdir=None)
+        assert backend.calls[0][2] == str(tmp_path)
+
+    @pytest.mark.asyncio
+    async def test_preamble_still_resolved_from_base_workdir(self, tmp_path):
+        """Preamble lives with the config; a per-phase worktree override must
+        NOT relocate preamble resolution."""
+        base = tmp_path / "base"
+        base.mkdir()
+        override = tmp_path / "override"
+        override.mkdir()
+        (base / "preamble.md").write_text("SHARED PREAMBLE")
+        (override / "p.md").write_text("phase prompt")
+
+        backend = MemoryBackend()
+        executor = PromptExecutor(
+            backend=backend,
+            settings=Settings(default_model="sonnet", preamble_file="preamble.md"),
+            workdir=str(base),
+        )
+        phase = Phase(id="p", name="P", prompt_file="p.md")
+        result = await executor.execute(phase, {}, workdir=str(override))
+        assert result.success is True
+        assert backend.calls[0][0].startswith("SHARED PREAMBLE")
+        assert "phase prompt" in backend.calls[0][0]
+
+    @pytest.mark.asyncio
     async def test_missing_prompt_file_returns_error(self, tmp_path):
         backend = MemoryBackend()
         executor = PromptExecutor(
@@ -213,45 +274,6 @@ class TestPromptExecutor:
         result = await executor.execute(phase, {})
 
         assert result.structured_output == {"key": "value"}
-
-    @pytest.mark.asyncio
-    async def test_json_parsed_when_parse_flag_set(self, tmp_path):
-        prompt_file = tmp_path / "t.md"
-        prompt_file.write_text("prompt")
-
-        backend = MemoryBackend(response='{"score": 0.95}')
-        executor = PromptExecutor(
-            backend=backend,
-            settings=Settings(),
-            workdir=str(tmp_path),
-        )
-        phase = Phase(
-            id="p1", name="P1", prompt_file="t.md",
-            parse_output_as_json=True,
-        )
-        result = await executor.execute(phase, {})
-
-        assert result.structured_output == {"score": 0.95}
-
-    @pytest.mark.asyncio
-    async def test_non_json_output_with_flag_leaves_structured_none(self, tmp_path):
-        prompt_file = tmp_path / "t.md"
-        prompt_file.write_text("prompt")
-
-        backend = MemoryBackend(response="not json")
-        executor = PromptExecutor(
-            backend=backend,
-            settings=Settings(),
-            workdir=str(tmp_path),
-        )
-        phase = Phase(
-            id="p1", name="P1", prompt_file="t.md",
-            parse_output_as_json=True,
-        )
-        result = await executor.execute(phase, {})
-
-        assert result.success is True
-        assert result.structured_output is None
 
     @pytest.mark.asyncio
     async def test_tokens_used_threaded_to_phase_result(self, tmp_path):

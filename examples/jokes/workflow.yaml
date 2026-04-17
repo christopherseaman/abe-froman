@@ -5,7 +5,6 @@ phases:
   - id: generate
     name: "Generate Jokes"
     prompt_file: "examples/jokes/generate.md"
-    parse_output_as_json: true
     quality_gate:
       validator: "examples/jokes/gates/validate_jokes.py"
       threshold: 1.0

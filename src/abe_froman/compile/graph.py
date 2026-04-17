@@ -48,23 +48,13 @@ def _detect_cycles(config: WorkflowConfig) -> None:
             dfs(node)
 
 
-def _make_gate_router(phase: Phase, max_retries: int):
+def _make_gate_router(phase: Phase):
     def router(state: WorkflowState) -> str:
         if phase.id in state.get("failed_phases", []):
             return "fail"
-
-        score = state.get("gate_scores", {}).get(phase.id, 0.0)
-        threshold = phase.quality_gate.threshold
-        retries = state.get("retries", {}).get(phase.id, 0)
-
-        if score >= threshold:
+        if phase.id in state.get("completed_phases", []):
             return "pass"
-        elif retries < max_retries:
-            return "retry"
-        elif not phase.quality_gate.blocking:
-            return "pass"
-        else:
-            return "fail"
+        return "retry"
 
     return router
 
@@ -97,7 +87,6 @@ def _read_manifest(state: WorkflowState, phase: Phase) -> list[dict]:
 
 
 def _make_dynamic_router(phase: Phase, config: WorkflowConfig):
-    max_retries = phase.effective_max_retries(config.settings)
     template_node_id = f"_sub_{phase.id}"
 
     dsc = phase.dynamic_subphases
@@ -109,17 +98,8 @@ def _make_dynamic_router(phase: Phase, config: WorkflowConfig):
     def router(state: WorkflowState):
         if phase.id in state.get("failed_phases", []):
             return "fail"
-
-        if phase.quality_gate:
-            score = state.get("gate_scores", {}).get(phase.id, 0.0)
-            threshold = phase.quality_gate.threshold
-            retries = state.get("retries", {}).get(phase.id, 0)
-
-            if score < threshold:
-                if retries < max_retries:
-                    return "retry"
-                elif phase.quality_gate.blocking:
-                    return "fail"
+        if phase.quality_gate and phase.id not in state.get("completed_phases", []):
+            return "retry"
 
         items = _read_manifest(state, phase)
         if not items:
@@ -136,8 +116,13 @@ def _make_dynamic_router(phase: Phase, config: WorkflowConfig):
 def build_workflow_graph(
     config: WorkflowConfig,
     executor: PhaseExecutor | None = None,
+    checkpointer: Any = None,
 ) -> Any:
-    """Build a compiled LangGraph StateGraph from workflow config."""
+    """Build a compiled LangGraph StateGraph from workflow config.
+
+    If `checkpointer` is provided, the compiled graph will persist state
+    after each node via LangGraph's checkpointer protocol.
+    """
     _detect_cycles(config)
 
     builder = StateGraph(WorkflowState)
@@ -252,8 +237,6 @@ def build_workflow_graph(
         if phase.id not in gated_phase_ids or phase.id in dynamic_phase_ids:
             continue
 
-        max_retries = phase.effective_max_retries(config.settings)
-
         dependents = [
             p.id for p in config.phases if phase.id in p.depends_on
         ]
@@ -261,13 +244,13 @@ def build_workflow_graph(
         if phase.id in terminal_ids:
             builder.add_conditional_edges(
                 phase.id,
-                _make_gate_router(phase, max_retries),
+                _make_gate_router(phase),
                 {"pass": END, "retry": phase.id, "fail": END},
             )
         elif len(dependents) == 1:
             builder.add_conditional_edges(
                 phase.id,
-                _make_gate_router(phase, max_retries),
+                _make_gate_router(phase),
                 {"pass": dependents[0], "retry": phase.id, "fail": END},
             )
         else:
@@ -281,7 +264,7 @@ def build_workflow_graph(
 
             builder.add_conditional_edges(
                 phase.id,
-                _make_gate_router(phase, max_retries),
+                _make_gate_router(phase),
                 {"pass": passthrough_id, "retry": phase.id, "fail": END},
             )
             for dep_id in dependents:
@@ -295,4 +278,4 @@ def build_workflow_graph(
         ):
             builder.add_edge(phase.id, END)
 
-    return builder.compile()
+    return builder.compile(checkpointer=checkpointer)

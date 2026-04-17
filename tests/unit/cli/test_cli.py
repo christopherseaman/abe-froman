@@ -1,10 +1,7 @@
-import json
-
 import pytest
 from click.testing import CliRunner
 
 from abe_froman.cli.main import cli
-from abe_froman.runtime.persistence import STATE_FILENAME
 
 
 @pytest.fixture
@@ -48,24 +45,25 @@ class TestGraphCommand:
         assert "phase-1" in result.output
         assert "phase-5" in result.output
 
-    def test_graph_shows_dependencies(self, runner, example_workflow_path):
+    def test_graph_mermaid_format(self, runner, example_workflow_path):
+        """Default format is Mermaid — output should contain the header."""
         result = runner.invoke(cli, ["graph", str(example_workflow_path)])
         assert result.exit_code == 0
-        # phase-1 depends on phase-0
-        assert "depends_on" in result.output
+        assert "graph TD" in result.output
 
-    def test_graph_shows_execution_types(self, runner, example_workflow_path):
+    def test_graph_shows_gate_edges(self, runner, example_workflow_path):
+        """Gated phases produce conditional pass/retry/fail edges."""
         result = runner.invoke(cli, ["graph", str(example_workflow_path)])
-        assert "(command)" in result.output
-        assert "(prompt)" in result.output
+        assert result.exit_code == 0
+        assert "pass" in result.output
+        assert "retry" in result.output
 
-    def test_graph_shows_model_override(self, runner, example_workflow_path):
+    def test_graph_shows_start_and_end(self, runner, example_workflow_path):
+        """Mermaid output contains LangGraph's start/end terminal nodes."""
         result = runner.invoke(cli, ["graph", str(example_workflow_path)])
-        assert "[model: sonnet]" in result.output
-
-    def test_graph_shows_gate_info(self, runner, example_workflow_path):
-        result = runner.invoke(cli, ["graph", str(example_workflow_path)])
-        assert "[gate:" in result.output
+        assert result.exit_code == 0
+        assert "__start__" in result.output
+        assert "__end__" in result.output
 
 
 class TestRunCommand:
@@ -169,54 +167,26 @@ class TestResumeCommand:
         )
         return config
 
-    def test_resume_without_state_file_errors(self, runner, tmp_path):
+    def test_resume_without_checkpoint_errors(self, runner, tmp_path):
+        """--resume with no prior run → clean error."""
         config = self._simple_config(tmp_path)
         result = runner.invoke(
             cli, ["run", str(config), "--resume", "--workdir", str(tmp_path)]
         )
         assert result.exit_code != 0
-        assert "No state file" in result.output
+        assert "No saved state" in result.output
 
-    def test_start_without_state_file_errors(self, runner, tmp_path):
+    def test_resume_reads_previous_checkpoint(self, runner, tmp_path):
+        """Run, then --resume → picks up completed phases from SQLite checkpoint."""
         config = self._simple_config(tmp_path)
-        result = runner.invoke(
-            cli, ["run", str(config), "--start", "a", "--workdir", str(tmp_path)]
+
+        first = runner.invoke(
+            cli, ["run", str(config), "--workdir", str(tmp_path)]
         )
-        assert result.exit_code != 0
-        assert "state file" in result.output
+        assert first.exit_code == 0
 
-    def test_resume_and_start_mutually_exclusive(self, runner, tmp_path):
-        config = self._simple_config(tmp_path)
-        result = runner.invoke(
-            cli, ["run", str(config), "--resume", "--start", "a",
-                  "--workdir", str(tmp_path)]
-        )
-        assert result.exit_code != 0
-        assert "Cannot use both" in result.output
-
-    def test_resume_prints_cached_count(self, runner, tmp_path):
-        config = self._simple_config(tmp_path)
-        # Create a state file with one completed phase
-        (tmp_path / STATE_FILENAME).write_text(json.dumps({
-            "version": 1,
-            "config_name": "Test",
-            "config_version": "1.0",
-            "saved_at": "2026-01-01T00:00:00Z",
-            "state": {
-                "completed_phases": ["a"],
-                "failed_phases": [],
-                "phase_outputs": {"a": "hi"},
-                "phase_structured_outputs": {},
-                "gate_scores": {},
-                "retries": {},
-                "subphase_outputs": {},
-                "errors": [],
-                "workdir": str(tmp_path),
-                "dry_run": False,
-            },
-        }))
-        result = runner.invoke(
+        second = runner.invoke(
             cli, ["run", str(config), "--resume", "--workdir", str(tmp_path)]
         )
-        assert result.exit_code == 0
-        assert "Resuming: 1 phases already completed" in result.output
+        assert second.exit_code == 0
+        assert "Resuming: 1 phases already completed" in second.output

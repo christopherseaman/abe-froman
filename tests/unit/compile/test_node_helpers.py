@@ -20,6 +20,7 @@ from abe_froman.compile.nodes import (
     inject_retry_reason,
     make_failure_update,
 )
+from abe_froman.runtime.gates import GateResult
 from abe_froman.runtime.result import ExecutionResult
 from abe_froman.schema.models import Phase, QualityGate
 
@@ -118,6 +119,36 @@ class TestBuildContext:
         state = {"phase_outputs": {"a": "text"}}
         assert build_context(phase, state) == {"a": "text"}
 
+    def test_projects_dep_worktree_path(self):
+        """`{{dep_worktree}}` is populated from state.phase_worktrees."""
+        phase = _phase(depends_on=["a"])
+        state = {
+            "phase_outputs": {"a": "out"},
+            "phase_worktrees": {"a": "/tmp/wt-a"},
+        }
+        ctx = build_context(phase, state)
+        assert ctx["a_worktree"] == "/tmp/wt-a"
+
+    def test_no_worktree_means_no_worktree_key(self):
+        phase = _phase(depends_on=["a"])
+        state = {"phase_outputs": {"a": "out"}, "phase_worktrees": {}}
+        ctx = build_context(phase, state)
+        assert "a_worktree" not in ctx
+
+    def test_projects_subphase_aggregations(self):
+        """Final-phase context exposes `{dep_subphases}` + worktrees list."""
+        phase = _phase(depends_on=["parent"])
+        state = {
+            "phase_outputs": {
+                "parent": "parent-out",
+                "parent_subphases": '{"parent::a": "x"}',
+                "parent_subphase_worktrees": '["/tmp/wt-a"]',
+            }
+        }
+        ctx = build_context(phase, state)
+        assert ctx["parent_subphases"] == '{"parent::a": "x"}'
+        assert ctx["parent_subphase_worktrees"] == '["/tmp/wt-a"]'
+
 
 class TestInjectRetryReason:
     def test_first_attempt_no_injection(self):
@@ -136,6 +167,53 @@ class TestInjectRetryReason:
         state = {"retries": {"p1": 1}}
         ctx = inject_retry_reason({}, _phase(), state, 3)
         assert "_retry_reason" not in ctx
+
+    def test_includes_feedback_narrative(self):
+        """Structured gate feedback appears in the retry reason."""
+        phase = _phase(quality_gate=_gate())
+        state = {
+            "retries": {"p1": 1},
+            "gate_scores": {"p1": 0.4},
+            "gate_feedback": {
+                "p1": {
+                    "feedback": "missing docstring",
+                    "pass_criteria_met": [],
+                    "pass_criteria_unmet": ["docs", "tests"],
+                }
+            },
+        }
+        ctx = inject_retry_reason({}, phase, state, 3)
+        reason = ctx["_retry_reason"]
+        assert "Feedback: missing docstring" in reason
+        assert "- docs" in reason
+        assert "- tests" in reason
+
+    def test_partial_feedback_produces_minimal_retry_reason(self):
+        """Gate that returns only `{"score": ...}` produces feedback with
+        feedback=None and empty pass_criteria lists (the shape
+        build_gate_outcome_update writes). The retry reason must still surface
+        the score/threshold/attempt lines without "Feedback:" or
+        "Unmet criteria:" sections.
+        """
+        phase = _phase(quality_gate=_gate(threshold=0.8))
+        state = {
+            "retries": {"p1": 1},
+            "gate_scores": {"p1": 0.4},
+            "gate_feedback": {
+                "p1": {
+                    "feedback": None,
+                    "pass_criteria_met": [],
+                    "pass_criteria_unmet": [],
+                }
+            },
+        }
+        ctx = inject_retry_reason({}, phase, state, 3)
+        reason = ctx["_retry_reason"]
+        assert "score=0.40" in reason
+        assert "threshold=0.8" in reason
+        assert "retry 1 of 3" in reason
+        assert "Feedback:" not in reason
+        assert "Unmet criteria:" not in reason
 
 
 class TestExecuteWithTimeout:
@@ -227,26 +305,50 @@ class TestClassifyGateOutcome:
 class TestBuildGateOutcomeUpdate:
     def test_pass(self):
         phase = _phase(quality_gate=_gate())
-        update = build_gate_outcome_update(phase, 0.9, "pass", 0, 3)
+        update = build_gate_outcome_update(phase, GateResult(score=0.9), "pass", 0, 3)
         assert update["gate_scores"] == {"p1": 0.9}
+        assert update["gate_feedback"] == {
+            "p1": {"feedback": None, "pass_criteria_met": [], "pass_criteria_unmet": []}
+        }
         assert update["completed_phases"] == ["p1"]
         assert "failed_phases" not in update
 
     def test_retry(self):
         phase = _phase(quality_gate=_gate())
-        update = build_gate_outcome_update(phase, 0.5, "retry", 1, 3)
+        update = build_gate_outcome_update(phase, GateResult(score=0.5), "retry", 1, 3)
         assert update["retries"] == {"p1": 2}
         assert "completed_phases" not in update
 
     def test_fail_blocking(self):
         phase = _phase(quality_gate=_gate(threshold=0.8))
-        update = build_gate_outcome_update(phase, 0.3, "fail_blocking", 3, 3)
+        update = build_gate_outcome_update(
+            phase, GateResult(score=0.3), "fail_blocking", 3, 3
+        )
         assert update["failed_phases"] == ["p1"]
         assert "score=0.30" in update["errors"][0]["error"]
         assert "threshold=0.8" in update["errors"][0]["error"]
 
     def test_warn_continue(self):
         phase = _phase(quality_gate=_gate(threshold=0.8, blocking=False))
-        update = build_gate_outcome_update(phase, 0.3, "warn_continue", 3, 3)
+        update = build_gate_outcome_update(
+            phase, GateResult(score=0.3), "warn_continue", 3, 3
+        )
         assert update["completed_phases"] == ["p1"]
         assert "non-blocking" in update["errors"][0]["error"]
+
+    def test_feedback_populated_from_gate_result(self):
+        phase = _phase(quality_gate=_gate())
+        gr = GateResult(
+            score=0.5,
+            feedback="missing docstring",
+            pass_criteria_met=["tests pass"],
+            pass_criteria_unmet=["docs"],
+        )
+        update = build_gate_outcome_update(phase, gr, "retry", 0, 3)
+        assert update["gate_feedback"] == {
+            "p1": {
+                "feedback": "missing docstring",
+                "pass_criteria_met": ["tests pass"],
+                "pass_criteria_unmet": ["docs"],
+            }
+        }

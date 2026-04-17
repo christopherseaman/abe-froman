@@ -5,34 +5,34 @@ Workflow orchestrator using LangGraph for orchestration and Claude via ACP for e
 ## Architecture
 
 ```
-YAML Config → Pydantic Schema → LangGraph StateGraph
+YAML Config → Pydantic Schema → LangGraph StateGraph (+ SqliteSaver checkpointer)
                                        │
                                        ▼
-                                 Phase Node → DispatchExecutor
-                                       │           │
-                                       │     ┌─────┼──────┐
-                                       │     ▼     ▼      ▼
-                                       │   ACP   Cmd   GateOnly
-                                       ▼
-                                 Quality Gate (conditional edge)
-                                       │
-                                 ┌─────┼─────┐
-                                 ▼     ▼     ▼
-                               pass  retry  fail
+                             Phase Node → ForemanExecutor → DispatchExecutor
+                                   │         (queue +            │
+                                   │          worktree           │
+                                   │          pool)        ┌─────┼──────┐
+                                   │                       ▼     ▼      ▼
+                                   │                     Prompt  Cmd  GateOnly
+                                   ▼
+                             Quality Gate (script or LLM)
+                                   │
+                                 ┌─┼─┐
+                                 ▼ ▼ ▼
+                              pass retry fail   (router reads state; no reclassify)
 ```
 
 ## Build & Test
 
 ```bash
 uv sync                                    # install deps
-uv run pytest tests/ -v                    # run all tests (~260 tests, ~60s)
+uv run pytest tests/ -v                    # run all tests (~335 tests)
 uv run abe-froman validate config.yaml     # validate a workflow config
 uv run abe-froman run config.yaml --dry-run # dry run
 uv run abe-froman run config.yaml -e acp   # run with Claude via ACP
-uv run abe-froman run config.yaml --resume        # resume from last failure
-uv run abe-froman run config.yaml --start=phase-3 # restart from specific phase
+uv run abe-froman run config.yaml --resume        # resume from last checkpoint
 uv run abe-froman run config.yaml --log out.jsonl  # run with JSONL event log
-uv run abe-froman graph config.yaml        # print dependency graph
+uv run abe-froman graph config.yaml        # emit Mermaid graph (LangGraph draw_mermaid)
 ```
 
 ## Workflow Schema
@@ -66,16 +66,16 @@ phases:                       # required, list of phases
 
     # Quality gate — optional
     quality_gate:
-      validator: "gates/check.py"     # .py or .js subprocess
+      validator: "gates/check.py"     # .py, .js, or .md (LLM gate)
       threshold: 0.8                  # 0.0–1.0, gate passes when score >= threshold
       blocking: false                 # true = failure stops workflow, false = warn and continue
       max_retries: 3                  # optional, overrides settings.max_retries
+      model: "opus"                   # optional, only used by .md LLM gates
 
     # Output — optional
     output_contract:
       base_directory: "output/dir"
       required_files: ["file1.md"]
-    parse_output_as_json: true        # attempt to JSON-parse phase output into structured_output
 
     # Dynamic subphases — optional
     dynamic_subphases:
@@ -86,14 +86,18 @@ phases:                       # required, list of phases
         quality_gate: { ... }
       final_phases: [{ id, name, prompt_file, ... }]
 
-settings:                     # optional, all fields have defaults
-  output_directory: "output"  # default: "output"
-  max_retries: 3              # default: 3
-  default_model: "sonnet"     # default: "sonnet"
-  executor: "stub"            # default: "stub", options: "stub", "acp"
-  default_timeout: 300        # optional, seconds, None = no timeout
+settings:                      # optional, all fields have defaults
+  output_directory: "output"   # default: "output"
+  max_retries: 3               # default: 3
+  default_model: "sonnet"      # default: "sonnet"
+  executor: "stub"             # default: "stub", options: "stub", "acp"
+  default_timeout: 300         # optional, seconds, None = no timeout
   preamble_file: "preamble.md" # optional, prepended to all prompt phases
   retry_backoff: [10, 30, 60]  # optional, delay seconds per retry attempt
+  max_parallel_jobs: 4         # foreman global concurrency cap (default: 4)
+  per_model_limits:            # foreman per-model concurrency caps (default: {})
+    opus: 2
+    sonnet: 4
 ```
 
 ### Execution types
@@ -116,30 +120,38 @@ Here is the research from the previous phase:
 Based on this, generate a summary.
 ```
 
-The variable name matches the `id` of the dependency phase. Its value is the raw output from that phase.
+The variable name matches the `id` of the dependency phase. Its value is the raw output from that phase. For dependencies that ran under foreman, `{{dep_id_worktree}}` is also projected — the absolute path to that phase's git worktree (see Worktrees below). Final phases in a dynamic-subphase group additionally receive `{{parent_id_subphases}}` (JSON-encoded `subphase_id → output` map) and `{{parent_id_subphase_worktrees}}` (JSON-encoded list of subphase worktree paths).
 
-On retry, the orchestrator auto-injects `{{_retry_reason}}` with the previous gate score, threshold, and attempt number. Templates can use this to give the model feedback on why the previous attempt failed.
+On retry, the orchestrator auto-injects `{{_retry_reason}}` with the previous gate score, threshold, attempt number, and — when the gate produced structured feedback — the narrative `feedback` string plus any `pass_criteria_unmet` bullets. Templates can surface this text to the model so the next attempt acts on specifics, not just a bare score.
 
 Both `prompt_file` and `quality_gate.validator` paths resolve relative to the working directory (`--workdir`), not the config file location.
 
 ### Quality gate validators
 
-**Script validators** (`.py`, `.js`) receive the phase output on stdin and must print a score to stdout.
+**Script validators** (`.py`, `.js`) receive the phase output on stdin and print to stdout.
 
-Environment variables available to validators:
+Environment variables available to script validators:
 - `PHASE_ID` — the phase's unique identifier
 - `WORKFLOW_NAME` — the workflow's `name` field from config
 - `ATTEMPT_NUMBER` — current attempt number (starts at 1, increments on retry)
 - `WORKDIR` — the working directory path
 
 ```python
-# gates/validate.py — reads stdin, prints 0.0–1.0
+# gates/validate.py — reads stdin, prints 0.0–1.0 OR a JSON object
 import json, sys
 data = json.loads(sys.stdin.read())
 print("1.0" if valid(data) else "0.0")
 ```
 
-Score can be a plain float or JSON `{"score": 0.75}`.
+Script-gate output is accepted in three shapes (parsed in `runtime/gates.py:_parse_script_output`):
+
+| Shape | Example | What gets populated |
+|-------|---------|---------------------|
+| Bare float | `0.85` | `score=0.85`; feedback empty |
+| JSON with `score` only | `{"score": 0.6}` | `score=0.6`; feedback empty |
+| JSON with full feedback | `{"score": 0.6, "feedback": "...", "pass_criteria_met": ["..."], "pass_criteria_unmet": ["..."]}` | everything flows into `_retry_reason` |
+
+**LLM validators** (`.md`) render the file as a Jinja2 template with `{{output}}`, `{{phase_id}}`, `{{attempt}}` available, then call the phase's `PromptBackend`. The model response must be JSON with at least a `score` field; the full feedback schema above is supported. Malformed output fails loudly (`score=0.0` with a diagnostic feedback string) — it does not silently pass. Per-gate model override via `quality_gate.model`; otherwise falls back to `settings.default_model`.
 
 ### Gate routing
 
@@ -148,41 +160,73 @@ Score can be a plain float or JSON `{"score": 0.75}`.
 - `score < threshold`, no retries, `blocking: true` → **fail** → dependents skipped
 - `score < threshold`, no retries, `blocking: false` → **pass with warning** → continue
 
+Routing is decided inside `_make_phase_node` (`compile/nodes.py`) via `classify_gate_outcome`; the resulting outcome is written to state (`completed_phases` / `failed_phases` / `retries`). The router in `compile/graph.py` is a pure state-reader — it does not re-classify, it just reads which bucket the phase landed in.
+
+### Worktrees + author-written merge phases
+
+Every phase runs in its own git worktree created under `<workdir>/.abe-foreman/wt-<phase-id>-<uuid>/`. `ForemanExecutor` (`runtime/foreman.py`) wraps `DispatchExecutor` and allocates a worktree per `phase.id` on first `execute()`, **reusing the same tree across retries** so a prompt phase can iterate on its own prior files when a quality gate fails. Subphases get worktrees keyed by `{parent_id}::{item_id}`.
+
+Worktree isolation requires a git repo. If `--workdir` is not inside a git working tree, the CLI falls back to running `DispatchExecutor` directly (no foreman, no worktrees) and prints a notice.
+
+Foreman **never cleans worktrees**. Downstream phases read upstream outputs via:
+- **Text**: `{{dep_id}}` (unchanged) — the stdout/assistant-text output
+- **Files**: `{{dep_id}_worktree}` (absolute path) — author references files in prompts or `cp` commands
+- **Dynamic fan-out synthesis**: `{{parent_id}_subphase_worktrees}` (JSON list) in final phases — author iterates through subphase worktrees and merges results
+
+There is no automatic merge. Authors write explicit reconciliation/merge phases (typically `type: command` with `cp` / `git merge-file`) that decide what flows from a worktree into the base workdir. Stray worktrees can be cleaned up with `git worktree remove <path>`.
+
+### Concurrency caps
+
+`settings.max_parallel_jobs` (default 4) bounds all parallel phase execution via an `asyncio.Semaphore`. `settings.per_model_limits` layers model-specific caps inside the global one — e.g. `{opus: 2, sonnet: 4}` ensures no more than 2 opus requests run concurrently. Set `max_parallel_jobs: 1` for fully serialized execution.
+
+### Resume via LangGraph checkpointer
+
+Workflow state is persisted by LangGraph's `AsyncSqliteSaver` to `<workdir>/.abe-froman-checkpoint.db`. The thread_id is a deterministic SHA1 hash of `(workflow_name, resolved_workdir)` (16 hex chars). `--resume` reads the most recent checkpoint for that thread, strips failure bookkeeping (`failed_phases`, `errors`, `retries`), and re-runs from where the previous attempt stopped. `phase_worktrees` survive resume and rehydrate into the new `ForemanExecutor` so retries land back in the same tree.
+
 ## Project Layout
 
-- `src/abe_froman/schema/models.py` — Pydantic DSL (WorkflowConfig, Phase, execution types)
-- `src/abe_froman/compile/graph.py` — YAML → LangGraph StateGraph (gate routers, dynamic fan-out)
-- `src/abe_froman/compile/nodes.py` — Phase node factory + pure helpers
+- `src/abe_froman/schema/models.py` — Pydantic DSL (WorkflowConfig, Phase, Settings, QualityGate, execution types)
+- `src/abe_froman/compile/graph.py` — YAML → LangGraph StateGraph (state-reader routers, dynamic fan-out, checkpointer wiring)
+- `src/abe_froman/compile/nodes.py` — Phase node factory + pure helpers (dep check, context build, retry reason, gate classification)
 - `src/abe_froman/compile/dynamic.py` — Dynamic subphase node factories
 - `src/abe_froman/runtime/state.py` — WorkflowState TypedDict with LangGraph reducers
 - `src/abe_froman/runtime/result.py` — ExecutionResult, PhaseExecutor/PromptBackend protocols
-- `src/abe_froman/runtime/gates.py` — Quality gate evaluation + output contract validation
-- `src/abe_froman/runtime/persistence.py` — State save/load/clear to `.abe-froman-state.json`
-- `src/abe_froman/runtime/resume.py` — Resume/start-from state preparation
+- `src/abe_froman/runtime/gates.py` — GateResult, script + LLM gate evaluation, output contract validation
+- `src/abe_froman/runtime/foreman.py` — ForemanExecutor: concurrency semaphores + per-phase git worktree pool
 - `src/abe_froman/runtime/logging.py` — Structured JSONL event logger
-- `src/abe_froman/runtime/runner.py` — Streaming execution with state persistence
-- `src/abe_froman/runtime/executor/dispatch.py` — Routes execution by phase type
-- `src/abe_froman/runtime/executor/command.py` — Subprocess executor
+- `src/abe_froman/runtime/runner.py` — Streaming execution (thread_id passed through to LangGraph)
+- `src/abe_froman/runtime/executor/dispatch.py` — Routes execution by phase type (takes per-call `workdir`)
+- `src/abe_froman/runtime/executor/command.py` — Subprocess executor (per-call `workdir` → `cwd`)
 - `src/abe_froman/runtime/executor/prompt.py` — PromptExecutor (template rendering, model downgrade)
 - `src/abe_froman/runtime/executor/backends/stub.py` — Stub backend (default)
 - `src/abe_froman/runtime/executor/backends/acp.py` — ACP backend (claude-code-acp)
 - `src/abe_froman/runtime/executor/backends/factory.py` — Backend factory
-- `src/abe_froman/cli/main.py` — Click CLI
+- `src/abe_froman/cli/main.py` — Click CLI (wires AsyncSqliteSaver, ForemanExecutor, thread_id)
+
+Persistence is handled by LangGraph's `AsyncSqliteSaver` (DB at `<workdir>/.abe-froman-checkpoint.db`), not a custom JSON envelope.
 
 ## Key Design Decisions
 
-- **PhaseExecutor Protocol** (not ABC) — duck-typed, agent-agnostic
+- **PhaseExecutor Protocol** (not ABC) — duck-typed, agent-agnostic, accepts per-call `workdir` override
 - **Discriminated union** for execution types: PromptExecution | CommandExecution | GateOnlyExecution
-- **Quality gates owned by orchestrator**, not executor — gates read phase output via stdin
+- **Quality gates owned by orchestrator**, not executor — gates run in `_make_phase_node`, not inside the executor
+- **Gate-kit is backend-agnostic** — `evaluate_gate` takes a `PromptBackend` handle, doesn't own one
 - **LangGraph state with Annotated reducers** for safe parallel state merging
-- **Model per phase** with `settings.default_model` fallback
-- **`{{variable}}` templating** in prompt files for parameterized execution
+- **Model per phase** with `settings.default_model` fallback; LLM gates can also override
+- **`{{variable}}` templating** in prompt files for parameterized execution (dep output, dep worktree, retry reason)
 - **PromptBackend Protocol** — swappable backends (stub, acp, future: API key, OpenAI, etc.)
+- **Foreman is LangGraph-free** — `runtime/foreman.py` imports nothing from `compile/` or `langgraph`; enforced by `tests/architecture/test_layers.py`
+- **Routers are pure state-readers** — classification logic lives in `_make_phase_node`; the router just reads `completed_phases` / `failed_phases`
+- **Persistence via LangGraph checkpointer** — no custom state file; `--resume` is a thread-id lookup
+- **Worktree retention across retries** — foreman keys worktrees by phase_id; retries reuse the same tree so agents can iterate on prior work
 
 ## Known Limitations
 
 - **Hyphenated phase IDs in templates:** `{{research-phase}}` is parsed by Jinja2 as subtraction (`research` minus `phase`) and will error. Use underscores in phase IDs that need template substitution.
 - **Subphase quality gates:** Record scores but do not trigger retries. Retry routing only works for top-level phase gates.
+- **Per-model backpressure under downgrade:** Foreman acquires the semaphore for the phase's *original* model. If `PromptExecutor.execute()` downgrades opus→sonnet mid-call (on `OverloadError`), the sonnet semaphore is not acquired for that call — "intent" not "enforcement under downgrade."
+- **No automatic worktree cleanup:** Foreman never removes worktrees. Authors write explicit reconciliation phases, and leftover trees can accumulate under `<workdir>/.abe-foreman/`. Clean up manually with `git worktree remove <path>`.
+- **Checkpointer migration:** Users on the pre-refactor `.abe-froman-state.json` format cannot `--resume` across the upgrade — the file is ignored; re-run from scratch.
 
 ## Backlog
 
@@ -190,8 +234,8 @@ Prioritized features for future development. See `docs/backlog-adapter-inspirati
 
 ### P1 — Next up
 
-1. ~~**Resume from failed phase**~~ — **DONE**. `--resume` and `--start=<phase-id>` flags. State persisted to `.abe-froman-state.json` after each phase via `astream`. Cleared on success, preserved on failure.
-2. ~~**Enhanced retry with failure context**~~ — **DONE**. On retry, `{{_retry_reason}}` is auto-injected into context with previous gate score, threshold, and attempt number.
+1. ~~**Resume from failed phase**~~ — **DONE**. `--resume` uses LangGraph `AsyncSqliteSaver` (DB at `<workdir>/.abe-froman-checkpoint.db`) keyed by deterministic workflow-name+workdir thread_id. Phase worktrees rehydrate into a fresh `ForemanExecutor`.
+2. ~~**Enhanced retry with failure context**~~ — **DONE**. On retry, `{{_retry_reason}}` is auto-injected with previous score, threshold, attempt number, gate feedback string, and `pass_criteria_unmet` bullets.
 3. ~~**Output contract enforcement**~~ — **DONE**. After execution, before gate evaluation, `validate_output_contract()` checks required files exist. Contract failure is always blocking (hard fail, no retry).
 4. ~~**Model downgrade on API overload**~~ — **DONE**. PromptExecutor catches OverloadError and auto-downgrades model tier (opus → sonnet → haiku). Backends detect 529/overload and raise OverloadError.
 
@@ -199,7 +243,7 @@ Prioritized features for future development. See `docs/backlog-adapter-inspirati
 
 5. ~~**Phase execution timeout**~~ — **DONE**. Per-phase `timeout` field and `settings.default_timeout`, enforced via `asyncio.wait_for()` on both executor and gate calls. Timeout failures are hard failures (no retry). Subphases inherit parent phase timeout.
 6. ~~**Structured JSONL logging**~~ — **DONE**. `--log` flag writes JSONL events (`workflow_start`, `phase_completed`, `phase_failed`, `gate_evaluated`, `phase_retried`, `workflow_end`) via state-diff detection in the runner's `astream` loop.
-7. ~~**Output directory scaffolding**~~ — **DONE**. `scaffold_output_directory()` in `contracts.py` pre-creates `base_directory` (with `parents=True`) before execution. Called in `_make_phase_node()` after context setup, before `executor.execute()`.
+7. ~~**Output directory scaffolding**~~ — **DONE**. `scaffold_output_directory()` in `runtime/gates.py` pre-creates `base_directory` (with `parents=True`) before execution. Called in `_make_phase_node()` after context setup, before `executor.execute()`.
 8. ~~**Preamble injection**~~ — **DONE**. `settings.preamble_file` prepended to all prompt phases for shared project context. PromptExecutor prepends preamble contents before template rendering. Missing preamble file is a hard failure.
 
 ### P3 — Nice to have
@@ -211,13 +255,27 @@ Prioritized features for future development. See `docs/backlog-adapter-inspirati
 13. ~~**Extended env var injection into validators**~~ — **DONE**. Gate validator scripts receive `PHASE_ID`, `WORKFLOW_NAME`, `ATTEMPT_NUMBER`, and `WORKDIR` as environment variables.
 14. Git integration for outputs (auto-push to branch on completion)
 15. Health check endpoint (for container orchestration)
+16. ~~**Per-phase git worktree isolation**~~ — **DONE**. `ForemanExecutor` (`runtime/foreman.py`) allocates a worktree per `phase.id` under `<workdir>/.abe-foreman/` and reuses it across retries. Concurrency capped by `settings.max_parallel_jobs` + `settings.per_model_limits`.
+17. ~~**LLM-based quality gates**~~ — **DONE**. `.md` validators are rendered as Jinja2 templates (with `{{output}}`, `{{phase_id}}`, `{{attempt}}`), dispatched to the phase's `PromptBackend`, and parsed with loud-failure semantics.
+18. ~~**Structured gate feedback**~~ — **DONE**. `GateResult` carries `score`, `feedback`, `pass_criteria_met`, `pass_criteria_unmet`. Script gates that emit the expanded JSON shape (plus bare-float / `{"score": …}` legacy shapes) feed retry prompts.
+
+### Wishlist (non-prioritized)
+
+- Composite gate predicates (OR / weighted / expression) and multi-dimension `pass_criteria` with `{field, min}` shape
+- Multi-tier retry escalation (retain worktree across escalation boundaries)
+- Explicit synthesis phase with synthesis gate blocking merge
+- Worktree GC policy (`abe-froman worktree list` / `prune --older-than 7d`)
+- LLM gate token-usage attribution under a synthetic `{phase.id}::gate` key
 
 ## Testing
 
 ### Facts about the current suite
+- ~335 tests (~22s non-ACP). Layout: `tests/unit/{schema,compile,runtime,cli,workflow}/`, `tests/architecture/`, `tests/builder/`, `tests/e2e/`, `tests/acp/`
 - All tests use real execution — no mocks of external systems
 - Command phases use real subprocesses (`echo`, `cat`, `false`)
 - Gate validators are real Python scripts that inspect stdin
+- Foreman tests exercise real `git worktree add` in a temp repo
+- Resume tests exercise real `AsyncSqliteSaver` checkpoint roundtrips
 - ACP integration tests spawn real claude-code-acp processes
 - E2E joke workflow: generate → deterministic gate → select, all through ACP
 

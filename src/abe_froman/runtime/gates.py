@@ -32,18 +32,28 @@ def _parse_script_output(output: str) -> GateResult:
     except ValueError:
         pass
 
+    snippet = stripped[:200]
     try:
         data = json.loads(stripped)
     except (json.JSONDecodeError, TypeError):
-        return GateResult(score=0.0)
+        return GateResult(
+            score=0.0,
+            feedback=f"validator output unparseable: {snippet!r}",
+        )
 
     if not isinstance(data, dict) or "score" not in data:
-        return GateResult(score=0.0)
+        return GateResult(
+            score=0.0,
+            feedback="validator response missing or non-numeric 'score' field",
+        )
 
     try:
         score = float(data["score"])
     except (TypeError, ValueError):
-        return GateResult(score=0.0)
+        return GateResult(
+            score=0.0,
+            feedback="validator response missing or non-numeric 'score' field",
+        )
 
     met = data.get("pass_criteria_met", []) or []
     unmet = data.get("pass_criteria_unmet", []) or []
@@ -97,12 +107,19 @@ async def evaluate_gate_script(
             cwd=workdir,
             env=env,
         )
-        stdout, _stderr = await proc.communicate(input=phase_output.encode())
-    except (FileNotFoundError, OSError):
-        return GateResult(score=0.0)
+        stdout, stderr = await proc.communicate(input=phase_output.encode())
+    except (FileNotFoundError, OSError) as e:
+        return GateResult(
+            score=0.0,
+            feedback=f"validator script not found or unexecutable: {validator_path} ({e})",
+        )
 
     if proc.returncode != 0:
-        return GateResult(score=0.0)
+        snippet = stderr.decode(errors="replace").strip()[:200]
+        return GateResult(
+            score=0.0,
+            feedback=f"validator exited with code {proc.returncode}: {snippet}",
+        )
 
     return _parse_script_output(stdout.decode())
 
@@ -165,7 +182,13 @@ async def evaluate_gate_llm(
     from abe_froman.runtime.executor.prompt import render_template
 
     template_path = Path(workdir) / gate.validator
-    template_text = template_path.read_text()
+    try:
+        template_text = template_path.read_text()
+    except FileNotFoundError:
+        return GateResult(
+            score=0.0,
+            feedback=f"gate template not found: {template_path}",
+        )
     rendered = render_template(
         template_text,
         {

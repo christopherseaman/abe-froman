@@ -13,7 +13,9 @@ class CommandExecutor:
     def __init__(self, workdir: str = "."):
         self.workdir = workdir
 
-    async def execute(self, phase: Phase, context: dict[str, Any]) -> ExecutionResult:
+    async def execute(
+        self, phase: Phase, context: dict[str, Any], workdir: str | None = None
+    ) -> ExecutionResult:
         if not isinstance(phase.execution, CommandExecution):
             return ExecutionResult(
                 success=False,
@@ -21,13 +23,14 @@ class CommandExecutor:
             )
 
         cmd = [phase.execution.command, *phase.execution.args]
+        cwd = workdir or self.workdir
 
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                cwd=self.workdir,
+                cwd=cwd,
             )
             stdout, stderr = await proc.communicate()
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from pathlib import Path
 
 import click
@@ -8,11 +9,25 @@ import yaml
 
 from abe_froman.compile.graph import build_workflow_graph
 from abe_froman.runtime.executor.dispatch import DispatchExecutor
-from abe_froman.runtime.state import make_initial_state
-from abe_froman.runtime.persistence import load_state, state_file_path
-from abe_froman.runtime.resume import prepare_resume_state, prepare_start_state
+from abe_froman.runtime.foreman import ForemanExecutor
 from abe_froman.runtime.runner import run_workflow
+from abe_froman.runtime.state import make_initial_state
 from abe_froman.schema.models import WorkflowConfig
+
+CHECKPOINT_DB = ".abe-froman-checkpoint.db"
+
+
+def _is_git_repo(workdir: str) -> bool:
+    """True if workdir is inside a git working tree."""
+    import subprocess
+    try:
+        r = subprocess.run(
+            ["git", "-C", workdir, "rev-parse", "--is-inside-work-tree"],
+            capture_output=True, check=False,
+        )
+        return r.returncode == 0 and r.stdout.strip() == b"true"
+    except FileNotFoundError:
+        return False
 
 
 def load_config(config_file: str) -> WorkflowConfig:
@@ -21,6 +36,16 @@ def load_config(config_file: str) -> WorkflowConfig:
         raise click.BadParameter(f"File not found: {config_file}")
     raw = yaml.safe_load(path.read_text())
     return WorkflowConfig(**raw)
+
+
+def _thread_id_for(config: WorkflowConfig, workdir: str) -> str:
+    """Deterministic thread_id for a (workflow, workdir) pair."""
+    key = f"{config.name}:{Path(workdir).resolve()}"
+    return hashlib.sha1(key.encode()).hexdigest()[:16]
+
+
+def _db_path(workdir: str) -> str:
+    return str(Path(workdir) / CHECKPOINT_DB)
 
 
 @click.group()
@@ -46,37 +71,99 @@ def validate(config_file: str):
 @cli.command()
 @click.argument("config_file", type=click.Path())
 def graph(config_file: str):
-    """Print the dependency graph structure."""
+    """Render the compiled LangGraph as a Mermaid diagram."""
     try:
         config = load_config(config_file)
+        compiled = build_workflow_graph(config)
     except Exception as e:
         raise click.ClickException(str(e))
 
-    click.echo(f"Workflow: {config.name} v{config.version}")
-    click.echo()
+    click.echo(compiled.get_graph().draw_mermaid())
 
-    for phase in config.phases:
-        deps = ""
-        if phase.depends_on:
-            dep_list = ", ".join(phase.depends_on)
-            deps = f" → depends_on: [{dep_list}]"
 
-        exec_type = ""
-        if phase.execution:
-            exec_type = f" ({phase.execution.type})"
+async def _run_async(
+    config: WorkflowConfig,
+    workdir: str,
+    dry_run: bool,
+    executor_type: str,
+    resume: bool,
+    log_file: str | None,
+) -> dict:
+    """Inner async runner — wires checkpointer, executor, and state."""
+    thread_id = _thread_id_for(config, workdir)
 
-        gate = ""
-        if phase.quality_gate:
-            blocking = " BLOCKING" if phase.quality_gate.blocking else ""
-            gate = f" [gate: {phase.quality_gate.threshold}{blocking}]"
-
-        model_info = ""
-        if phase.model:
-            model_info = f" [model: {phase.model}]"
-
-        click.echo(
-            f"  {phase.id}: {phase.name}{exec_type}{model_info}{gate}{deps}"
+    if dry_run:
+        compiled = build_workflow_graph(config, None)
+        state = make_initial_state(
+            workflow_name=config.name, workdir=workdir, dry_run=True,
         )
+        return await run_workflow(compiled, state, config, log_file=log_file)
+
+    from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+
+    from abe_froman.runtime.executor.backends.factory import create_prompt_backend
+
+    backend = create_prompt_backend(executor_type)
+    dispatch = DispatchExecutor(
+        workdir=workdir, prompt_backend=backend, settings=config.settings,
+    )
+
+    async with AsyncSqliteSaver.from_conn_string(_db_path(workdir)) as cp:
+        await cp.setup()
+        state: dict
+        if resume:
+            prev = await cp.aget_tuple({"configurable": {"thread_id": thread_id}})
+            if prev is None:
+                raise click.ClickException(
+                    f"No saved state for this workflow at {_db_path(workdir)}"
+                )
+            old = dict(prev.checkpoint.get("channel_values", {}))
+            state = {
+                **old,
+                "failed_phases": [],
+                "retries": {},
+                "errors": [],
+                "workdir": workdir,
+                "dry_run": False,
+            }
+            click.echo(
+                f"Resuming: {len(state.get('completed_phases', []))} "
+                f"phases already completed"
+            )
+            # Wipe the thread so reducers don't merge with stale state
+            await cp.adelete_thread(thread_id)
+        else:
+            await cp.adelete_thread(thread_id)
+            state = make_initial_state(
+                workflow_name=config.name, workdir=workdir, dry_run=False,
+            )
+
+        if _is_git_repo(workdir):
+            executor_obj = ForemanExecutor(
+                inner=dispatch,
+                base_workdir=workdir,
+                max_parallel_jobs=config.settings.max_parallel_jobs,
+                per_model_limits=dict(config.settings.per_model_limits),
+                rehydrate=dict(state.get("phase_worktrees", {})),
+                settings=config.settings,
+            )
+        else:
+            click.echo(
+                "Note: workdir is not a git repo — running without worktree "
+                "isolation (foreman disabled)."
+            )
+            executor_obj = dispatch
+
+        compiled = build_workflow_graph(config, executor_obj, checkpointer=cp)
+        try:
+            result = await run_workflow(
+                compiled, state, config,
+                thread_id=thread_id, log_file=log_file,
+            )
+        finally:
+            await executor_obj.close()
+
+        return result
 
 
 @cli.command()
@@ -87,8 +174,9 @@ def graph(config_file: str):
 )
 @click.option("--model", "-m", help="Override default model")
 @click.option("--executor", "-e", help="Prompt executor backend (stub, acp)")
-@click.option("--resume", is_flag=True, help="Resume from last saved state")
-@click.option("--start", "start_phase", help="Start from a specific phase")
+@click.option(
+    "--resume", is_flag=True, help="Resume from the last checkpoint"
+)
 @click.option("--log", "log_file", type=click.Path(), help="JSONL log output file")
 def run(
     config_file: str,
@@ -97,7 +185,6 @@ def run(
     model: str | None,
     executor: str | None,
     resume: bool,
-    start_phase: str | None,
     log_file: str | None,
 ):
     """Run a workflow from a configuration file."""
@@ -106,61 +193,14 @@ def run(
     except Exception as e:
         raise click.ClickException(str(e))
 
-    if resume and start_phase:
-        raise click.ClickException("Cannot use both --resume and --start")
-
     if model:
         config.settings.default_model = model
 
     executor_type = executor or config.settings.executor
 
-    if resume:
-        saved = load_state(workdir)
-        if saved is None:
-            raise click.ClickException(
-                f"No state file found at {state_file_path(workdir)}"
-            )
-        state = prepare_resume_state(saved, config, workdir)
-        click.echo(
-            f"Resuming: {len(state['completed_phases'])} phases already completed"
-        )
-    elif start_phase:
-        saved = load_state(workdir)
-        if saved is None:
-            raise click.ClickException(
-                f"--start requires a prior state file at {state_file_path(workdir)}"
-            )
-        state = prepare_start_state(saved, config, start_phase, workdir)
-        click.echo(
-            f"Starting from {start_phase}: "
-            f"{len(state['completed_phases'])} upstream phases cached"
-        )
-    else:
-        state = make_initial_state(
-            workflow_name=config.name,
-            workdir=workdir,
-            dry_run=dry_run,
-        )
-
-    if dry_run:
-        executor_obj = None
-    else:
-        from abe_froman.runtime.executor.backends.factory import create_prompt_backend
-
-        backend = create_prompt_backend(executor_type)
-        executor_obj = DispatchExecutor(
-            workdir=workdir,
-            prompt_backend=backend,
-            settings=config.settings,
-        )
-
-    compiled = build_workflow_graph(config, executor_obj)
     result = asyncio.run(
-        run_workflow(compiled, state, config, persist=not dry_run, log_file=log_file)
+        _run_async(config, workdir, dry_run, executor_type, resume, log_file)
     )
-
-    if executor_obj is not None:
-        asyncio.run(executor_obj.close())
 
     completed = result.get("completed_phases", [])
     failed = result.get("failed_phases", [])
@@ -175,7 +215,10 @@ def run(
     if token_usage:
         total_in = sum(t.get("input", 0) for t in token_usage.values())
         total_out = sum(t.get("output", 0) for t in token_usage.values())
-        click.echo(f"  Tokens: {total_in + total_out:,} total ({total_in:,} in, {total_out:,} out)")
+        click.echo(
+            f"  Tokens: {total_in + total_out:,} total "
+            f"({total_in:,} in, {total_out:,} out)"
+        )
 
     if completed:
         click.echo(f"  Phases: {', '.join(completed)}")

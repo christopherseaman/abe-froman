@@ -30,7 +30,9 @@ class OverloadError(Exception):
 
 @runtime_checkable
 class PhaseExecutor(Protocol):
-    async def execute(self, phase: Phase, context: dict[str, Any]) -> ExecutionResult: ...
+    async def execute(
+        self, phase: Phase, context: dict[str, Any], workdir: str | None = None
+    ) -> ExecutionResult: ...
 
 
 @runtime_checkable

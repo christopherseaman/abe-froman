@@ -1,5 +1,40 @@
 # Wishlist
 
+## Top priority after simplification refactor
+
+- **ACP test flakiness**
+    - `tests/acp/` tests fail or pass sporadically
+    - Investigate: session lifecycle races, stdio buffering, stale `_session_id` on multi-prompt flows, Python 3.14 async-generator `aclose()` warning
+    - Decide: fix root cause, or gate ACP tests behind a stricter pre-flight
+
+## Gate-evaluation extensibility (after structured-feedback MVP lands)
+
+- **Customizable gate return schemas**
+    - Default MVP: `{score: float, feedback: str | None}` — single dimension with threshold check
+    - Extension: gate YAML declares the shape and acceptance predicate
+        - Independent dimensions: `{correctness: 0.8, style: 0.6}` with per-dimension thresholds
+        - Composite scores with weighting: `{overall: weighted_sum(dims, weights)}`
+        - No overall score: pure criteria-based pass/fail over named fields
+    - Predicate language: start with a list of `{field, min}` checks; consider a small expression form later
+    - State shape change: `gate_scores: dict[str, float]` generalizes to `gate_values: dict[str, dict]` once dimensions land
+
+- **Multi-tier retry escalation for fan-out + synthesis**
+    - Retry tiers:
+        - **I** — synthesis phase retries on its own (existing behavior; local to the synthesis phase)
+        - **J (escalated)** — after `I` exhausted, re-run fan-out subphases with synthesis-gate feedback injected into `_retry_reason`; subphase worktrees are preserved and reused. Reset `I` counter on escalation.
+        - **K (super-escalated)** — after `J` exhausted, re-run further upstream (phase dependency chain); reset `J` counter.
+        - Exhausted: policy flag (hard fail vs. warn-continue vs. human-in-the-loop)
+    - Requires:
+        - Retry counter per tier in state (`retries_tier: dict[phase_id, dict[tier, int]]`)
+        - Gate outcome can signal tier-escalation (`outcome: "retry" | "escalate" | "super_escalate" | "fail"`)
+        - Worktree pool already retains per-phase trees across attempts — reuse is free
+    - Trunk/merge branch declared in YAML: `settings.trunk_ref: main` to define the base for worktrees and the target for synthesis merges
+
+- **Synthesis as first-class concept**
+    - Today: `final_phases` is the implicit synthesis site for dynamic subphases; regular phases chain worktrees via `{{dep_worktree}}` context
+    - Make synthesis explicit: a `synthesis_phase:` block with `merges_from: [...]` listing subphase ids, blocking gate, pre-merge worktree
+    - Enables: synthesis-gate blocking merge (if gate fails, changes never fold back); reset semantics for the escalation tiers above
+
 ## Architectural moves
 
 - **Phases as proper langgraph subgraphs**
@@ -11,7 +46,7 @@
 - **Flexible output contracts**
     - Glob patterns: `required_files: ["docs/*.md", "reports/**/*.pdf"]`
     - Size / non-empty checks: `{path: "out.json", min_bytes: 10}`
-    - JSON-schema validation of structured outputs (today `parse_output_as_json` only attempts a `json.loads`, no schema check)
+    - JSON-schema validation of structured outputs (replaces the removed `parse_output_as_json` silent-parse with loud validation)
     - Optional files (tracked but non-failing)
     - Templated paths resolved from dep outputs or vars
     - Forbidden files to catch leftover artifacts

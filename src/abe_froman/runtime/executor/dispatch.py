@@ -36,18 +36,20 @@ class DispatchExecutor:
         else:
             self._prompt_executor = None
 
-    async def execute(self, phase: Phase, context: dict[str, Any]) -> ExecutionResult:
+    async def execute(
+        self, phase: Phase, context: dict[str, Any], workdir: str | None = None
+    ) -> ExecutionResult:
         execution = phase.execution
 
         if isinstance(execution, CommandExecution):
-            return await self._command_executor.execute(phase, context)
+            return await self._command_executor.execute(phase, context, workdir=workdir)
 
         if isinstance(execution, GateOnlyExecution):
             return ExecutionResult(success=True, output=f"[gate-only] {phase.id}")
 
         if isinstance(execution, PromptExecution):
             if self._prompt_executor is not None:
-                return await self._prompt_executor.execute(phase, context)
+                return await self._prompt_executor.execute(phase, context, workdir=workdir)
             return ExecutionResult(
                 success=True,
                 output=f"[prompt-stub] {phase.id}: {execution.prompt_file}",
@@ -63,6 +65,16 @@ class DispatchExecutor:
             success=False,
             error=f"Unknown execution type: {type(execution).__name__}",
         )
+
+    def get_backend(self) -> PromptBackend | None:
+        """Return the PromptBackend, if one is configured.
+
+        Used by the orchestrator to dispatch .md LLM gates through the
+        same backend the phase executor uses.
+        """
+        if self._prompt_executor is None:
+            return None
+        return self._prompt_executor._backend
 
     async def close(self) -> None:
         """Clean up backend resources."""

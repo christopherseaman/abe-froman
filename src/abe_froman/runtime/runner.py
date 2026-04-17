@@ -1,32 +1,32 @@
-"""Workflow execution with streaming state persistence."""
+"""Workflow execution with streaming state snapshots.
+
+Persistence is handled by the compiled graph's checkpointer (if any),
+configured at compile time via ``build_workflow_graph(checkpointer=...)``.
+When a ``thread_id`` is supplied, the checkpointer associates each
+state snapshot with that thread so it can be resumed later.
+"""
 
 from __future__ import annotations
 
 from typing import Any
 
 from abe_froman.schema.models import WorkflowConfig
-from abe_froman.runtime.persistence import clear_state, save_state
 
 
 async def run_workflow(
     compiled_graph: Any,
     initial_state: dict[str, Any],
     config: WorkflowConfig,
-    persist: bool = True,
+    thread_id: str | None = None,
     log_file: str | None = None,
 ) -> dict[str, Any]:
-    """Execute a compiled workflow graph with optional state persistence.
+    """Execute a compiled workflow graph, streaming state snapshots.
 
-    Streams state snapshots from LangGraph. After each snapshot, persists
-    the current state to disk so the workflow can be resumed on failure.
-    Clears the state file on successful completion.
-
-    When log_file is provided, structured JSONL events are written for
+    When ``log_file`` is provided, structured JSONL events are written for
     each state transition (phase completions, failures, gates, retries).
     """
     from abe_froman.runtime.logging import JsonlLogger
 
-    workdir = initial_state.get("workdir", ".")
     last_state = initial_state
     logger: JsonlLogger | None = None
 
@@ -39,13 +39,14 @@ async def run_workflow(
         })
 
     prev_state = initial_state
+    run_config = (
+        {"configurable": {"thread_id": thread_id}} if thread_id else {}
+    )
 
     async for snapshot in compiled_graph.astream(
-        initial_state, stream_mode="values"
+        initial_state, config=run_config, stream_mode="values"
     ):
         last_state = snapshot
-        if persist:
-            save_state(snapshot, workdir, config.name, config.version)
         if logger is not None:
             logger.log_snapshot(prev_state, snapshot)
             prev_state = snapshot
@@ -57,8 +58,5 @@ async def run_workflow(
             "failed": len(last_state.get("failed_phases", [])),
         })
         logger.close()
-
-    if persist and not last_state.get("failed_phases"):
-        clear_state(workdir)
 
     return last_state

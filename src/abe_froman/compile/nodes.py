@@ -11,6 +11,7 @@ import asyncio
 from typing import TYPE_CHECKING, Any
 
 from abe_froman.runtime.gates import (
+    GateResult,
     scaffold_output_directory,
     validate_output_contract,
 )
@@ -65,11 +66,23 @@ def check_dry_run(phase: Phase, state: WorkflowState) -> dict | None:
 
 def build_context(phase: Phase, state: WorkflowState) -> dict[str, Any]:
     context: dict[str, Any] = {}
+    outputs = state.get("phase_outputs", {})
+    structured = state.get("phase_structured_outputs", {})
+    worktrees = state.get("phase_worktrees", {})
     for dep in phase.depends_on:
-        if dep in state.get("phase_outputs", {}):
-            context[dep] = state["phase_outputs"][dep]
-        if dep in state.get("phase_structured_outputs", {}):
-            context[f"{dep}_structured"] = state["phase_structured_outputs"][dep]
+        if dep in outputs:
+            context[dep] = outputs[dep]
+        if dep in structured:
+            context[f"{dep}_structured"] = structured[dep]
+        if dep in worktrees:
+            context[f"{dep}_worktree"] = worktrees[dep]
+        # Dynamic parents expose fan-out aggregations via synthetic keys;
+        # forward them to the final-phase template as `{{dep_subphases}}`
+        # and `{{dep_subphase_worktrees}}`.
+        for suffix in ("_subphases", "_subphase_worktrees"):
+            key = f"{dep}{suffix}"
+            if key in outputs:
+                context[key] = outputs[key]
     return context
 
 
@@ -77,13 +90,26 @@ def inject_retry_reason(
     context: dict[str, Any], phase: Phase, state: WorkflowState, max_retries: int
 ) -> dict[str, Any]:
     retry_count = state.get("retries", {}).get(phase.id, 0)
-    if retry_count > 0 and phase.quality_gate:
-        prev_score = state.get("gate_scores", {}).get(phase.id, 0.0)
-        context["_retry_reason"] = (
-            f"Attempt {retry_count} failed quality gate "
-            f"(score={prev_score:.2f}, threshold={phase.quality_gate.threshold}). "
-            f"This is retry {retry_count} of {max_retries}."
+    if retry_count == 0 or not phase.quality_gate:
+        return context
+
+    prev_score = state.get("gate_scores", {}).get(phase.id, 0.0)
+    feedback = state.get("gate_feedback", {}).get(phase.id, {})
+
+    lines = [
+        f"Attempt {retry_count} failed quality gate "
+        f"(score={prev_score:.2f}, threshold={phase.quality_gate.threshold}). "
+        f"This is retry {retry_count} of {max_retries}."
+    ]
+    if feedback.get("feedback"):
+        lines.append(f"Feedback: {feedback['feedback']}")
+    unmet = feedback.get("pass_criteria_unmet") or []
+    if unmet:
+        lines.append(
+            "Unmet criteria:\n" + "\n".join(f"- {c}" for c in unmet)
         )
+
+    context["_retry_reason"] = "\n\n".join(lines)
     return context
 
 
@@ -144,9 +170,19 @@ def classify_gate_outcome(
 
 
 def build_gate_outcome_update(
-    phase: Phase, score: float, outcome: str, retries: int, max_retries: int
+    phase: Phase, result: GateResult, outcome: str, retries: int, max_retries: int
 ) -> dict[str, Any]:
-    update: dict[str, Any] = {"gate_scores": {phase.id: score}}
+    score = result.score
+    update: dict[str, Any] = {
+        "gate_scores": {phase.id: score},
+        "gate_feedback": {
+            phase.id: {
+                "feedback": result.feedback,
+                "pass_criteria_met": list(result.pass_criteria_met),
+                "pass_criteria_unmet": list(result.pass_criteria_unmet),
+            }
+        },
+    }
 
     if outcome == "pass":
         update["completed_phases"] = [phase.id]
@@ -185,39 +221,33 @@ async def evaluate_gate_and_outcome(
     state: WorkflowState,
     result: ExecutionResult,
     timeout: float | None,
+    backend: Any = None,
 ) -> dict[str, Any]:
     max_retries = phase.effective_max_retries(config.settings)
     retries = state.get("retries", {}).get(phase.id, 0)
 
+    gate_call = evaluate_gate(
+        phase.quality_gate,
+        phase.id,
+        workdir=state.get("workdir", "."),
+        phase_output=result.output,
+        workflow_name=config.name,
+        attempt_number=retries + 1,
+        backend=backend,
+        default_model=config.settings.default_model,
+    )
     try:
         if timeout is not None:
-            score = await asyncio.wait_for(
-                evaluate_gate(
-                    phase.quality_gate,
-                    phase.id,
-                    workdir=state.get("workdir", "."),
-                    phase_output=result.output,
-                    workflow_name=config.name,
-                    attempt_number=retries + 1,
-                ),
-                timeout=timeout,
-            )
+            gate_result = await asyncio.wait_for(gate_call, timeout=timeout)
         else:
-            score = await evaluate_gate(
-                phase.quality_gate,
-                phase.id,
-                workdir=state.get("workdir", "."),
-                phase_output=result.output,
-                workflow_name=config.name,
-                attempt_number=retries + 1,
-            )
+            gate_result = await gate_call
     except asyncio.TimeoutError:
         return make_failure_update(
             phase.id, f"Quality gate timed out after {timeout}s"
         )
 
-    outcome = classify_gate_outcome(phase, score, retries, max_retries)
-    return build_gate_outcome_update(phase, score, outcome, retries, max_retries)
+    outcome = classify_gate_outcome(phase, gate_result.score, retries, max_retries)
+    return build_gate_outcome_update(phase, gate_result, outcome, retries, max_retries)
 
 
 def _make_phase_node(
@@ -280,9 +310,16 @@ def _make_phase_node(
                 }
 
         update = assemble_success_update(phase, exec_result)
+        if hasattr(executor, "get_worktree"):
+            wt = executor.get_worktree(phase.id)
+            if wt:
+                update["phase_worktrees"] = {phase.id: wt}
         if phase.quality_gate:
+            backend = (
+                executor.get_backend() if hasattr(executor, "get_backend") else None
+            )
             update |= await evaluate_gate_and_outcome(
-                phase, config, state, exec_result, timeout
+                phase, config, state, exec_result, timeout, backend=backend,
             )
         else:
             update["completed_phases"] = [phase.id]

@@ -89,35 +89,38 @@ def _make_subphase_node(
             update["token_usage"] = {subphase_id: exec_result.tokens_used}
 
         if template.quality_gate:
-            try:
-                import asyncio
+            import asyncio
 
+            backend = (
+                executor.get_backend() if hasattr(executor, "get_backend") else None
+            )
+            gate_call = evaluate_gate(
+                template.quality_gate,
+                subphase_id,
+                workdir=state.get("workdir", "."),
+                phase_output=exec_result.output,
+                workflow_name=config.name,
+                attempt_number=1,
+                backend=backend,
+                default_model=config.settings.default_model,
+            )
+            try:
                 if timeout is not None:
-                    score = await asyncio.wait_for(
-                        evaluate_gate(
-                            template.quality_gate,
-                            subphase_id,
-                            workdir=state.get("workdir", "."),
-                            phase_output=exec_result.output,
-                            workflow_name=config.name,
-                            attempt_number=1,
-                        ),
-                        timeout=timeout,
-                    )
+                    gate_result = await asyncio.wait_for(gate_call, timeout=timeout)
                 else:
-                    score = await evaluate_gate(
-                        template.quality_gate,
-                        subphase_id,
-                        workdir=state.get("workdir", "."),
-                        phase_output=exec_result.output,
-                        workflow_name=config.name,
-                        attempt_number=1,
-                    )
+                    gate_result = await gate_call
             except asyncio.TimeoutError:
                 return make_failure_update(
                     subphase_id, f"Quality gate timed out after {timeout}s"
                 )
-            update["gate_scores"] = {subphase_id: score}
+            update["gate_scores"] = {subphase_id: gate_result.score}
+            update["gate_feedback"] = {
+                subphase_id: {
+                    "feedback": gate_result.feedback,
+                    "pass_criteria_met": list(gate_result.pass_criteria_met),
+                    "pass_criteria_unmet": list(gate_result.pass_criteria_unmet),
+                }
+            }
 
         return update
 
@@ -145,6 +148,7 @@ def _make_final_phase_node(
         execution=final_phase.execution,
         quality_gate=final_phase.quality_gate,
         model=parent_phase.model,
+        depends_on=[parent_phase.id],
     )
 
     inner = _make_phase_node(synthetic, config, executor)
@@ -156,11 +160,19 @@ def _make_final_phase_node(
             for k, v in state.get("subphase_outputs", {}).items()
             if k.startswith(prefix)
         }
+        sub_worktrees = [
+            v
+            for k, v in state.get("phase_worktrees", {}).items()
+            if k.startswith(prefix)
+        ]
 
         enriched = dict(state)
         enriched_outputs = dict(state.get("phase_outputs", {}))
         enriched_outputs[f"{parent_phase.id}_subphases"] = _json.dumps(
             sub_outputs
+        )
+        enriched_outputs[f"{parent_phase.id}_subphase_worktrees"] = _json.dumps(
+            sub_worktrees
         )
         enriched["phase_outputs"] = enriched_outputs
 

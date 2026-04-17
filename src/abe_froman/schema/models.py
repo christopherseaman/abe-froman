@@ -43,6 +43,7 @@ class QualityGate(BaseModel):
     threshold: float = Field(ge=0.0, le=1.0)
     blocking: bool = False
     max_retries: int | None = None  # None = defer to Settings.max_retries
+    model: str | None = None  # override for .md LLM gates; None = Settings.default_model
 
 
 class OutputContract(BaseModel):
@@ -83,6 +84,8 @@ class Settings(BaseModel):
     default_timeout: float | None = None  # seconds, None = no timeout
     preamble_file: str | None = None
     retry_backoff: list[float] = []  # delay in seconds per retry attempt
+    max_parallel_jobs: int = 4  # foreman global concurrency cap
+    per_model_limits: dict[str, int] = {}  # foreman per-model caps, e.g. {"opus": 2}
 
 
 class Phase(BaseModel):
@@ -95,7 +98,6 @@ class Phase(BaseModel):
     depends_on: list[str] = []
     quality_gate: QualityGate | None = None
     output_contract: OutputContract | None = None
-    parse_output_as_json: bool = False
     dynamic_subphases: DynamicPhaseConfig | None = None
     timeout: float | None = None  # seconds, None = use default
 

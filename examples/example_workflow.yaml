@@ -134,7 +134,6 @@ phases:
     description: "Create technology-agnostic implementation roadmap with epics and tasks"
     prompt_file: "phases/phase-5-implementation-strategy.md"
     depends_on: ["phase-4"]
-    parse_output_as_json: true
 
 settings:
   output_directory: "prd"

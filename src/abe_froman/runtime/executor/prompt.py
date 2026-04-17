@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -38,14 +37,17 @@ class PromptExecutor:
         self._settings = settings
         self._workdir = workdir
 
-    async def execute(self, phase: Phase, context: dict[str, Any]) -> ExecutionResult:
+    async def execute(
+        self, phase: Phase, context: dict[str, Any], workdir: str | None = None
+    ) -> ExecutionResult:
         if not isinstance(phase.execution, PromptExecution):
             return ExecutionResult(
                 success=False,
                 error=f"PromptExecutor requires PromptExecution, got {type(phase.execution).__name__}",
             )
 
-        prompt_path = Path(self._workdir) / phase.execution.prompt_file
+        effective_workdir = workdir or self._workdir
+        prompt_path = Path(effective_workdir) / phase.execution.prompt_file
         try:
             template = prompt_path.read_text()
         except FileNotFoundError:
@@ -55,6 +57,8 @@ class PromptExecutor:
             )
 
         if self._settings.preamble_file:
+            # Preamble lives with the config, not in a per-phase worktree —
+            # always resolve from the base workdir.
             preamble_path = Path(self._workdir) / self._settings.preamble_file
             try:
                 preamble = preamble_path.read_text()
@@ -72,7 +76,7 @@ class PromptExecutor:
             while True:
                 try:
                     result = await self._backend.send_prompt(
-                        rendered, current_model, self._workdir
+                        rendered, current_model, effective_workdir
                     )
                     break
                 except OverloadError:
@@ -86,17 +90,10 @@ class PromptExecutor:
         except Exception as e:
             return ExecutionResult(success=False, error=f"Backend error: {e}")
 
-        structured = result.structured_output
-        if structured is None and phase.parse_output_as_json:
-            try:
-                structured = json.loads(result.output)
-            except (json.JSONDecodeError, TypeError):
-                pass
-
         return ExecutionResult(
             success=True,
             output=result.output,
-            structured_output=structured,
+            structured_output=result.structured_output,
             tokens_used=result.tokens_used,
         )
 

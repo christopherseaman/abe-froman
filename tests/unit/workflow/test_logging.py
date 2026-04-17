@@ -149,7 +149,6 @@ class TestRunWorkflowLogging:
             build_workflow_graph(config, executor),
             make_initial_state(workdir=str(tmp_path)),
             config,
-            persist=False,
             log_file=log_path,
         )
 
@@ -171,7 +170,6 @@ class TestRunWorkflowLogging:
             build_workflow_graph(config, executor),
             make_initial_state(workdir=str(tmp_path)),
             config,
-            persist=False,
             log_file=log_path,
         )
 
@@ -206,7 +204,6 @@ class TestRunWorkflowLogging:
             build_workflow_graph(config, executor),
             make_initial_state(workdir=str(tmp_path)),
             config,
-            persist=False,
             log_file=log_path,
         )
 
@@ -224,7 +221,6 @@ class TestRunWorkflowLogging:
             build_workflow_graph(config, executor),
             make_initial_state(workdir=str(tmp_path)),
             config,
-            persist=False,
             log_file=None,
         )
         # No .jsonl file should exist
