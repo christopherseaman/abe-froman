@@ -38,7 +38,8 @@ class PhaseExecutor(Protocol):
 @runtime_checkable
 class PromptBackend(Protocol):
     async def send_prompt(
-        self, prompt: str, model: str, workdir: str
+        self, prompt: str, model: str, workdir: str,
+        timeout: float | None = None,
     ) -> ExecutionResult: ...
 
     async def close(self) -> None: ...

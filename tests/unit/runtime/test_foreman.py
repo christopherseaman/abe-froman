@@ -267,7 +267,10 @@ class TestPerModelBackpressure:
             self._inflight = 0
             self._lock = asyncio.Lock()
 
-        async def send_prompt(self, prompt: str, model: str, workdir: str):
+        async def send_prompt(
+            self, prompt: str, model: str, workdir: str,
+            timeout: float | None = None,
+        ):
             from abe_froman.runtime.result import ExecutionResult
             async with self._lock:
                 self._inflight += 1
@@ -294,7 +297,7 @@ class TestPerModelBackpressure:
                 self.max_inflight = {}
                 self._lock = asyncio.Lock()
 
-            async def send_prompt(self, prompt, model, workdir):
+            async def send_prompt(self, prompt, model, workdir, timeout=None):
                 from abe_froman.runtime.result import ExecutionResult
                 async with self._lock:
                     self._inflight[model] = self._inflight.get(model, 0) + 1

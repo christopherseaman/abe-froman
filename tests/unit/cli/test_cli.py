@@ -211,7 +211,7 @@ class TestTokenSummaryPositive:
         from abe_froman.runtime.result import ExecutionResult
 
         class TokenBackend:
-            async def send_prompt(self, prompt, model, workdir):
+            async def send_prompt(self, prompt, model, workdir, timeout=None):
                 return ExecutionResult(
                     output="ok",
                     tokens_used={"input": 100, "output": 50},

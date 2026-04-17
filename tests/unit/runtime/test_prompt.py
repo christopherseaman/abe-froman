@@ -100,12 +100,13 @@ class MemoryBackend:
         self._response = response
         self._structured = structured
         self._tokens = tokens
-        self.calls: list[tuple[str, str, str]] = []
+        self.calls: list[tuple[str, str, str, float | None]] = []
 
     async def send_prompt(
-        self, prompt: str, model: str, workdir: str
+        self, prompt: str, model: str, workdir: str,
+        timeout: float | None = None,
     ) -> ExecutionResult:
-        self.calls.append((prompt, model, workdir))
+        self.calls.append((prompt, model, workdir, timeout))
         return ExecutionResult(
             output=self._response,
             structured_output=self._structured,
@@ -119,7 +120,10 @@ class MemoryBackend:
 class ErrorBackend:
     """Backend that always raises."""
 
-    async def send_prompt(self, prompt: str, model: str, workdir: str) -> ExecutionResult:
+    async def send_prompt(
+        self, prompt: str, model: str, workdir: str,
+        timeout: float | None = None,
+    ) -> ExecutionResult:
         raise RuntimeError("connection failed")
 
     async def close(self) -> None:
@@ -149,7 +153,7 @@ class TestPromptExecutor:
         assert result.success is True
         assert result.output == "backend-output"
         assert len(backend.calls) == 1
-        assert backend.calls[0] == ("Hello world", "sonnet", str(tmp_path))
+        assert backend.calls[0] == ("Hello world", "sonnet", str(tmp_path), None)
 
     @pytest.mark.asyncio
     async def test_per_call_workdir_overrides_prompt_file_resolution(self, tmp_path):
@@ -173,7 +177,7 @@ class TestPromptExecutor:
 
         assert result.success is True
         assert len(backend.calls) == 1
-        prompt, _model, seen_workdir = backend.calls[0]
+        prompt, _model, seen_workdir, _timeout = backend.calls[0]
         assert prompt == "OVERRIDE prompt"
         assert seen_workdir == str(override)
 
@@ -241,6 +245,46 @@ class TestPromptExecutor:
         await executor.execute(phase, {})
 
         assert backend.calls[0][1] == "opus"
+
+    @pytest.mark.asyncio
+    async def test_phase_timeout_threaded_to_backend(self, tmp_path):
+        """Per-phase timeout flows through effective_timeout → send_prompt."""
+        (tmp_path / "t.md").write_text("prompt")
+        backend = MemoryBackend()
+        executor = PromptExecutor(
+            backend=backend,
+            settings=Settings(default_timeout=60.0),
+            workdir=str(tmp_path),
+        )
+        phase = Phase(id="p1", name="P1", prompt_file="t.md", timeout=15.5)
+        await executor.execute(phase, {})
+        assert backend.calls[0][3] == 15.5
+
+    @pytest.mark.asyncio
+    async def test_settings_default_timeout_threaded_to_backend(self, tmp_path):
+        """Phase without timeout override falls back to settings default."""
+        (tmp_path / "t.md").write_text("prompt")
+        backend = MemoryBackend()
+        executor = PromptExecutor(
+            backend=backend,
+            settings=Settings(default_timeout=90.0),
+            workdir=str(tmp_path),
+        )
+        phase = Phase(id="p1", name="P1", prompt_file="t.md")
+        await executor.execute(phase, {})
+        assert backend.calls[0][3] == 90.0
+
+    @pytest.mark.asyncio
+    async def test_no_timeout_configured_passes_none(self, tmp_path):
+        """Neither phase nor settings set → backend sees timeout=None."""
+        (tmp_path / "t.md").write_text("prompt")
+        backend = MemoryBackend()
+        executor = PromptExecutor(
+            backend=backend, settings=Settings(), workdir=str(tmp_path),
+        )
+        phase = Phase(id="p1", name="P1", prompt_file="t.md")
+        await executor.execute(phase, {})
+        assert backend.calls[0][3] is None
 
     @pytest.mark.asyncio
     async def test_backend_error_returns_failure(self, tmp_path):
@@ -391,7 +435,10 @@ class _OverloadBackend:
         self.calls: list[str] = []
         self._overload_models = overload_models
 
-    async def send_prompt(self, prompt: str, model: str, workdir: str) -> ExecutionResult:
+    async def send_prompt(
+        self, prompt: str, model: str, workdir: str,
+        timeout: float | None = None,
+    ) -> ExecutionResult:
         self.calls.append(model)
         if model in self._overload_models:
             raise OverloadError(f"529 overloaded for {model}")

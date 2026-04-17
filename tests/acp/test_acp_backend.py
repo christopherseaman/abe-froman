@@ -132,35 +132,16 @@ class TestACPIntegration:
             await backend.close()
 
     @pytest.mark.asyncio
-    async def test_session_reuse_internal_state(self):
-        """Internal-state probe: session_id persists across calls.
-        Deliberately reads private state — refactor canary, not behavioral test."""
-        from abe_froman.runtime.executor.backends.acp import ACPBackend
-
-        backend = ACPBackend()
-        try:
-            await backend.send_prompt('Say "a".', "sonnet", ".")
-            session_after_first = backend._session_id
-
-            await backend.send_prompt('Say "b".', "sonnet", ".")
-            assert backend._session_id == session_after_first
-        finally:
-            await backend.close()
-
-    @pytest.mark.asyncio
-    async def test_close_resets_internal_state(self):
-        """Internal-state probe: close() clears init flag.
-        Deliberately reads private state — refactor canary."""
+    async def test_close_is_idempotent(self):
+        """Behavioral: calling close() twice doesn't raise."""
         from abe_froman.runtime.executor.backends.acp import ACPBackend
 
         backend = ACPBackend()
         try:
             await backend.send_prompt("Say hi.", "sonnet", ".")
-            assert backend._initialized is True
         finally:
             await backend.close()
-        assert backend._initialized is False
-        assert backend._session_id is None
+            await backend.close()
 
     @pytest.mark.asyncio
     async def test_full_pipeline_via_dispatch(self, tmp_path):

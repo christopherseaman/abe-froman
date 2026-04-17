@@ -69,12 +69,14 @@ class PromptExecutor:
 
         rendered = render_template(template, context)
         current_model = resolve_model(phase, self._settings)
+        timeout = phase.effective_timeout(self._settings)
 
         try:
             while True:
                 try:
                     result = await self._backend.send_prompt(
-                        rendered, current_model, effective_workdir
+                        rendered, current_model, effective_workdir,
+                        timeout=timeout,
                     )
                     break
                 except OverloadError:

@@ -7,7 +7,8 @@ class StubBackend:
     """Returns a placeholder response. Used when no real backend is configured."""
 
     async def send_prompt(
-        self, prompt: str, model: str, workdir: str
+        self, prompt: str, model: str, workdir: str,
+        timeout: float | None = None,
     ) -> ExecutionResult:
         return ExecutionResult(
             output=f"[prompt-stub] model={model} prompt_length={len(prompt)}"

@@ -132,12 +132,20 @@ class ACPBackend:
         )
 
     async def close(self) -> None:
-        if self._ctx_manager is not None:
-            try:
-                await self._ctx_manager.__aexit__(None, None, None)
-            except Exception:
-                logger.warning("ACP process cleanup failed", exc_info=True)
-            self._conn = None
-            self._proc = None
-            self._session_id = None
-            self._initialized = False
+        if self._ctx_manager is None:
+            return
+        try:
+            await self._ctx_manager.__aexit__(None, None, None)
+        except Exception:
+            logger.warning("ACP process cleanup failed", exc_info=True)
+            proc = self._proc
+            if proc is not None and getattr(proc, "returncode", 0) is None:
+                try:
+                    proc.terminate()
+                except Exception:
+                    logger.warning("ACP process terminate failed", exc_info=True)
+        self._conn = None
+        self._proc = None
+        self._session_id = None
+        self._ctx_manager = None
+        self._initialized = False
