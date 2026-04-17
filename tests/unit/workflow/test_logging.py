@@ -127,7 +127,9 @@ class TestLogSnapshot:
         logger = JsonlLogger(buf)
         state = {"completed_phases": ["a"], "failed_phases": [], "gate_scores": {"a": 1.0}, "retries": {}, "errors": []}
         logger.log_snapshot(state, state)
-        assert buf.getvalue() == ""
+        # Parse rather than string-compare so stray whitespace can't silently pass.
+        events = [json.loads(l) for l in buf.getvalue().splitlines() if l.strip()]
+        assert events == []
 
 
 # ---------------------------------------------------------------------------

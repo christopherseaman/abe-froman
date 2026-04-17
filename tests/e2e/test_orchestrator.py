@@ -1,7 +1,8 @@
-"""Orchestrator tests — real execution via DispatchExecutor with command phases.
+"""Orchestrator tests — full LangGraph pipeline execution.
 
-Every test runs actual subprocesses through the full LangGraph pipeline.
-No MockExecutor, no stub validators.
+Most tests use real subprocesses via DispatchExecutor + command phases.
+MockExecutor is used only where the thing under test is wiring/context
+propagation rather than executor semantics.
 """
 
 import pytest
@@ -31,11 +32,15 @@ class TestSinglePhaseExecution:
 
     @pytest.mark.asyncio
     async def test_dry_run_skips_execution(self):
+        from mock_executor import MockExecutor
+
+        mock = MockExecutor()
         config = make_config([cmd_phase("p1")])
-        graph = build_workflow_graph(config)
+        graph = build_workflow_graph(config, mock)
         result = await graph.ainvoke(make_initial_state(dry_run=True))
         assert "p1" in result["completed_phases"]
         assert "dry-run" in result["phase_outputs"]["p1"]
+        assert mock.execution_order == [], "executor should not be called in dry-run"
 
 
 # ---------------------------------------------------------------------------
@@ -66,7 +71,9 @@ class TestLinearExecution:
         graph = build_workflow_graph(config, executor)
         result = await graph.ainvoke(make_initial_state())
         assert set(result["completed_phases"]) == {"a", "b", "c"}
-        assert set(result["phase_outputs"].keys()) == {"a", "b", "c"}
+        assert result["phase_outputs"]["a"] == "1"
+        assert result["phase_outputs"]["b"] == "2"
+        assert result["phase_outputs"]["c"] == "3"
 
 
 # ---------------------------------------------------------------------------
@@ -88,6 +95,10 @@ class TestParallelExecution:
         graph = build_workflow_graph(config, executor)
         result = await graph.ainvoke(make_initial_state())
         assert set(result["completed_phases"]) == {"a", "b", "c", "d"}
+        assert result["phase_outputs"]["a"] == "root"
+        assert result["phase_outputs"]["b"] == "left"
+        assert result["phase_outputs"]["c"] == "right"
+        assert result["phase_outputs"]["d"] == "join"
 
     @pytest.mark.asyncio
     async def test_independent_phases_both_complete(self):
@@ -100,6 +111,8 @@ class TestParallelExecution:
         graph = build_workflow_graph(config, executor)
         result = await graph.ainvoke(make_initial_state())
         assert set(result["completed_phases"]) == {"x", "y"}
+        assert result["phase_outputs"]["x"] == "x-out"
+        assert result["phase_outputs"]["y"] == "y-out"
 
 
 # ---------------------------------------------------------------------------
@@ -467,6 +480,9 @@ class TestRetryContextInjection:
 
 
 class TestContextPropagation:
+    """Wiring tests — uses MockExecutor because the thing under test is
+    context-flow between phases, not executor semantics."""
+
     @pytest.mark.asyncio
     async def test_dependency_output_in_executor_context(self):
         from mock_executor import MockExecutor

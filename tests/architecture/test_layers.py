@@ -78,16 +78,26 @@ class TestRuntimeLayerIsolation:
 
 
 class TestSchemaTerminology:
-    """schema/models.py must not contain LangGraph-specific terms."""
+    """schema/ files must not use LangGraph-specific identifiers,
+    even via aliased imports (e.g. `from langgraph.types import Send as S`)."""
 
-    FORBIDDEN_TERMS = [
-        "stategraph", "add_node", "add_edge", "Send(",
+    FORBIDDEN_NAMES = {
+        "StateGraph", "Send", "add_node", "add_edge",
         "compiled", "reducer", "checkpointer",
-    ]
+    }
 
-    def test_no_langgraph_terminology(self):
-        models_py = (SRC / "schema" / "models.py").read_text().lower()
-        for term in self.FORBIDDEN_TERMS:
-            assert term.lower() not in models_py, (
-                f"schema/models.py contains '{term}'"
-            )
+    def test_no_langgraph_identifiers_via_ast(self):
+        lower_forbidden = {n.lower() for n in self.FORBIDDEN_NAMES}
+        for f in _files_under("schema"):
+            tree = ast.parse(f.read_text())
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Name) and node.id.lower() in lower_forbidden:
+                    assert False, (
+                        f"{f.relative_to(SRC)}:{node.lineno} uses "
+                        f"forbidden identifier '{node.id}'"
+                    )
+                if isinstance(node, ast.Attribute) and node.attr.lower() in lower_forbidden:
+                    assert False, (
+                        f"{f.relative_to(SRC)}:{node.lineno} uses "
+                        f"forbidden attribute '{node.attr}'"
+                    )

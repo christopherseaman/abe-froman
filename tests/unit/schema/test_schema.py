@@ -344,3 +344,41 @@ class TestFullExampleParse:
         phase3_ids = {p.id for p in config.phases if p.id.startswith("phase-3")}
         assert phase3_ids == set(phase4.depends_on)
 
+
+# ---------------------------------------------------------------------------
+# Phase timeout fields + effective_timeout
+# ---------------------------------------------------------------------------
+
+
+class TestPhaseTimeout:
+    def test_phase_timeout_field(self):
+        p = Phase(id="a", name="A", timeout=30.0)
+        assert p.timeout == 30.0
+
+    def test_phase_timeout_defaults_none(self):
+        p = Phase(id="a", name="A")
+        assert p.timeout is None
+
+    def test_settings_default_timeout(self):
+        s = Settings(default_timeout=60.0)
+        assert s.default_timeout == 60.0
+
+    def test_settings_default_timeout_defaults_none(self):
+        s = Settings()
+        assert s.default_timeout is None
+
+    def test_effective_timeout_phase_overrides_settings(self):
+        s = Settings(default_timeout=60.0)
+        p = Phase(id="a", name="A", timeout=10.0)
+        assert p.effective_timeout(s) == 10.0
+
+    def test_effective_timeout_falls_back_to_settings(self):
+        s = Settings(default_timeout=60.0)
+        p = Phase(id="a", name="A")
+        assert p.effective_timeout(s) == 60.0
+
+    def test_effective_timeout_both_none(self):
+        s = Settings()
+        p = Phase(id="a", name="A")
+        assert p.effective_timeout(s) is None
+

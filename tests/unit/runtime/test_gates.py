@@ -1,4 +1,3 @@
-import asyncio
 import json
 
 import pytest
@@ -129,37 +128,6 @@ class TestGateEvaluation:
         result = await evaluate_gate(gate, "p1")
         assert result.score == 0.0
 
-    @pytest.mark.asyncio
-    async def test_py_validator_zero_score(self, tmp_path):
-        script = tmp_path / "validator.py"
-        script.write_text("print(0.0)")
-        gate = QualityGate(validator=str(script), threshold=0.8)
-        result = await evaluate_gate(gate, "p1", workdir=str(tmp_path))
-        assert result.score == 0.0
-
-    @pytest.mark.asyncio
-    async def test_py_validator_perfect_score(self, tmp_path):
-        script = tmp_path / "validator.py"
-        script.write_text("print(1.0)")
-        gate = QualityGate(validator=str(script), threshold=0.8)
-        result = await evaluate_gate(gate, "p1", workdir=str(tmp_path))
-        assert result.score == 1.0
-
-
-class TestGateThresholdComparison:
-    def test_above_threshold(self):
-        gate = QualityGate(validator="v.md", threshold=0.8)
-        assert 0.9 >= gate.threshold
-
-    def test_below_threshold(self):
-        gate = QualityGate(validator="v.md", threshold=0.8)
-        assert not (0.5 >= gate.threshold)
-
-    def test_equals_threshold(self):
-        gate = QualityGate(validator="v.md", threshold=0.8)
-        assert 0.8 >= gate.threshold
-
-
 # ---------------------------------------------------------------------------
 # Node-level: gate pass/fail with stdin-inspecting validators in full graph
 # ---------------------------------------------------------------------------
@@ -289,10 +257,6 @@ class TestGateNodePassFail:
 class TestGateJSValidator:
     @pytest.mark.asyncio
     async def test_js_validator_returns_score(self, tmp_path):
-        import shutil
-
-        if shutil.which("node") is None:
-            pytest.skip("node not available")
         script = tmp_path / "validator.js"
         script.write_text('process.stdout.write("0.85")')
         gate = QualityGate(validator=str(script), threshold=0.8)
@@ -414,42 +378,19 @@ class TestGateEnvironment:
 
 
 class TestRetryBackoff:
-    """Tests for stepped retry backoff delays."""
+    """Real-sleep integration test for stepped retry backoff.
 
-    def test_get_retry_delay_empty_list(self):
-        from abe_froman.compile.nodes import _get_retry_delay
-
-        assert _get_retry_delay(1, []) == 0.0
-        assert _get_retry_delay(5, []) == 0.0
-
-    def test_get_retry_delay_single_element(self):
-        from abe_froman.compile.nodes import _get_retry_delay
-
-        assert _get_retry_delay(1, [10.0]) == 10.0
-        assert _get_retry_delay(2, [10.0]) == 10.0
-        assert _get_retry_delay(5, [10.0]) == 10.0
-
-    def test_get_retry_delay_multiple_elements(self):
-        from abe_froman.compile.nodes import _get_retry_delay
-
-        backoff = [10.0, 30.0, 60.0]
-        assert _get_retry_delay(1, backoff) == 10.0
-        assert _get_retry_delay(2, backoff) == 30.0
-        assert _get_retry_delay(3, backoff) == 60.0
-        assert _get_retry_delay(4, backoff) == 60.0  # clamps to last
+    The pure `_get_retry_delay` function is unit-tested in
+    tests/unit/compile/test_node_helpers.py. This test verifies the delay
+    values are actually awaited between retry attempts.
+    """
 
     @pytest.mark.asyncio
-    async def test_retry_backoff_delays_applied(self, tmp_path, monkeypatch):
-        """Verify asyncio.sleep is called with correct delay values on retry."""
-        validator = tmp_path / "validator.py"
-        # Fail first two attempts, pass on third
-        validator.write_text(
-            "import sys, os\n"
-            "attempt = int(os.environ.get('ATTEMPT', '0'))\n"
-            "print('1.0' if attempt >= 2 else '0.0')\n"
-        )
+    async def test_retry_backoff_delays_are_awaited(self, tmp_path):
+        """With backoff=[0.05, 0.1] and 3 total attempts, elapsed time must
+        include both delays (≥0.15s) and not much more."""
+        import time
 
-        # Track attempt count via a file
         attempt_counter = tmp_path / "attempt.txt"
         attempt_counter.write_text("0")
         counter_script = tmp_path / "run.py"
@@ -458,8 +399,7 @@ class TestRetryBackoff:
             f"open('{attempt_counter}', 'w').write(str(count + 1))\n"
             f"print('output')\n"
         )
-
-        # Validator that reads the attempt file
+        validator = tmp_path / "validator.py"
         validator.write_text(
             f"count = int(open('{attempt_counter}').read().strip())\n"
             "print('1.0' if count >= 3 else '0.0')\n"
@@ -483,132 +423,21 @@ class TestRetryBackoff:
                     },
                 },
             ],
-            retry_backoff=[0.1, 0.2],
+            retry_backoff=[0.05, 0.1],
         )
-
-        sleep_calls = []
-        original_sleep = asyncio.sleep
-
-        async def mock_sleep(delay):
-            sleep_calls.append(delay)
-            await original_sleep(0)  # yield control without waiting
-
-        monkeypatch.setattr(asyncio, "sleep", mock_sleep)
 
         executor = DispatchExecutor(workdir=str(tmp_path))
         graph = build_workflow_graph(config, executor)
+        t0 = time.monotonic()
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
+        elapsed = time.monotonic() - t0
 
         assert "a" in result["completed_phases"]
-        # Two retries before passing: delay 0.1 for retry 1, 0.2 for retry 2
-        assert sleep_calls == [0.1, 0.2]
-
-    @pytest.mark.asyncio
-    async def test_retry_backoff_clamps_to_last_value(self, tmp_path, monkeypatch):
-        """With single-element backoff and multiple retries, all use that value."""
-        attempt_counter = tmp_path / "attempt.txt"
-        attempt_counter.write_text("0")
-        counter_script = tmp_path / "run.py"
-        counter_script.write_text(
-            f"count = int(open('{attempt_counter}').read().strip())\n"
-            f"open('{attempt_counter}', 'w').write(str(count + 1))\n"
-            f"print('output')\n"
-        )
-        validator = tmp_path / "validator.py"
-        validator.write_text(
-            f"count = int(open('{attempt_counter}').read().strip())\n"
-            "print('1.0' if count >= 4 else '0.0')\n"
-        )
-
-        config = make_config(
-            [
-                {
-                    "id": "a",
-                    "name": "A",
-                    "execution": {
-                        "type": "command",
-                        "command": "python3",
-                        "args": [str(counter_script)],
-                    },
-                    "quality_gate": {
-                        "validator": str(validator),
-                        "threshold": 1.0,
-                        "blocking": True,
-                        "max_retries": 4,
-                    },
-                },
-            ],
-            retry_backoff=[0.1],
-        )
-
-        sleep_calls = []
-        original_sleep = asyncio.sleep
-
-        async def mock_sleep(delay):
-            sleep_calls.append(delay)
-            await original_sleep(0)
-
-        monkeypatch.setattr(asyncio, "sleep", mock_sleep)
-
-        executor = DispatchExecutor(workdir=str(tmp_path))
-        graph = build_workflow_graph(config, executor)
-        result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
-
-        assert "a" in result["completed_phases"]
-        assert sleep_calls == [0.1, 0.1, 0.1]
-
-    @pytest.mark.asyncio
-    async def test_empty_backoff_no_delay(self, tmp_path, monkeypatch):
-        """Default empty backoff means no sleep calls."""
-        attempt_counter = tmp_path / "attempt.txt"
-        attempt_counter.write_text("0")
-        counter_script = tmp_path / "run.py"
-        counter_script.write_text(
-            f"count = int(open('{attempt_counter}').read().strip())\n"
-            f"open('{attempt_counter}', 'w').write(str(count + 1))\n"
-            f"print('output')\n"
-        )
-        validator = tmp_path / "validator.py"
-        validator.write_text(
-            f"count = int(open('{attempt_counter}').read().strip())\n"
-            "print('1.0' if count >= 2 else '0.0')\n"
-        )
-
-        config = make_config(
-            [
-                {
-                    "id": "a",
-                    "name": "A",
-                    "execution": {
-                        "type": "command",
-                        "command": "python3",
-                        "args": [str(counter_script)],
-                    },
-                    "quality_gate": {
-                        "validator": str(validator),
-                        "threshold": 1.0,
-                        "blocking": True,
-                        "max_retries": 2,
-                    },
-                },
-            ],
-        )
-
-        sleep_calls = []
-        original_sleep = asyncio.sleep
-
-        async def mock_sleep(delay):
-            sleep_calls.append(delay)
-            await original_sleep(0)
-
-        monkeypatch.setattr(asyncio, "sleep", mock_sleep)
-
-        executor = DispatchExecutor(workdir=str(tmp_path))
-        graph = build_workflow_graph(config, executor)
-        result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
-
-        assert "a" in result["completed_phases"]
-        assert sleep_calls == []
+        assert elapsed >= 0.05 + 0.1, f"retries ran too fast ({elapsed:.3f}s); backoff not applied"
+        # Upper bound: backoff (0.15s) + generous wall-clock slack for 3 subprocess
+        # executions + 3 validator runs. If we blow past this, something other
+        # than the backoff is slowing us down.
+        assert elapsed < 10.0, f"suspiciously slow ({elapsed:.3f}s)"
 
 
 class TestJokeWorkflowIntegration:

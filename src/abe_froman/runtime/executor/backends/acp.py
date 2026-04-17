@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 from typing import Any
 
 from acp import spawn_agent_process, text_block
@@ -7,6 +9,8 @@ from acp.interfaces import Client
 
 from abe_froman.runtime.result import OverloadError
 from abe_froman.runtime.result import ExecutionResult
+
+logger = logging.getLogger(__name__)
 
 
 def _is_overload_error(exc: Exception) -> bool:
@@ -98,23 +102,29 @@ class ACPBackend:
         self._session_id: str | None = None
         self._ctx_manager: Any = None
         self._initialized = False
+        self._init_lock = asyncio.Lock()
 
     async def _ensure_initialized(self, workdir: str) -> None:
         """Lazy init: spawn process and create session on first use."""
         if self._initialized:
             return
 
-        self._ctx_manager = spawn_agent_process(
-            self._client, self._program, *self._args
-        )
-        self._conn, self._proc = await self._ctx_manager.__aenter__()
-        await self._conn.initialize(protocol_version=1)
-        session = await self._conn.new_session(cwd=workdir, mcp_servers=[])
-        self._session_id = session.session_id
-        self._initialized = True
+        async with self._init_lock:
+            if self._initialized:
+                return
+
+            self._ctx_manager = spawn_agent_process(
+                self._client, self._program, *self._args
+            )
+            self._conn, self._proc = await self._ctx_manager.__aenter__()
+            await self._conn.initialize(protocol_version=1)
+            session = await self._conn.new_session(cwd=workdir, mcp_servers=[])
+            self._session_id = session.session_id
+            self._initialized = True
 
     async def send_prompt(
-        self, prompt: str, model: str, workdir: str
+        self, prompt: str, model: str, workdir: str,
+        timeout: float | None = None,
     ) -> ExecutionResult:
         await self._ensure_initialized(workdir)
 
@@ -122,26 +132,29 @@ class ACPBackend:
         self._client.accumulator = accumulator
 
         try:
-            await self._conn.prompt(
+            coro = self._conn.prompt(
                 session_id=self._session_id,
                 prompt=[text_block(prompt)],
             )
+            if timeout is not None:
+                await asyncio.wait_for(coro, timeout=timeout)
+            else:
+                await coro
         except Exception as e:
             if _is_overload_error(e):
                 raise OverloadError(str(e)) from e
             raise
+        finally:
+            self._client.accumulator = None
 
-        output = accumulator.text()
-        self._client.accumulator = None
-
-        return ExecutionResult(output=output, tokens_used=accumulator.tokens_used())
+        return ExecutionResult(output=accumulator.text(), tokens_used=accumulator.tokens_used())
 
     async def close(self) -> None:
         if self._ctx_manager is not None:
             try:
                 await self._ctx_manager.__aexit__(None, None, None)
             except Exception:
-                pass
+                logger.warning("ACP process cleanup failed", exc_info=True)
             self._conn = None
             self._proc = None
             self._session_id = None

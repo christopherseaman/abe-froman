@@ -1,9 +1,19 @@
 import pytest
+from langgraph.graph import END, START
 
 from abe_froman.compile.graph import build_workflow_graph
 from abe_froman.schema.models import WorkflowConfig
 
 from helpers import make_config
+
+
+def _edges(graph):
+    """Return (source, target) tuples for every edge."""
+    return {(e.source, e.target) for e in graph.get_graph().edges}
+
+
+def _conditional_edges(graph):
+    return {(e.source, e.target) for e in graph.get_graph().edges if e.conditional}
 
 
 class TestSingleNodeGraph:
@@ -13,6 +23,7 @@ class TestSingleNodeGraph:
         )
         graph = build_workflow_graph(config)
         assert "p1" in graph.get_graph().nodes
+        assert _edges(graph) == {(START, "p1"), ("p1", END)}
 
     def test_single_command_node(self):
         config = make_config(
@@ -30,6 +41,7 @@ class TestSingleNodeGraph:
         )
         graph = build_workflow_graph(config)
         assert "c1" in graph.get_graph().nodes
+        assert _edges(graph) == {(START, "c1"), ("c1", END)}
 
     def test_single_gate_only_node(self):
         config = make_config(
@@ -44,15 +56,20 @@ class TestSingleNodeGraph:
         )
         graph = build_workflow_graph(config)
         assert "g1" in graph.get_graph().nodes
+        # Gate-only terminal phase emits conditional edges: pass → END, retry → self.
+        assert (START, "g1") in _edges(graph)
+        assert {("g1", END), ("g1", "g1")} <= _conditional_edges(graph)
 
 
 class TestLinearChain:
     def test_two_phase_chain(self, multi_phase_config_dict):
         config = WorkflowConfig(**multi_phase_config_dict)
         graph = build_workflow_graph(config)
-        nodes = graph.get_graph().nodes
-        assert "phase-1" in nodes
-        assert "phase-2" in nodes
+        assert _edges(graph) == {
+            (START, "phase-1"),
+            ("phase-1", "phase-2"),
+            ("phase-2", END),
+        }
 
     def test_three_phase_chain(self):
         config = make_config(
@@ -63,19 +80,30 @@ class TestLinearChain:
             ]
         )
         graph = build_workflow_graph(config)
-        nodes = graph.get_graph().nodes
-        assert all(n in nodes for n in ["a", "b", "c"])
+        assert _edges(graph) == {
+            (START, "a"),
+            ("a", "b"),
+            ("b", "c"),
+            ("c", END),
+        }
 
 
 class TestParallelPhases:
     def test_diamond_dependency(self, parallel_config_dict):
+        """A → (B, C) → D — both forks must be wired, and D must fan in from both."""
         config = WorkflowConfig(**parallel_config_dict)
         graph = build_workflow_graph(config)
-        nodes = graph.get_graph().nodes
-        assert all(n in nodes for n in ["a", "b", "c", "d"])
+        assert _edges(graph) == {
+            (START, "a"),
+            ("a", "b"),
+            ("a", "c"),
+            ("b", "d"),
+            ("c", "d"),
+            ("d", END),
+        }
 
     def test_multiple_roots(self):
-        """Multiple phases with no dependencies all connect from START."""
+        """Roots both start from START and both reach END independently."""
         config = make_config(
             [
                 {"id": "a", "name": "A", "prompt_file": "a.md"},
@@ -83,13 +111,17 @@ class TestParallelPhases:
             ]
         )
         graph = build_workflow_graph(config)
-        nodes = graph.get_graph().nodes
-        assert "a" in nodes
-        assert "b" in nodes
+        assert _edges(graph) == {
+            (START, "a"),
+            (START, "b"),
+            ("a", END),
+            ("b", END),
+        }
 
 
 class TestGateRouting:
-    def test_terminal_gate_compiles(self):
+    def test_terminal_gate_wiring(self):
+        """Terminal gated phase: pass → END, retry → self."""
         config = make_config(
             [
                 {
@@ -101,10 +133,12 @@ class TestGateRouting:
             ]
         )
         graph = build_workflow_graph(config)
-        assert graph is not None
+        # Entry is unconditional; routing decisions from p1 are conditional.
+        assert (START, "p1") in _edges(graph)
+        assert _conditional_edges(graph) == {("p1", END), ("p1", "p1")}
 
-    def test_non_terminal_gate_compiles(self):
-        """Quality gate on a non-terminal phase should compile."""
+    def test_non_terminal_gate_wiring(self):
+        """Gate with single dependent: pass → b, retry → a, fail → END."""
         config = make_config(
             [
                 {
@@ -122,11 +156,17 @@ class TestGateRouting:
             ]
         )
         graph = build_workflow_graph(config)
-        assert "a" in graph.get_graph().nodes
-        assert "b" in graph.get_graph().nodes
+        edges = _edges(graph)
+        assert (START, "a") in edges
+        assert ("b", END) in edges
+        assert _conditional_edges(graph) == {
+            ("a", "b"),
+            ("a", "a"),
+            ("a", END),
+        }
 
-    def test_gate_with_multiple_dependents_compiles(self):
-        """Gate phase with fan-out to multiple dependents uses passthrough."""
+    def test_gate_with_multiple_dependents_uses_passthrough(self):
+        """Gate with fan-out: a routes through _after_a, which then splits to b and c."""
         config = make_config(
             [
                 {
@@ -141,11 +181,20 @@ class TestGateRouting:
         )
         graph = build_workflow_graph(config)
         nodes = graph.get_graph().nodes
-        assert "a" in nodes
-        assert "b" in nodes
-        assert "c" in nodes
-        # Passthrough node should exist
         assert "_after_a" in nodes
+
+        edges = _edges(graph)
+        # Passthrough distribution must be unconditional
+        passthrough = {(s, t) for s, t in edges if s == "_after_a"}
+        assert passthrough == {("_after_a", "b"), ("_after_a", "c")}
+        # Downstream phases must reach END
+        assert {("b", END), ("c", END)} <= edges
+        # Gate routing conditional edges: pass → _after_a, retry → a, fail → END
+        assert _conditional_edges(graph) == {
+            ("a", "_after_a"),
+            ("a", "a"),
+            ("a", END),
+        }
 
 
 class TestModelConfig:

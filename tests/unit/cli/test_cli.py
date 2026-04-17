@@ -1,7 +1,16 @@
+import hashlib
+from pathlib import Path
+
 import pytest
 from click.testing import CliRunner
 
-from abe_froman.cli.main import cli
+from abe_froman.cli.main import (
+    CHECKPOINT_DB,
+    _db_path,
+    _is_git_repo,
+    _thread_id_for,
+    cli,
+)
 
 
 @pytest.fixture
@@ -190,3 +199,87 @@ class TestResumeCommand:
         )
         assert second.exit_code == 0
         assert "Resuming: 1 phases already completed" in second.output
+
+
+# ---------------------------------------------------------------------------
+# Token summary positive path (J8)
+# ---------------------------------------------------------------------------
+
+
+class TestTokenSummaryPositive:
+    def test_token_summary_displayed_when_tokens_present(self, runner, tmp_path, monkeypatch):
+        """Wire a backend that returns tokens_used; verify summary appears."""
+        from abe_froman.runtime.result import ExecutionResult
+
+        class TokenBackend:
+            async def send_prompt(self, prompt, model, workdir):
+                return ExecutionResult(
+                    output="ok",
+                    tokens_used={"input": 100, "output": 50},
+                )
+
+            async def close(self):
+                pass
+
+        monkeypatch.setattr(
+            "abe_froman.runtime.executor.backends.factory.create_prompt_backend",
+            lambda _type: TokenBackend(),
+        )
+
+        config = tmp_path / "workflow.yaml"
+        config.write_text(
+            "name: Test\nversion: '1.0'\nphases:\n"
+            "  - id: a\n    name: A\n    prompt_file: t.md\n"
+        )
+        (tmp_path / "t.md").write_text("hello")
+
+        result = runner.invoke(
+            cli, ["run", str(config), "--workdir", str(tmp_path)]
+        )
+        assert result.exit_code == 0
+        assert "Tokens:" in result.output
+        assert "100" in result.output
+        assert "50" in result.output
+
+
+# ---------------------------------------------------------------------------
+# CLI helper unit tests (J9)
+# ---------------------------------------------------------------------------
+
+
+class TestCliHelpers:
+    def test_is_git_repo_true(self, tmp_path):
+        import subprocess
+        subprocess.run(["git", "init", str(tmp_path)], capture_output=True, check=True)
+        assert _is_git_repo(str(tmp_path)) is True
+
+    def test_is_git_repo_false(self, tmp_path):
+        assert _is_git_repo(str(tmp_path)) is False
+
+    def test_thread_id_deterministic(self, tmp_path):
+        from abe_froman.schema.models import WorkflowConfig
+
+        config = WorkflowConfig(
+            name="test", version="1.0",
+            phases=[{"id": "a", "name": "A", "prompt_file": "t.md"}],
+        )
+        id1 = _thread_id_for(config, str(tmp_path))
+        id2 = _thread_id_for(config, str(tmp_path))
+        assert id1 == id2
+        assert len(id1) == 16
+        assert all(c in "0123456789abcdef" for c in id1)
+
+    def test_thread_id_workdir_sensitive(self, tmp_path):
+        from abe_froman.schema.models import WorkflowConfig
+
+        config = WorkflowConfig(
+            name="test", version="1.0",
+            phases=[{"id": "a", "name": "A", "prompt_file": "t.md"}],
+        )
+        id_a = _thread_id_for(config, str(tmp_path / "a"))
+        id_b = _thread_id_for(config, str(tmp_path / "b"))
+        assert id_a != id_b
+
+    def test_db_path(self, tmp_path):
+        result = _db_path(str(tmp_path))
+        assert result == str(Path(tmp_path) / CHECKPOINT_DB)

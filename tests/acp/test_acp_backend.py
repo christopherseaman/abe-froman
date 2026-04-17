@@ -1,8 +1,37 @@
 """Tests for ACP backend — real integration tests against claude-code-acp."""
 
+import re
+
 import pytest
 
 from abe_froman.runtime.result import ExecutionResult
+
+
+# Common refusal phrasing Claude emits when it declines a prompt. If any of these
+# appear we want the test to fail even if the asserted target word is also present
+# (e.g. "I can't respond with only 'pong' but here it is: pong").
+_REFUSAL_MARKERS = (
+    "i can't",
+    "i cannot",
+    "i'm sorry",
+    "i am sorry",
+    "i'm unable",
+    "i am unable",
+    "i'm not able",
+    "i am not able",
+    "unable to",
+)
+
+
+def _assert_non_refusal_contains(output: str, target_pattern: str) -> None:
+    """Assert `output` contains `target_pattern` (regex) and no refusal markers."""
+    assert output, "ACP returned empty output"
+    lower = output.lower()
+    for marker in _REFUSAL_MARKERS:
+        assert marker not in lower, f"ACP refusal detected ({marker!r}) in: {output!r}"
+    assert re.search(target_pattern, lower), (
+        f"expected pattern {target_pattern!r} not found in: {output!r}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -72,14 +101,13 @@ class TestACPIntegration:
                 ".",
             )
             assert isinstance(result, ExecutionResult)
-            assert len(result.output) > 0
-            assert "pong" in result.output.lower()
+            _assert_non_refusal_contains(result.output, r"\bpong\b")
         finally:
             await backend.close()
 
     @pytest.mark.asyncio
-    async def test_session_reuse_across_prompts(self):
-        """Two prompts on the same backend reuse the session (no re-init)."""
+    async def test_two_prompts_succeed_on_same_backend(self):
+        """Behavioral: two prompts on one backend both return correct outputs."""
         from abe_froman.runtime.executor.backends.acp import ACPBackend
 
         backend = ACPBackend()
@@ -89,22 +117,36 @@ class TestACPIntegration:
                 "sonnet",
                 ".",
             )
-            session_after_first = backend._session_id
-
             r2 = await backend.send_prompt(
                 'Respond with exactly "two".',
                 "sonnet",
                 ".",
             )
-            assert backend._session_id == session_after_first
-            assert len(r1.output) > 0
-            assert len(r2.output) > 0
+            _assert_non_refusal_contains(r1.output, r"\bone\b")
+            _assert_non_refusal_contains(r2.output, r"\btwo\b")
         finally:
             await backend.close()
 
     @pytest.mark.asyncio
-    async def test_close_resets_state(self):
-        """After close(), the backend is no longer initialized."""
+    async def test_session_reuse_internal_state(self):
+        """Internal-state probe: session_id persists across calls.
+        Deliberately reads private state — refactor canary, not behavioral test."""
+        from abe_froman.runtime.executor.backends.acp import ACPBackend
+
+        backend = ACPBackend()
+        try:
+            await backend.send_prompt('Say "a".', "sonnet", ".")
+            session_after_first = backend._session_id
+
+            await backend.send_prompt('Say "b".', "sonnet", ".")
+            assert backend._session_id == session_after_first
+        finally:
+            await backend.close()
+
+    @pytest.mark.asyncio
+    async def test_close_resets_internal_state(self):
+        """Internal-state probe: close() clears init flag.
+        Deliberately reads private state — refactor canary."""
         from abe_froman.runtime.executor.backends.acp import ACPBackend
 
         backend = ACPBackend()
@@ -137,7 +179,6 @@ class TestACPIntegration:
             phase = Phase(id="test", name="Test", prompt_file="test.md")
             result = await executor.execute(phase, {})
             assert result.success is True
-            assert len(result.output) > 0
-            assert "abe froman" in result.output.lower()
+            _assert_non_refusal_contains(result.output, r"\babe\s+froman\b")
         finally:
             await executor.close()

@@ -1,4 +1,5 @@
 import asyncio
+import time
 
 import pytest
 
@@ -6,48 +7,8 @@ from abe_froman.compile.graph import build_workflow_graph
 from abe_froman.runtime.state import make_initial_state
 from abe_froman.runtime.result import ExecutionResult
 from abe_froman.runtime.executor.dispatch import DispatchExecutor
-from abe_froman.schema.models import Phase, Settings
 
 from helpers import cmd_phase, make_config
-from mock_executor import MockExecutor
-
-
-# ---------------------------------------------------------------------------
-# Schema tests
-# ---------------------------------------------------------------------------
-
-
-class TestTimeoutSchema:
-    def test_phase_timeout_field(self):
-        p = Phase(id="a", name="A", timeout=30.0)
-        assert p.timeout == 30.0
-
-    def test_phase_timeout_defaults_none(self):
-        p = Phase(id="a", name="A")
-        assert p.timeout is None
-
-    def test_settings_default_timeout(self):
-        s = Settings(default_timeout=60.0)
-        assert s.default_timeout == 60.0
-
-    def test_settings_default_timeout_defaults_none(self):
-        s = Settings()
-        assert s.default_timeout is None
-
-    def test_effective_timeout_phase_overrides_settings(self):
-        s = Settings(default_timeout=60.0)
-        p = Phase(id="a", name="A", timeout=10.0)
-        assert p.effective_timeout(s) == 10.0
-
-    def test_effective_timeout_falls_back_to_settings(self):
-        s = Settings(default_timeout=60.0)
-        p = Phase(id="a", name="A")
-        assert p.effective_timeout(s) == 60.0
-
-    def test_effective_timeout_both_none(self):
-        s = Settings()
-        p = Phase(id="a", name="A")
-        assert p.effective_timeout(s) is None
 
 
 # ---------------------------------------------------------------------------
@@ -70,10 +31,13 @@ class TestTimeoutCommandPhase:
         )
         executor = DispatchExecutor(workdir=str(tmp_path))
         graph = build_workflow_graph(config, executor)
+        t0 = time.monotonic()
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
+        elapsed = time.monotonic() - t0
 
         assert "slow" in result["failed_phases"]
         assert any("timed out" in e["error"] for e in result["errors"])
+        assert elapsed < 5.0, f"timeout should fire at 0.5s, not wait {elapsed:.1f}s"
 
     @pytest.mark.asyncio
     async def test_no_timeout_allows_completion(self, tmp_path):
@@ -101,10 +65,13 @@ class TestTimeoutCommandPhase:
         )
         executor = DispatchExecutor(workdir=str(tmp_path))
         graph = build_workflow_graph(config, executor)
+        t0 = time.monotonic()
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
+        elapsed = time.monotonic() - t0
 
         assert "slow" in result["failed_phases"]
         assert any("timed out" in e["error"] for e in result["errors"])
+        assert elapsed < 5.0, f"timeout should fire at 0.5s, not wait {elapsed:.1f}s"
 
 
 # ---------------------------------------------------------------------------
@@ -136,10 +103,13 @@ class TestTimeoutGateValidator:
         )
         executor = DispatchExecutor(workdir=str(tmp_path))
         graph = build_workflow_graph(config, executor)
+        t0 = time.monotonic()
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
+        elapsed = time.monotonic() - t0
 
         assert "gated" in result["failed_phases"]
         assert any("gate timed out" in e["error"].lower() for e in result["errors"])
+        assert elapsed < 5.0, f"gate timeout should fire at 0.5s, not wait {elapsed:.1f}s"
 
 
 # ---------------------------------------------------------------------------
@@ -173,10 +143,13 @@ class TestTimeoutPromptPhase:
         )
         slow_executor = SlowMockExecutor(delay=5.0)
         graph = build_workflow_graph(config, slow_executor)
+        t0 = time.monotonic()
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
+        elapsed = time.monotonic() - t0
 
         assert "slow_prompt" in result["failed_phases"]
         assert any("timed out" in e["error"] for e in result["errors"])
+        assert elapsed < 3.0, f"timeout should fire at 0.3s, not wait {elapsed:.1f}s"
 
     @pytest.mark.asyncio
     async def test_fast_executor_completes_within_timeout(self, tmp_path):

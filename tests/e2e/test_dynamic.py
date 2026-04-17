@@ -352,3 +352,38 @@ class TestDynamicEdgeCases:
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
 
         assert "p::disk-item" in result["completed_phases"]
+
+
+# ---------------------------------------------------------------------------
+# Manifest field propagation (uses MockExecutor to observe context)
+# ---------------------------------------------------------------------------
+
+
+class TestManifestFieldPropagation:
+    @pytest.mark.asyncio
+    async def test_custom_fields_reach_subphase_context(self, tmp_path):
+        """Manifest item fields beyond 'id' are passed into subphase context."""
+        from mock_executor import MockExecutor
+        from abe_froman.runtime.result import ExecutionResult
+
+        manifest = [
+            {"id": "x", "custom_field": "v123", "priority": "high"},
+        ]
+        mock = MockExecutor(results={
+            "parent": ExecutionResult(
+                success=True,
+                output=json.dumps({"items": manifest}),
+            ),
+        })
+
+        (tmp_path / "template.md").write_text("Process {{custom_field}}")
+
+        config = make_config([dynamic_parent("parent", manifest)])
+        graph = build_workflow_graph(config, mock)
+        result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
+
+        assert "parent::x" in result["completed_phases"]
+        ctx = mock.received_contexts["parent::x"]
+        assert ctx["id"] == "x"
+        assert ctx["custom_field"] == "v123"
+        assert ctx["priority"] == "high"
