@@ -38,12 +38,18 @@ def _normalize_prompt_shorthand(instance: Any) -> Any:
     return instance
 
 
+class DimensionCheck(BaseModel):
+    field: str
+    min: float = Field(ge=0.0, le=1.0)
+
+
 class QualityGate(BaseModel):
     validator: str
-    threshold: float = Field(ge=0.0, le=1.0)
+    threshold: float = Field(ge=0.0, le=1.0, default=0.0)
     blocking: bool = False
     max_retries: int | None = None  # None = defer to Settings.max_retries
     model: str | None = None  # override for .md LLM gates; None = Settings.default_model
+    dimensions: list[DimensionCheck] | None = None
 
 
 class OutputContract(BaseModel):

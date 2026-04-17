@@ -299,7 +299,8 @@ class TestClassifyGateOutcome:
     )
     def test_gate_outcomes(self, score, threshold, retries, max_retries, blocking, expected):
         phase = _phase(quality_gate=_gate(threshold=threshold, blocking=blocking))
-        assert classify_gate_outcome(phase, score, retries, max_retries) == expected
+        result = GateResult(score=score)
+        assert classify_gate_outcome(phase, result, retries, max_retries) == expected
 
 
 class TestBuildGateOutcomeUpdate:
@@ -307,9 +308,9 @@ class TestBuildGateOutcomeUpdate:
         phase = _phase(quality_gate=_gate())
         update = build_gate_outcome_update(phase, GateResult(score=0.9), "pass", 0, 3)
         assert update["gate_scores"] == {"p1": 0.9}
-        assert update["gate_feedback"] == {
-            "p1": {"feedback": None, "pass_criteria_met": [], "pass_criteria_unmet": []}
-        }
+        fb = update["gate_feedback"]["p1"]
+        assert fb["feedback"] is None
+        assert fb["scores"] == {}
         assert update["completed_phases"] == ["p1"]
         assert "failed_phases" not in update
 
@@ -345,10 +346,71 @@ class TestBuildGateOutcomeUpdate:
             pass_criteria_unmet=["docs"],
         )
         update = build_gate_outcome_update(phase, gr, "retry", 0, 3)
-        assert update["gate_feedback"] == {
-            "p1": {
-                "feedback": "missing docstring",
-                "pass_criteria_met": ["tests pass"],
-                "pass_criteria_unmet": ["docs"],
-            }
-        }
+        fb = update["gate_feedback"]["p1"]
+        assert fb["feedback"] == "missing docstring"
+        assert fb["pass_criteria_met"] == ["tests pass"]
+        assert fb["pass_criteria_unmet"] == ["docs"]
+        assert fb["scores"] == {}
+
+
+# ---------------------------------------------------------------------------
+# Multi-dimension gate classification
+# ---------------------------------------------------------------------------
+
+from abe_froman.schema.models import DimensionCheck
+
+
+class TestDimensionGateClassification:
+    def _dim_gate(self, dims, blocking=True):
+        return QualityGate(
+            validator="v.py",
+            blocking=blocking,
+            dimensions=[DimensionCheck(**d) for d in dims],
+        )
+
+    def test_all_dimensions_pass(self):
+        gate = self._dim_gate([{"field": "correctness", "min": 0.7}, {"field": "style", "min": 0.5}])
+        phase = _phase(quality_gate=gate)
+        result = GateResult(score=0.0, scores={"correctness": 0.8, "style": 0.6})
+        assert classify_gate_outcome(phase, result, 0, 3) == "pass"
+
+    def test_one_dimension_fails(self):
+        gate = self._dim_gate([{"field": "correctness", "min": 0.7}, {"field": "style", "min": 0.5}])
+        phase = _phase(quality_gate=gate)
+        result = GateResult(score=0.0, scores={"correctness": 0.8, "style": 0.3})
+        assert classify_gate_outcome(phase, result, 0, 3) == "retry"
+
+    def test_missing_dimension_treated_as_zero(self):
+        gate = self._dim_gate([{"field": "correctness", "min": 0.7}])
+        phase = _phase(quality_gate=gate)
+        result = GateResult(score=0.0, scores={})
+        assert classify_gate_outcome(phase, result, 0, 3) == "retry"
+
+    def test_dimension_gate_exhausted_blocking(self):
+        gate = self._dim_gate([{"field": "x", "min": 0.8}], blocking=True)
+        phase = _phase(quality_gate=gate)
+        result = GateResult(score=0.0, scores={"x": 0.5})
+        assert classify_gate_outcome(phase, result, 3, 3) == "fail_blocking"
+
+    def test_dimension_gate_exhausted_non_blocking(self):
+        gate = self._dim_gate([{"field": "x", "min": 0.8}], blocking=False)
+        phase = _phase(quality_gate=gate)
+        result = GateResult(score=0.0, scores={"x": 0.5})
+        assert classify_gate_outcome(phase, result, 3, 3) == "warn_continue"
+
+    def test_dimension_scores_stored_in_feedback(self):
+        gate = self._dim_gate([{"field": "correctness", "min": 0.7}])
+        phase = _phase(quality_gate=gate)
+        gr = GateResult(score=0.0, scores={"correctness": 0.9})
+        update = build_gate_outcome_update(phase, gr, "pass", 0, 3)
+        assert update["gate_feedback"]["p1"]["scores"] == {"correctness": 0.9}
+
+    def test_dimension_gate_ignore_threshold(self):
+        """When dimensions are set, the single-score threshold is irrelevant."""
+        gate = QualityGate(
+            validator="v.py", threshold=0.99,
+            dimensions=[DimensionCheck(field="x", min=0.5)],
+        )
+        phase = _phase(quality_gate=gate)
+        result = GateResult(score=0.0, scores={"x": 0.6})
+        assert classify_gate_outcome(phase, result, 0, 3) == "pass"

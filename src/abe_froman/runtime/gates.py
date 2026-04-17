@@ -13,16 +13,25 @@ from abe_froman.schema.models import OutputContract, QualityGate
 @dataclass
 class GateResult:
     score: float
+    scores: dict[str, float] = field(default_factory=dict)
     feedback: str | None = None
     pass_criteria_met: list[str] = field(default_factory=list)
     pass_criteria_unmet: list[str] = field(default_factory=list)
 
 
-def _parse_gate_output(raw: str, *, allow_bare_float: bool = False) -> GateResult:
+_NON_SCORE_KEYS = frozenset(
+    {"feedback", "pass_criteria_met", "pass_criteria_unmet", "score"}
+)
+
+
+def _parse_gate_output(
+    raw: str, *, allow_bare_float: bool = False, require_score: bool = True,
+) -> GateResult:
     """Parse gate output into a GateResult.
 
-    Accepts: bare float (script gates only), JSON with "score", or full
-    feedback JSON. Loud failure on malformed output (score=0.0 + diagnostic).
+    Accepts: bare float (script gates only), JSON with "score", full
+    feedback JSON, or multi-dimension JSON (numeric fields extracted as
+    dimension scores). Loud failure on malformed output.
     """
     stripped = raw.strip()
     if allow_bare_float:
@@ -39,24 +48,38 @@ def _parse_gate_output(raw: str, *, allow_bare_float: bool = False) -> GateResul
             feedback=f"gate returned unparseable response: {stripped[:200]!r}",
         )
 
-    if not isinstance(data, dict) or "score" not in data:
+    if not isinstance(data, dict):
         return GateResult(
             score=0.0,
             feedback="gate response missing or non-numeric 'score' field",
         )
 
-    try:
-        score = float(data["score"])
-    except (TypeError, ValueError):
+    dim_scores: dict[str, float] = {}
+    for k, v in data.items():
+        if k not in _NON_SCORE_KEYS and isinstance(v, (int, float)):
+            dim_scores[k] = float(v)
+
+    if "score" in data:
+        try:
+            score = float(data["score"])
+        except (TypeError, ValueError):
+            return GateResult(
+                score=0.0,
+                feedback="gate response missing or non-numeric 'score' field",
+            )
+    elif require_score and not dim_scores:
         return GateResult(
             score=0.0,
             feedback="gate response missing or non-numeric 'score' field",
         )
+    else:
+        score = 0.0
 
     met = data.get("pass_criteria_met", []) or []
     unmet = data.get("pass_criteria_unmet", []) or []
     return GateResult(
         score=score,
+        scores=dim_scores,
         feedback=data.get("feedback"),
         pass_criteria_met=list(met) if isinstance(met, list) else [],
         pass_criteria_unmet=list(unmet) if isinstance(unmet, list) else [],
@@ -70,6 +93,7 @@ async def evaluate_gate_script(
     phase_output: str = "",
     workflow_name: str = "",
     attempt_number: int = 1,
+    require_score: bool = True,
 ) -> GateResult:
     """Run a .py or .js validator script and parse its response.
 
@@ -119,7 +143,9 @@ async def evaluate_gate_script(
             feedback=f"validator exited with code {proc.returncode}: {snippet}",
         )
 
-    return _parse_gate_output(stdout.decode(), allow_bare_float=True)
+    return _parse_gate_output(
+        stdout.decode(), allow_bare_float=True, require_score=require_score,
+    )
 
 
 async def evaluate_gate_llm(
@@ -130,6 +156,7 @@ async def evaluate_gate_llm(
     backend: Any,
     default_model: str,
     attempt_number: int = 1,
+    require_score: bool = True,
 ) -> GateResult:
     """Evaluate a .md prompt-based quality gate via an LLM backend.
 
@@ -164,7 +191,7 @@ async def evaluate_gate_llm(
             feedback=f"gate backend error: {result.error}",
         )
 
-    return _parse_gate_output(result.output)
+    return _parse_gate_output(result.output, require_score=require_score)
 
 
 async def evaluate_gate(
@@ -184,11 +211,13 @@ async def evaluate_gate(
     """
     path = Path(gate.validator)
     suffix = path.suffix.lower()
+    require_score = not gate.dimensions
 
     if suffix in (".py", ".js"):
         return await evaluate_gate_script(
             gate.validator, phase_id, workdir, phase_output,
             workflow_name=workflow_name, attempt_number=attempt_number,
+            require_score=require_score,
         )
     elif suffix == ".md":
         if backend is None:
@@ -199,7 +228,7 @@ async def evaluate_gate(
         return await evaluate_gate_llm(
             gate, phase_id, workdir, phase_output,
             backend=backend, default_model=default_model,
-            attempt_number=attempt_number,
+            attempt_number=attempt_number, require_score=require_score,
         )
     else:
         raise ValueError(f"Unsupported validator type: {suffix}")

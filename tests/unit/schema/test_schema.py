@@ -4,6 +4,7 @@ from pydantic import ValidationError
 
 from abe_froman.schema.models import (
     CommandExecution,
+    DimensionCheck,
     DynamicPhaseConfig,
     GateOnlyExecution,
     OutputContract,
@@ -132,6 +133,35 @@ class TestQualityGate:
     def test_custom_max_retries(self):
         gate = QualityGate(validator="v.md", threshold=0.8, max_retries=5)
         assert gate.max_retries == 5
+
+    def test_dimension_gate(self):
+        gate = QualityGate(
+            validator="v.py",
+            dimensions=[
+                DimensionCheck(field="correctness", min=0.7),
+                DimensionCheck(field="style", min=0.5),
+            ],
+        )
+        assert len(gate.dimensions) == 2
+        assert gate.dimensions[0].field == "correctness"
+        assert gate.dimensions[0].min == 0.7
+
+    def test_dimension_gate_from_yaml(self):
+        raw = {
+            "validator": "v.py",
+            "dimensions": [
+                {"field": "correctness", "min": 0.7},
+                {"field": "style", "min": 0.5},
+            ],
+        }
+        gate = QualityGate(**raw)
+        assert gate.dimensions[1].field == "style"
+
+    def test_dimension_check_bounds(self):
+        with pytest.raises(ValidationError):
+            DimensionCheck(field="x", min=1.5)
+        with pytest.raises(ValidationError):
+            DimensionCheck(field="x", min=-0.1)
 
 
 class TestEffectiveMaxRetries:

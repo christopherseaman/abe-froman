@@ -93,12 +93,22 @@ def inject_retry_reason(
     if retry_count == 0 or not phase.quality_gate:
         return context
 
-    prev_score = state.get("gate_scores", {}).get(phase.id, 0.0)
+    gate = phase.quality_gate
     feedback = state.get("gate_feedback", {}).get(phase.id, {})
 
+    if gate.dimensions:
+        dim_scores = feedback.get("scores", {})
+        score_parts = [
+            f"{d.field}={dim_scores.get(d.field, 0.0):.2f} (min={d.min})"
+            for d in gate.dimensions
+        ]
+        score_summary = "; ".join(score_parts)
+    else:
+        prev_score = state.get("gate_scores", {}).get(phase.id, 0.0)
+        score_summary = f"score={prev_score:.2f}, threshold={gate.threshold}"
+
     lines = [
-        f"Attempt {retry_count} failed quality gate "
-        f"(score={prev_score:.2f}, threshold={phase.quality_gate.threshold}). "
+        f"Attempt {retry_count} failed quality gate ({score_summary}). "
         f"This is retry {retry_count} of {max_retries}."
     ]
     if feedback.get("feedback"):
@@ -147,32 +157,51 @@ def assemble_success_update(phase: Phase, result: ExecutionResult) -> dict[str, 
 
 
 def classify_gate_outcome(
-    phase: Phase, score: float, retries: int, max_retries: int
+    phase: Phase, gate_result: GateResult, retries: int, max_retries: int
 ) -> str:
-    threshold = phase.quality_gate.threshold
-    if score >= threshold:
+    gate = phase.quality_gate
+    if gate.dimensions:
+        passed = all(
+            gate_result.scores.get(dim.field, 0.0) >= dim.min
+            for dim in gate.dimensions
+        )
+    else:
+        passed = gate_result.score >= gate.threshold
+    if passed:
         return "pass"
     if retries < max_retries:
         return "retry"
-    if phase.quality_gate.blocking:
+    if gate.blocking:
         return "fail_blocking"
     return "warn_continue"
+
+
+def _gate_summary(phase: Phase, result: GateResult) -> str:
+    gate = phase.quality_gate
+    if gate.dimensions:
+        parts = [
+            f"{d.field}={result.scores.get(d.field, 0.0):.2f}>={d.min}"
+            for d in gate.dimensions
+        ]
+        return ", ".join(parts)
+    return f"score={result.score:.2f}, threshold={gate.threshold}"
 
 
 def build_gate_outcome_update(
     phase: Phase, result: GateResult, outcome: str, retries: int, max_retries: int
 ) -> dict[str, Any]:
-    score = result.score
     update: dict[str, Any] = {
-        "gate_scores": {phase.id: score},
+        "gate_scores": {phase.id: result.score},
         "gate_feedback": {
             phase.id: {
                 "feedback": result.feedback,
                 "pass_criteria_met": list(result.pass_criteria_met),
                 "pass_criteria_unmet": list(result.pass_criteria_unmet),
+                "scores": dict(result.scores),
             }
         },
     }
+    summary = _gate_summary(phase, result)
 
     if outcome == "pass":
         update["completed_phases"] = [phase.id]
@@ -183,10 +212,7 @@ def build_gate_outcome_update(
         update["errors"] = [
             {
                 "phase": phase.id,
-                "error": (
-                    f"Quality gate failed after {max_retries} retries "
-                    f"(score={score:.2f}, threshold={phase.quality_gate.threshold})"
-                ),
+                "error": f"Quality gate failed after {max_retries} retries ({summary})",
             }
         ]
     elif outcome == "warn_continue":
@@ -196,8 +222,7 @@ def build_gate_outcome_update(
                 "phase": phase.id,
                 "error": (
                     f"Quality gate below threshold after {max_retries} retries "
-                    f"(score={score:.2f}, threshold={phase.quality_gate.threshold}), "
-                    f"continuing (non-blocking)"
+                    f"({summary}), continuing (non-blocking)"
                 ),
             }
         ]
@@ -236,7 +261,7 @@ async def evaluate_gate_and_outcome(
             phase.id, f"Quality gate timed out after {timeout}s"
         )
 
-    outcome = classify_gate_outcome(phase, gate_result.score, retries, max_retries)
+    outcome = classify_gate_outcome(phase, gate_result, retries, max_retries)
     return build_gate_outcome_update(phase, gate_result, outcome, retries, max_retries)
 
 

@@ -529,6 +529,75 @@ class TestContextPropagation:
 # ---------------------------------------------------------------------------
 
 
+class TestDimensionGateExecution:
+    @pytest.mark.asyncio
+    async def test_dimension_gate_passes_all_checks(self, tmp_path):
+        """Script returns multi-dimension JSON; all dimensions pass thresholds."""
+        validator = tmp_path / "dim_validator.py"
+        validator.write_text(
+            'import json\n'
+            'print(json.dumps({"correctness": 0.9, "style": 0.7}))\n'
+        )
+        config = make_config([
+            cmd_phase(
+                "p1", output="data",
+                quality_gate={
+                    "validator": str(validator),
+                    "dimensions": [
+                        {"field": "correctness", "min": 0.8},
+                        {"field": "style", "min": 0.5},
+                    ],
+                },
+            ),
+        ])
+        executor = DispatchExecutor(workdir=str(tmp_path))
+        graph = build_workflow_graph(config, executor)
+        result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
+
+        assert "p1" in result["completed_phases"]
+        fb = result["gate_feedback"]["p1"]
+        assert fb["scores"]["correctness"] == 0.9
+        assert fb["scores"]["style"] == 0.7
+
+    @pytest.mark.asyncio
+    async def test_dimension_gate_fails_one_dimension(self, tmp_path):
+        """One dimension below min → retry, then pass on second attempt."""
+        counter = tmp_path / "counter.txt"
+        counter.write_text("0")
+
+        validator = tmp_path / "dim_validator.py"
+        validator.write_text(
+            'import json\n'
+            'from pathlib import Path\n'
+            f'counter = Path(r"{counter}")\n'
+            'n = int(counter.read_text().strip())\n'
+            'n += 1\n'
+            'counter.write_text(str(n))\n'
+            'style = 0.9 if n >= 2 else 0.3\n'
+            'print(json.dumps({"correctness": 0.9, "style": style}))\n'
+        )
+        config = make_config([
+            cmd_phase(
+                "p1", output="data",
+                quality_gate={
+                    "validator": str(validator),
+                    "max_retries": 2,
+                    "blocking": True,
+                    "dimensions": [
+                        {"field": "correctness", "min": 0.8},
+                        {"field": "style", "min": 0.5},
+                    ],
+                },
+            ),
+        ])
+        executor = DispatchExecutor(workdir=str(tmp_path))
+        graph = build_workflow_graph(config, executor)
+        result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
+
+        assert "p1" in result["completed_phases"]
+        assert int(counter.read_text().strip()) == 2
+
+
 class TestTokenUsageAccumulation:
     @pytest.mark.asyncio
     async def test_token_usage_accumulated_in_state(self):

@@ -685,6 +685,52 @@ class TestGateOutputParser:
         assert "score" in result.feedback
 
 
+class TestMultiDimensionParser:
+    """_parse_gate_output extracts numeric fields as dimension scores."""
+
+    def test_dimension_scores_extracted(self):
+        from abe_froman.runtime.gates import _parse_gate_output
+
+        raw = json.dumps({"correctness": 0.8, "style": 0.6, "score": 0.7})
+        result = _parse_gate_output(raw)
+        assert result.score == 0.7
+        assert result.scores == {"correctness": 0.8, "style": 0.6}
+
+    def test_no_score_with_dimensions_when_not_required(self):
+        from abe_froman.runtime.gates import _parse_gate_output
+
+        raw = json.dumps({"correctness": 0.8, "style": 0.6})
+        result = _parse_gate_output(raw, require_score=False)
+        assert result.score == 0.0
+        assert result.scores == {"correctness": 0.8, "style": 0.6}
+        assert result.feedback is None
+
+    def test_no_score_no_dimensions_fails_by_default(self):
+        from abe_froman.runtime.gates import _parse_gate_output
+
+        raw = json.dumps({"correctness": 0.8})
+        result = _parse_gate_output(raw)
+        assert result.score == 0.0
+        assert result.feedback is None
+        assert result.scores == {"correctness": 0.8}
+
+    def test_non_numeric_fields_ignored(self):
+        from abe_froman.runtime.gates import _parse_gate_output
+
+        raw = json.dumps({"score": 0.5, "label": "good", "count": 3})
+        result = _parse_gate_output(raw)
+        assert result.scores == {"count": 3.0}
+        assert "label" not in result.scores
+
+    def test_feedback_field_not_treated_as_dimension(self):
+        from abe_froman.runtime.gates import _parse_gate_output
+
+        raw = json.dumps({"score": 0.5, "feedback": "ok", "quality": 0.9})
+        result = _parse_gate_output(raw)
+        assert result.scores == {"quality": 0.9}
+        assert result.feedback == "ok"
+
+
 class TestMDGateDispatchGuard:
     """`.md` gate without a backend must raise loudly, not silently 0."""
 
@@ -756,6 +802,7 @@ class TestRetryWithFeedback:
             "feedback": "all good",
             "pass_criteria_met": ["a", "b"],
             "pass_criteria_unmet": [],
+            "scores": {},
         }
 
     @pytest.mark.asyncio
