@@ -1,0 +1,132 @@
+name: "Absurd Academic Paper"
+version: "0.1.0"
+
+phases:
+  - id: seed_topic
+    name: "Pick Absurd Research Domain"
+    execution:
+      type: command
+      command: python3
+      args: ["examples/absurd-paper/scripts/pick_topic.py"]
+
+  - id: abstract
+    name: "Write Abstract"
+    prompt_file: "examples/absurd-paper/prompts/abstract.md"
+    depends_on: [seed_topic]
+    quality_gate:
+      validator: "examples/absurd-paper/gates/abstract_multi_dim.md"
+      blocking: false
+      max_retries: 1
+      dimensions:
+        - {field: rigor,     min: 0.7}
+        - {field: humor,     min: 0.6}
+        - {field: buzzwords, min: 0.5}
+
+  - id: outline
+    name: "Section Outline"
+    prompt_file: "examples/absurd-paper/prompts/outline.md"
+    depends_on: [abstract]
+    quality_gate:
+      validator: "examples/absurd-paper/gates/outline_json.py"
+      threshold: 1.0
+      blocking: true
+
+  - id: intro
+    name: "Introduction"
+    prompt_file: "examples/absurd-paper/prompts/intro.md"
+    depends_on: [outline]
+    quality_gate:
+      validator: "examples/absurd-paper/gates/section_quality.md"
+      threshold: 0.7
+      blocking: false
+
+  - id: methods
+    name: "Methods"
+    prompt_file: "examples/absurd-paper/prompts/methods.md"
+    depends_on: [outline]
+    quality_gate:
+      validator: "examples/absurd-paper/gates/section_quality.md"
+      threshold: 0.7
+      blocking: false
+
+  - id: results
+    name: "Results"
+    prompt_file: "examples/absurd-paper/prompts/results.md"
+    depends_on: [outline]
+    quality_gate:
+      validator: "examples/absurd-paper/gates/section_quality.md"
+      threshold: 0.7
+      blocking: false
+
+  - id: discussion
+    name: "Discussion"
+    prompt_file: "examples/absurd-paper/prompts/discussion.md"
+    depends_on: [outline]
+    quality_gate:
+      validator: "examples/absurd-paper/gates/section_quality.md"
+      threshold: 0.7
+      blocking: false
+
+  - id: reconcile
+    name: "Assemble Paper + Bibliography"
+    model: "opus"
+    prompt_file: "examples/absurd-paper/prompts/reconcile.md"
+    depends_on: [abstract, intro, methods, results, discussion]
+    timeout: 300.0
+    output_contract:
+      base_directory: "paper"
+      required_files: ["paper.md", "bibliography.md"]
+
+  - id: word_count
+    name: "Word-Count Statistics"
+    execution:
+      type: command
+      command: python3
+      args: ["examples/absurd-paper/scripts/word_count.py"]
+    depends_on: [reconcile]
+
+  - id: integrity_check
+    name: "Paper Integrity Gate"
+    execution:
+      type: gate_only
+    depends_on: [word_count]
+    quality_gate:
+      validator: "examples/absurd-paper/gates/integrity_check.py"
+      threshold: 1.0
+      blocking: true
+
+  - id: reviewer_pool
+    name: "Reviewer Pool Manifest"
+    prompt_file: "examples/absurd-paper/prompts/reviewer_pool.md"
+    depends_on: [integrity_check]
+    dynamic_subphases:
+      enabled: true
+      template:
+        prompt_file: "examples/absurd-paper/prompts/reviewer_review.md"
+        quality_gate:
+          validator: "examples/absurd-paper/gates/review_quality.py"
+          threshold: 1.0
+          blocking: false
+      final_phases:
+        - id: publish_verdict
+          name: "Editorial Publication Verdict"
+          prompt_file: "examples/absurd-paper/prompts/publish_verdict.md"
+          quality_gate:
+            validator: "examples/absurd-paper/gates/publish_verdict.md"
+            blocking: true
+            dimensions:
+              - {field: tone,      min: 0.7}
+              - {field: coherence, min: 0.6}
+
+settings:
+  default_model: "sonnet"
+  executor: "acp"
+  preamble_file: "examples/absurd-paper/preamble.md"
+  output_directory: "paper"
+  max_retries: 2
+  default_timeout: 180.0
+  retry_backoff: [5.0, 15.0]
+  max_parallel_jobs: 2
+  per_model_limits:
+    opus: 1
+    sonnet: 3

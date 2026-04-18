@@ -1,5 +1,9 @@
 # Wishlist
 
+- Documentation!
+    - README with project overview, usage, and functionality
+    - TECHNICAL.md with layout/breakdown of implementation
+
 ## Simplification candidates (surfaced by 2026-04-17 refactor-done review)
 
 - **Unify gate-eval via outcome-as-routing-signal** — today `compile/nodes.py::evaluate_gate_and_outcome` (regular phases, full retry routing) and the inline gate block in `compile/dynamic.py::_make_subphase_node` (L91-123, record-only) are parallel implementations of "score → classify → update." Elegant fix: make the gate evaluator pure-shared and emit a `GateOutcome` enum (`pass | retry | fail_blocking | warn_continue | record_only | escalate`). Each node type owns a **router** that interprets the outcome against what's semantically valid for its position:
@@ -7,8 +11,8 @@
     - Subphase router (fan-out): every outcome → continue (record score; retry routing is meaningless inside a `Send`-fanned leaf)
     - Synthesis router (future, ties to multi-tier retry): `{pass → continue, retry → self, escalate → parent fan-out, super_escalate → upstream}`
     - Gate-only phase router: `{pass → continue, fail_blocking → END, warn_continue → continue}` (no execution → no retry semantics)
-  - Drops ~33 LOC of duplicated `evaluate_gate` → `asyncio.wait_for` → `gate_feedback` update in `dynamic.py`. Cleans up WISHLIST item "Subphase quality gates with retries" by making it a router change, not a logic rewrite.
-  - Also cleans up the current `outcome: str` string literal convention in `classify_gate_outcome` (nodes.py:159-176) — a proper enum catches typos at type-check time.
+    - Drops ~33 LOC of duplicated `evaluate_gate` → `asyncio.wait_for` → `gate_feedback` update in `dynamic.py`. Cleans up WISHLIST item "Subphase quality gates with retries" by making it a router change, not a logic rewrite.
+    - Also cleans up the current `outcome: str` string literal convention in `classify_gate_outcome` (nodes.py:159-176) — a proper enum catches typos at type-check time.
 
 - **Collapse `runtime/executor/backends/` → `runtime/backends/`** — 4-level nesting (`runtime/executor/backends/acp.py`) for 4 small files. Semantic loss: current nesting signals that only `PromptExecutor` uses backends. If we land the anthropic/openai backends (below), the signal still holds but less strongly — multiple executor types might route through one backends/ module. Low value, low risk; defer until a second executor family justifies the flattening.
 
@@ -19,11 +23,11 @@
 ## Test doctrine cleanup
 
 - **Resolve MemoryBackend / ErrorBackend / SleepyBackend / TrackingBackend policy conflict** — `tests/unit/runtime/test_prompt.py` has `MemoryBackend` + `ErrorBackend` used by ~14 orchestration tests; `tests/unit/runtime/test_foreman.py::TestPerModelBackpressure` has `SleepyBackend` + `TrackingBackend`. All four are hand-written Protocol doubles that strict reading of `feedback_no_fake_backends.md` forbids. They instrument `PromptExecutor` / `ForemanExecutor` orchestration (template, preamble, timeout, token threading; per-model concurrency caps) — NOT Claude behavior — so the strict interpretation may be wrong.
-  - Three options (detailed at `/home/christopher/.claude/plans/memory-backend-policy.md`):
-      1. Extend `StubBackend` with `record=True` to produce one sanctioned recording path; migrate all doubles to it.
-      2. Amend the policy memo to permit orchestration-testing doubles, making the existing code compliant.
-      3. Move ~14 tests to `tests/acp/` and accept weaker assertions against real Claude.
-  - **Recommended: (1) + (2) together** — one sanctioned recording path, policy clarifies the distinction between Claude-behavior simulation (forbidden) and orchestration instrumentation (permitted, via `StubBackend(record=True)` only).
+    - Three options (detailed at `/home/christopher/.claude/plans/memory-backend-policy.md`):
+        1. Extend `StubBackend` with `record=True` to produce one sanctioned recording path; migrate all doubles to it.
+        2. Amend the policy memo to permit orchestration-testing doubles, making the existing code compliant.
+        3. Move ~14 tests to `tests/acp/` and accept weaker assertions against real Claude.
+    - **Recommended: (1) + (2) together** — one sanctioned recording path, policy clarifies the distinction between Claude-behavior simulation (forbidden) and orchestration instrumentation (permitted, via `StubBackend(record=True)` only).
 
 ## Top priority after simplification refactor
 
@@ -44,7 +48,7 @@
     - CLI: `abe-froman worktree list` — table of (phase_id, created, last_used, size, branch)
     - CLI: `abe-froman worktree prune [--older-than 7d] [--phase <id>] [--dry-run]` — `git worktree remove` + directory delete, with safety checks for uncommitted changes
     - Optional auto-GC: `settings.cleanup_worktrees_on_success: bool` — prune at `workflow_end` only when the final state is all-completed (preserve on partial failure so users can inspect)
-    - Must preserve the across-retries reuse that foreman relies on (keys trees by `phase_id`); GC runs against *completed* workflow threads only
+    - Must preserve the across-retries reuse that foreman relies on (keys trees by `phase_id`); GC runs against _completed_ workflow threads only
 
 ## Gate-evaluation extensibility (after structured-feedback MVP lands)
 
