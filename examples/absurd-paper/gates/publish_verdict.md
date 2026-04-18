@@ -12,10 +12,10 @@ You are the senior gatekeeper for publication verdicts at the *Journal of Absurd
 
 ## Your response
 
-Return ONLY this JSON — no prose, no code fences:
+Return ONLY this JSON — no prose, no code fences, no markdown:
 
 ```
-{"scores": {"tone": 0.0-1.0, "coherence": 0.0-1.0}, "feedback": "<one paragraph>", "pass_criteria_met": ["..."], "pass_criteria_unmet": ["..."]}
+{"tone": 0.0-1.0, "coherence": 0.0-1.0, "feedback": "<one paragraph>", "pass_criteria_met": ["..."], "pass_criteria_unmet": ["..."]}
 ```
 
-This gate is **blocking** and terminal — if it fails after retries, the workflow reports failure.
+Each dimension MUST be a top-level numeric field (not nested inside `"scores"`). This gate is **blocking** and terminal — if it fails after retries, the workflow reports failure.

@@ -16,10 +16,10 @@ You are a strict quality gate for a satirical-academic abstract. Score the abstr
 
 ## Your response
 
-Return ONLY this JSON — no prose, no code fences:
+Return ONLY this JSON — no prose, no code fences, no markdown:
 
 ```
-{"scores": {"rigor": 0.0-1.0, "humor": 0.0-1.0, "buzzwords": 0.0-1.0}, "feedback": "<one paragraph explaining the lowest dimension's score>", "pass_criteria_met": ["..."], "pass_criteria_unmet": ["..."]}
+{"rigor": 0.0-1.0, "humor": 0.0-1.0, "buzzwords": 0.0-1.0, "feedback": "<one paragraph explaining the lowest dimension's score>", "pass_criteria_met": ["..."], "pass_criteria_unmet": ["..."]}
 ```
 
-Be honest — this gate has `max_retries=1`, so a borderline score costs a retry and eats real tokens. Do not inflate.
+Each dimension MUST be a top-level numeric field (not nested inside `"scores"`). Be honest — this gate has `max_retries=1`, so a borderline score costs a retry and eats real tokens. Do not inflate.

@@ -42,6 +42,18 @@ except json.JSONDecodeError as e:
 met: list[str] = []
 unmet: list[str] = []
 
+abstract_field = data.get("abstract")
+if isinstance(abstract_field, str) and len(abstract_field) >= 100:
+    met.append(f"top-level `abstract` is a non-trivial string ({len(abstract_field)} chars)")
+else:
+    unmet.append("top-level `abstract` must be a prose string of ≥100 characters")
+
+buzzwords = data.get("buzzwords")
+if isinstance(buzzwords, list) and len(buzzwords) >= 3 and all(isinstance(b, str) for b in buzzwords):
+    met.append(f"top-level `buzzwords` has {len(buzzwords)} string entries")
+else:
+    unmet.append("top-level `buzzwords` must be a list of ≥3 strings")
+
 items = data.get("items")
 if isinstance(items, list):
     met.append("top-level `items` is a list")

@@ -2,13 +2,7 @@
 
 ## Context
 
-**Abstract:**
-
-```
-{{abstract}}
-```
-
-**Outline:**
+The outline phase emitted this JSON (contains the abstract, buzzwords, and section beats):
 
 ```
 {{outline}}
@@ -20,10 +14,10 @@ Write the **Results** section of this paper. 400-600 words. Markdown format begi
 
 Requirements:
 - Use the "results" beats from the outline as organizing guideposts.
-- Report 3-5 specific quantitative findings with invented but plausible-looking statistics (p-values, confidence intervals, effect sizes, correlation coefficients).
-- Reference at least one figure and one table that don't exist — describe them as if the reader can see them. Use captions like "Figure 2 illustrates…" / "Table 1 summarizes…".
+- Report 3-5 specific quantitative findings with invented-but-plausible statistics (p-values, CIs, effect sizes, correlations).
+- Reference at least one Figure and one Table that don't exist — describe them as if visible ("Figure 2 illustrates…", "Table 1 summarizes…").
 - Cite 2-3 fake prior studies for comparison ("consistent with the findings of…").
-- Incorporate at least 2 of the paper's buzzwords.
+- Incorporate at least 2 buzzwords from the outline.
 - Maintain the deadpan-absurd register throughout.
 
 Output ONLY the markdown section — no prose before or after, no code fences.

@@ -4,13 +4,7 @@
 
 All four body sections are complete. Your job: assemble the final paper and bibliography as two files.
 
-**Abstract:**
-
-```
-{{abstract}}
-```
-
-**Introduction:**
+**Introduction section (contains the `## Abstract` block at the top and the `## Introduction` below):**
 
 ```
 {{intro}}
@@ -49,19 +43,19 @@ Structure:
 **Corresponding author:** <one of the invented authors>@<fake-edu-domain>
 
 ## Abstract
-<the abstract JSON's "abstract" field, verbatim or lightly smoothed for prose>
+<Extract the abstract prose from the `## Abstract` block inside {{intro}}, verbatim.>
 
 ## Introduction
-<intro section verbatim, minus its existing `## Introduction` header since this one replaces it>
+<Extract the introduction text from {{intro}} — everything after the `## Introduction` heading. Do NOT duplicate the abstract.>
 
 ## Methods
-<methods section, same treatment>
+<{{methods}} content, drop its leading `## Methods` header since this one replaces it>
 
 ## Results
-<results section, same treatment>
+<{{results}} content, same treatment>
 
 ## Discussion
-<discussion section, same treatment>
+<{{discussion}} content, same treatment>
 
 ## Conclusion
 <write a new 100-150 word conclusion synthesizing the paper — this is the only net-new prose>

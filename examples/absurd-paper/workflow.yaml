@@ -31,47 +31,38 @@ phases:
       threshold: 1.0
       blocking: true
 
+  # Diamond body sections depend ONLY on outline (which bakes the abstract text
+  # into its JSON output). They are gate-free so their regular add_edges to
+  # reconcile create a proper join. Any gated phase whose router fans out to
+  # multiple dependents will fire those dependents in the same superstep, but
+  # each of THEM must have at most one gated predecessor — otherwise LangGraph's
+  # conditional edges trigger on first-emit and skip the join. See WISHLIST
+  # "gate-eval unification".
   - id: intro
     name: "Introduction"
     prompt_file: "examples/absurd-paper/prompts/intro.md"
     depends_on: [outline]
-    quality_gate:
-      validator: "examples/absurd-paper/gates/section_quality.md"
-      threshold: 0.7
-      blocking: false
 
   - id: methods
     name: "Methods"
     prompt_file: "examples/absurd-paper/prompts/methods.md"
     depends_on: [outline]
-    quality_gate:
-      validator: "examples/absurd-paper/gates/section_quality.md"
-      threshold: 0.7
-      blocking: false
 
   - id: results
     name: "Results"
     prompt_file: "examples/absurd-paper/prompts/results.md"
     depends_on: [outline]
-    quality_gate:
-      validator: "examples/absurd-paper/gates/section_quality.md"
-      threshold: 0.7
-      blocking: false
 
   - id: discussion
     name: "Discussion"
     prompt_file: "examples/absurd-paper/prompts/discussion.md"
     depends_on: [outline]
-    quality_gate:
-      validator: "examples/absurd-paper/gates/section_quality.md"
-      threshold: 0.7
-      blocking: false
 
   - id: reconcile
     name: "Assemble Paper + Bibliography"
     model: "opus"
     prompt_file: "examples/absurd-paper/prompts/reconcile.md"
-    depends_on: [abstract, intro, methods, results, discussion]
+    depends_on: [intro, methods, results, discussion]
     timeout: 300.0
     output_contract:
       base_directory: "paper"
