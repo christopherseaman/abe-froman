@@ -59,44 +59,21 @@ phases:
     depends_on: [outline]
 
   - id: reconcile
-    name: "Compose Paper (Text Only)"
+    name: "Compose Paper"
     prompt_file: "examples/absurd-paper/prompts/reconcile.md"
     depends_on: [intro, methods, results, discussion]
     timeout: 240.0
 
-  - id: persist
-    name: "Persist Paper to Disk"
-    prompt_file: "examples/absurd-paper/prompts/persist.md"
-    depends_on: [reconcile]
-    timeout: 180.0
-    output_contract:
-      base_directory: "paper"
-      required_files: ["paper.md"]
-
-  - id: word_count
-    name: "Word-Count Statistics"
-    execution:
-      type: command
-      command: python3
-      args: ["examples/absurd-paper/scripts/word_count.py"]
-    depends_on: [persist]
-
-  # Non-blocking so the reviewer chain proceeds even if the file-flow path
-  # hit ACP tool-use issues — reviewers read paper via {{reconcile}} text.
-  - id: integrity_check
-    name: "Paper Integrity Gate"
-    execution:
-      type: gate_only
-    depends_on: [word_count]
-    quality_gate:
-      validator: "examples/absurd-paper/gates/integrity_check.py"
-      threshold: 1.0
-      blocking: false
+  # File-flow phases (persist/word_count/integrity_check/output_contract)
+  # were removed after live-ACP runs showed the Write tool + ../../paper/
+  # path combination hangs persistently. Demo flows as text only now.
+  # See WISHLIST for the "templated command args" + "ACP tool-write
+  # reliability" items that would restore the filesystem demo.
 
   - id: reviewer_pool
     name: "Reviewer Pool Manifest"
     prompt_file: "examples/absurd-paper/prompts/reviewer_pool.md"
-    depends_on: [integrity_check]
+    depends_on: [reconcile]
     dynamic_subphases:
       enabled: true
       template:
