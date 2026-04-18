@@ -1,5 +1,30 @@
 # Wishlist
 
+## Simplification candidates (surfaced by 2026-04-17 refactor-done review)
+
+- **Unify gate-eval via outcome-as-routing-signal** — today `compile/nodes.py::evaluate_gate_and_outcome` (regular phases, full retry routing) and the inline gate block in `compile/dynamic.py::_make_subphase_node` (L91-123, record-only) are parallel implementations of "score → classify → update." Elegant fix: make the gate evaluator pure-shared and emit a `GateOutcome` enum (`pass | retry | fail_blocking | warn_continue | record_only | escalate`). Each node type owns a **router** that interprets the outcome against what's semantically valid for its position:
+    - Regular-phase router: `{pass → continue, retry → self-loop, fail_blocking → END, warn_continue → continue}`
+    - Subphase router (fan-out): every outcome → continue (record score; retry routing is meaningless inside a `Send`-fanned leaf)
+    - Synthesis router (future, ties to multi-tier retry): `{pass → continue, retry → self, escalate → parent fan-out, super_escalate → upstream}`
+    - Gate-only phase router: `{pass → continue, fail_blocking → END, warn_continue → continue}` (no execution → no retry semantics)
+  - Drops ~33 LOC of duplicated `evaluate_gate` → `asyncio.wait_for` → `gate_feedback` update in `dynamic.py`. Cleans up WISHLIST item "Subphase quality gates with retries" by making it a router change, not a logic rewrite.
+  - Also cleans up the current `outcome: str` string literal convention in `classify_gate_outcome` (nodes.py:159-176) — a proper enum catches typos at type-check time.
+
+- **Collapse `runtime/executor/backends/` → `runtime/backends/`** — 4-level nesting (`runtime/executor/backends/acp.py`) for 4 small files. Semantic loss: current nesting signals that only `PromptExecutor` uses backends. If we land the anthropic/openai backends (below), the signal still holds but less strongly — multiple executor types might route through one backends/ module. Low value, low risk; defer until a second executor family justifies the flattening.
+
+- **Fold `compile/dynamic.py` into `compile/nodes.py`** — 182 LOC would bring `nodes.py` to ~530 LOC. The split is defensive today: `_make_subphase_node` has legitimately divergent semantics (no dep check, no output contract, no retry routing). **Worth revisiting after** the gate-eval unification above — if the gate block is gone and the final remaining divergence is "Send-triggered vs. normal-invocation," the split stops earning its keep.
+
+- **Move `_detect_cycles` + `_find_terminal_phases` → `schema/models.py`** — topology validation belongs with the config model. Blockers: `schema/` is currently langgraph-free Pydantic-only; moving these functions in would require no imports from `langgraph`, which they already don't have. Clean move. Low priority — they're stable and small.
+
+## Test doctrine cleanup
+
+- **Resolve MemoryBackend / ErrorBackend / SleepyBackend / TrackingBackend policy conflict** — `tests/unit/runtime/test_prompt.py` has `MemoryBackend` + `ErrorBackend` used by ~14 orchestration tests; `tests/unit/runtime/test_foreman.py::TestPerModelBackpressure` has `SleepyBackend` + `TrackingBackend`. All four are hand-written Protocol doubles that strict reading of `feedback_no_fake_backends.md` forbids. They instrument `PromptExecutor` / `ForemanExecutor` orchestration (template, preamble, timeout, token threading; per-model concurrency caps) — NOT Claude behavior — so the strict interpretation may be wrong.
+  - Three options (detailed at `/home/christopher/.claude/plans/memory-backend-policy.md`):
+      1. Extend `StubBackend` with `record=True` to produce one sanctioned recording path; migrate all doubles to it.
+      2. Amend the policy memo to permit orchestration-testing doubles, making the existing code compliant.
+      3. Move ~14 tests to `tests/acp/` and accept weaker assertions against real Claude.
+  - **Recommended: (1) + (2) together** — one sanctioned recording path, policy clarifies the distinction between Claude-behavior simulation (forbidden) and orchestration instrumentation (permitted, via `StubBackend(record=True)` only).
+
 ## Top priority after simplification refactor
 
 - **ACP test flakiness**
