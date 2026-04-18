@@ -12,35 +12,33 @@ import re
 import sys
 from pathlib import Path
 
-paper = Path("../../paper/paper.md")
-biblio = Path("../../paper/bibliography.md")
+# Gate scripts run with cwd=state.workdir (per runtime/gates.py:129),
+# so paths here are relative to the base workdir, not the phase worktree.
+paper = Path("paper/paper.md")
 
 met: list[str] = []
 unmet: list[str] = []
 
 if paper.exists():
     met.append("paper.md exists")
-    plain = re.sub(r"^[#\-\*\s]+", "", paper.read_text(), flags=re.MULTILINE)
+    text = paper.read_text()
+    plain = re.sub(r"^[#\-\*\s]+", "", text, flags=re.MULTILINE)
     words = len(plain.split())
     if words >= 1000:
         met.append(f"paper.md has {words} words (≥1000)")
     else:
         unmet.append(f"paper.md has only {words} words (<1000)")
-else:
-    unmet.append("paper.md does not exist")
 
-if biblio.exists():
-    met.append("bibliography.md exists")
-    lines = [
-        l for l in biblio.read_text().splitlines()
+    refs = [
+        l for l in text.splitlines()
         if re.match(r"^\s*(\d+\.|-|\*)\s+\S", l)
     ]
-    if len(lines) >= 5:
-        met.append(f"bibliography has {len(lines)} citation lines (≥5)")
+    if len(refs) >= 5:
+        met.append(f"paper has ≥5 bulleted/numbered reference lines")
     else:
-        unmet.append(f"bibliography has only {len(lines)} citation lines (<5)")
+        unmet.append(f"paper has only {len(refs)} reference lines (<5)")
 else:
-    unmet.append("bibliography.md does not exist")
+    unmet.append("paper.md does not exist")
 
 # Drain stdin so the subprocess contract is honored (gate_only phase output is empty).
 sys.stdin.read()
