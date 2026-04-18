@@ -89,6 +89,7 @@ class ACPBackend:
         self._ctx_manager: Any = None
         self._initialized = False
         self._init_lock = asyncio.Lock()
+        self._send_lock = asyncio.Lock()
 
     async def _ensure_initialized(self, workdir: str) -> None:
         if self._initialized:
@@ -110,26 +111,28 @@ class ACPBackend:
         timeout: float | None = None,
     ) -> ExecutionResult:
         await self._ensure_initialized(workdir)
-        self._callbacks.reset()
 
-        try:
-            coro = self._conn.prompt(
-                session_id=self._session_id,
-                prompt=[text_block(prompt)],
+        async with self._send_lock:
+            self._callbacks.reset()
+
+            try:
+                coro = self._conn.prompt(
+                    session_id=self._session_id,
+                    prompt=[text_block(prompt)],
+                )
+                if timeout is not None:
+                    await asyncio.wait_for(coro, timeout=timeout)
+                else:
+                    await coro
+            except Exception as e:
+                if _is_overload_error(e):
+                    raise OverloadError(str(e)) from e
+                raise
+
+            return ExecutionResult(
+                output=self._callbacks.text(),
+                tokens_used=self._callbacks.tokens_used(),
             )
-            if timeout is not None:
-                await asyncio.wait_for(coro, timeout=timeout)
-            else:
-                await coro
-        except Exception as e:
-            if _is_overload_error(e):
-                raise OverloadError(str(e)) from e
-            raise
-
-        return ExecutionResult(
-            output=self._callbacks.text(),
-            tokens_used=self._callbacks.tokens_used(),
-        )
 
     async def close(self) -> None:
         if self._ctx_manager is None:

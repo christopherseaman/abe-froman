@@ -93,6 +93,46 @@ class TestDynamicFanOut:
 
         assert "p::only" in result["completed_phases"]
 
+    @pytest.mark.asyncio
+    async def test_template_interpolation_in_subphases(self, tmp_path):
+        """Each subphase renders the template with its own manifest item.
+
+        Must wire StubBackend explicitly — without a prompt_backend the
+        DispatchExecutor returns a literal `[prompt-stub] {id}: {file}`
+        placeholder that never touches PromptExecutor, bypassing template
+        rendering entirely.
+
+        StubBackend echoes `prompt_length=N`. Items with different-length
+        IDs produce different rendered-prompt lengths — if `{{id}}` were
+        never substituted (literal `{{id}}` left in place), both subphases
+        would report the same length and this assertion would fail.
+        Indirect but sufficient evidence of interpolation.
+        """
+        from abe_froman.runtime.executor.backends.stub import StubBackend
+
+        template = "Process {{id}}"
+        (tmp_path / "template.md").write_text(template)
+
+        items = [{"id": "a"}, {"id": "longer-id"}]
+        config = make_config([dynamic_parent("parent", items)])
+        executor = DispatchExecutor(
+            workdir=str(tmp_path), prompt_backend=StubBackend(),
+        )
+        graph = build_workflow_graph(config, executor)
+        result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
+
+        expected_a = len("Process a")
+        expected_long = len("Process longer-id")
+        assert f"prompt_length={expected_a}" in result["subphase_outputs"]["parent::a"], (
+            f"expected rendered 'Process a' ({expected_a} chars); got "
+            f"{result['subphase_outputs']['parent::a']!r}"
+        )
+        assert f"prompt_length={expected_long}" in result["subphase_outputs"]["parent::longer-id"], (
+            f"expected rendered 'Process longer-id' ({expected_long} chars); got "
+            f"{result['subphase_outputs']['parent::longer-id']!r}"
+        )
+        assert expected_a != expected_long  # sanity: lengths actually differ
+
 
 # ---------------------------------------------------------------------------
 # Final phases

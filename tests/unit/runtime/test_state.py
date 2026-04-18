@@ -38,6 +38,7 @@ class TestMakeInitialState:
             "p1": {"input": 100, "output": 50},
             "p2": {"input": 200, "output": 75},
         }
+        assert merged is not left and merged is not right
 
     def test_mutable_default_isolation(self):
         """Mutating a returned list must not affect subsequent calls.

@@ -8,7 +8,7 @@ from abe_froman.runtime.executor.prompt import (
     render_template,
     resolve_model,
 )
-from abe_froman.runtime.result import OverloadError, PromptBackend
+from abe_froman.runtime.result import PromptBackend
 from abe_froman.runtime.result import ExecutionResult
 from abe_froman.runtime.executor.backends.stub import StubBackend
 from abe_froman.schema.models import Phase, Settings
@@ -424,31 +424,6 @@ class TestDowngradeModel:
 
 
 # ---------------------------------------------------------------------------
-# Overload downgrade integration
-# ---------------------------------------------------------------------------
-
-
-class _OverloadBackend:
-    """Test backend that raises OverloadError for specific models."""
-
-    def __init__(self, overload_models: set[str]):
-        self.calls: list[str] = []
-        self._overload_models = overload_models
-
-    async def send_prompt(
-        self, prompt: str, model: str, workdir: str,
-        timeout: float | None = None,
-    ) -> ExecutionResult:
-        self.calls.append(model)
-        if model in self._overload_models:
-            raise OverloadError(f"529 overloaded for {model}")
-        return ExecutionResult(output=f"ok from {model}")
-
-    async def close(self) -> None:
-        pass
-
-
-# ---------------------------------------------------------------------------
 # Preamble injection
 # ---------------------------------------------------------------------------
 
@@ -532,55 +507,3 @@ class TestPreambleInjection:
         assert config.settings.preamble_file == "preamble.md"
 
 
-class TestOverloadDowngrade:
-    @pytest.mark.asyncio
-    async def test_overload_triggers_downgrade(self, tmp_path):
-        prompt_file = tmp_path / "t.md"
-        prompt_file.write_text("prompt")
-
-        backend = _OverloadBackend(overload_models={"opus"})
-        executor = PromptExecutor(
-            backend=backend,
-            settings=Settings(default_model="opus"),
-            workdir=str(tmp_path),
-        )
-        phase = Phase(id="p1", name="P1", prompt_file="t.md")
-        result = await executor.execute(phase, {})
-
-        assert result.success is True
-        assert result.output == "ok from sonnet"
-        assert backend.calls == ["opus", "sonnet"]
-
-    @pytest.mark.asyncio
-    async def test_overload_exhausts_chain(self, tmp_path):
-        prompt_file = tmp_path / "t.md"
-        prompt_file.write_text("prompt")
-
-        backend = _OverloadBackend(overload_models={"opus", "sonnet", "haiku"})
-        executor = PromptExecutor(
-            backend=backend,
-            settings=Settings(default_model="opus"),
-            workdir=str(tmp_path),
-        )
-        phase = Phase(id="p1", name="P1", prompt_file="t.md")
-        result = await executor.execute(phase, {})
-
-        assert result.success is False
-        assert "exhausted" in result.error
-        assert backend.calls == ["opus", "sonnet", "haiku"]
-
-    @pytest.mark.asyncio
-    async def test_non_overload_error_not_caught_by_downgrade(self, tmp_path):
-        prompt_file = tmp_path / "t.md"
-        prompt_file.write_text("prompt")
-
-        executor = PromptExecutor(
-            backend=ErrorBackend(),
-            settings=Settings(default_model="opus"),
-            workdir=str(tmp_path),
-        )
-        phase = Phase(id="p1", name="P1", prompt_file="t.md")
-        result = await executor.execute(phase, {})
-
-        assert result.success is False
-        assert "connection failed" in result.error

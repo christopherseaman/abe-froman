@@ -414,3 +414,96 @@ class TestDimensionGateClassification:
         phase = _phase(quality_gate=gate)
         result = GateResult(score=0.0, scores={"x": 0.6})
         assert classify_gate_outcome(phase, result, 0, 3) == "pass"
+
+
+# ---------------------------------------------------------------------------
+# evaluate_gate_and_outcome — end-to-end gate+classifier+update integration
+# ---------------------------------------------------------------------------
+
+from abe_froman.compile.nodes import evaluate_gate_and_outcome
+from abe_froman.schema.models import Settings, WorkflowConfig
+
+
+def _config_with_phase(phase: Phase, **settings_kwargs) -> WorkflowConfig:
+    return WorkflowConfig(
+        name="T", version="1.0", phases=[phase],
+        settings=Settings(**settings_kwargs),
+    )
+
+
+def _write_validator(tmp_path, name: str, score: str) -> str:
+    """Write a trivial stdin-reading script validator that prints `score`."""
+    path = tmp_path / name
+    path.write_text(f"import sys\nsys.stdin.read()\nprint({score!r})\n")
+    return name
+
+
+class TestEvaluateGateAndOutcome:
+    @pytest.mark.asyncio
+    async def test_pass_path(self, tmp_path):
+        validator = _write_validator(tmp_path, "pass.py", "1.0")
+        phase = _phase(quality_gate=_gate(threshold=0.8))
+        phase.quality_gate.validator = validator
+        config = _config_with_phase(phase)
+        state = {
+            "workdir": str(tmp_path),
+            "retries": {},
+        }
+        update = await evaluate_gate_and_outcome(
+            phase, config, state, ExecutionResult(output="x"), timeout=None,
+        )
+        assert update["completed_phases"] == ["p1"]
+        assert update["gate_scores"] == {"p1": 1.0}
+
+    @pytest.mark.asyncio
+    async def test_retry_path_bumps_retries(self, tmp_path):
+        validator = _write_validator(tmp_path, "fail.py", "0.0")
+        phase = _phase(quality_gate=_gate(threshold=0.8))
+        phase.quality_gate.validator = validator
+        config = _config_with_phase(phase, max_retries=3)
+        state = {"workdir": str(tmp_path), "retries": {"p1": 1}}
+        update = await evaluate_gate_and_outcome(
+            phase, config, state, ExecutionResult(output="x"), timeout=None,
+        )
+        assert update["retries"] == {"p1": 2}
+        assert "completed_phases" not in update
+
+    @pytest.mark.asyncio
+    async def test_fail_blocking_path(self, tmp_path):
+        validator = _write_validator(tmp_path, "fail.py", "0.0")
+        phase = _phase(quality_gate=_gate(threshold=0.8, blocking=True))
+        phase.quality_gate.validator = validator
+        config = _config_with_phase(phase, max_retries=0)
+        state = {"workdir": str(tmp_path), "retries": {}}
+        update = await evaluate_gate_and_outcome(
+            phase, config, state, ExecutionResult(output="x"), timeout=None,
+        )
+        assert update["failed_phases"] == ["p1"]
+
+    @pytest.mark.asyncio
+    async def test_warn_continue_path(self, tmp_path):
+        validator = _write_validator(tmp_path, "fail.py", "0.0")
+        phase = _phase(quality_gate=_gate(threshold=0.8, blocking=False))
+        phase.quality_gate.validator = validator
+        config = _config_with_phase(phase, max_retries=0)
+        state = {"workdir": str(tmp_path), "retries": {}}
+        update = await evaluate_gate_and_outcome(
+            phase, config, state, ExecutionResult(output="x"), timeout=None,
+        )
+        assert update["completed_phases"] == ["p1"]
+        assert "non-blocking" in update["errors"][0]["error"]
+
+    @pytest.mark.asyncio
+    async def test_timeout_returns_failure_update(self, tmp_path):
+        """Slow validator + tight timeout → failure update with timeout message."""
+        slow = tmp_path / "slow.py"
+        slow.write_text("import time, sys\nsys.stdin.read()\ntime.sleep(10)\nprint('1.0')\n")
+        phase = _phase(quality_gate=_gate(threshold=0.8))
+        phase.quality_gate.validator = "slow.py"
+        config = _config_with_phase(phase)
+        state = {"workdir": str(tmp_path), "retries": {}}
+        update = await evaluate_gate_and_outcome(
+            phase, config, state, ExecutionResult(output="x"), timeout=0.1,
+        )
+        assert update["failed_phases"] == ["p1"]
+        assert "timed out" in update["errors"][0]["error"]

@@ -59,6 +59,8 @@ class TestLinearExecution:
         graph = build_workflow_graph(config, executor)
         result = await graph.ainvoke(make_initial_state())
         assert result["completed_phases"] == ["a", "b"]
+        assert result["phase_outputs"]["a"] == "a-out"
+        assert result["phase_outputs"]["b"] == "b-out"
 
     @pytest.mark.asyncio
     async def test_three_phase_chain(self):

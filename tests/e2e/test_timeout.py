@@ -218,8 +218,11 @@ class TestSubphaseTimeout:
         )
         executor = SelectiveSlowExecutor(slow_delay=5.0)
         graph = build_workflow_graph(config, executor)
+        t0 = time.monotonic()
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
+        elapsed = time.monotonic() - t0
 
         subphase_id = "parent::item1"
         assert subphase_id in result["failed_phases"]
         assert any("timed out" in e["error"] for e in result["errors"])
+        assert elapsed < 1.5, f"subphase timeout should fire at 0.3s, not wait {elapsed:.1f}s"

@@ -369,3 +369,36 @@ class TestBackendPassthrough:
             assert foreman.get_backend() is backend
         finally:
             await foreman.close()
+
+
+class TestWorktreeCreationFailure:
+    @pytest.mark.asyncio
+    async def test_non_git_workdir_raises_runtime_error(self, tmp_path):
+        """base_workdir is not a git repo → `git worktree add` fails; foreman
+        surfaces the error loudly rather than silently degrading."""
+        # NOT calling _init_git_repo — tmp_path is a plain directory.
+        inner = DispatchExecutor(workdir=str(tmp_path))
+        foreman = ForemanExecutor(inner=inner, base_workdir=str(tmp_path))
+        try:
+            with pytest.raises(RuntimeError) as excinfo:
+                await foreman.execute(_cmd_phase("alpha"), {})
+            msg = str(excinfo.value)
+            assert "git worktree add" in msg
+            assert "alpha" in msg
+        finally:
+            await foreman.close()
+
+    @pytest.mark.asyncio
+    async def test_bad_base_workdir_raises_runtime_error(self, tmp_path):
+        """base_workdir doesn't exist at all → same loud failure."""
+        missing = tmp_path / "does-not-exist"
+        inner = DispatchExecutor(workdir=str(tmp_path))
+        foreman = ForemanExecutor(inner=inner, base_workdir=str(missing))
+        try:
+            with pytest.raises(Exception) as excinfo:
+                await foreman.execute(_cmd_phase("beta"), {})
+            # Either FileNotFoundError from mkdir/spawn or RuntimeError from
+            # the git return-code path — both are acceptable loud failures.
+            assert "beta" in str(excinfo.value) or not str(excinfo.value).startswith("foreman:")
+        finally:
+            await foreman.close()
