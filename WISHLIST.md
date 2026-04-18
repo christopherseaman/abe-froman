@@ -31,6 +31,7 @@
 
 ## Top priority after simplification refactor
 
+- Consider simpler dependency/ordering model. Possibly no more phases, just nodes and edges with next node selection informed by node completion criteria. QualityGate just becomes a node type and retry with context is the route chosen within a "failure context". Not sure this is actually simpler but having retry, escalated, and super-escalated is definitely NOT the correct path forward.
 - **ACP test flakiness**
     - `tests/acp/` tests fail or pass sporadically
     - Investigate: session lifecycle races, stdio buffering, stale `_session_id` on multi-prompt flows, Python 3.14 async-generator `aclose()` warning
