@@ -51,6 +51,68 @@
     - Optional auto-GC: `settings.cleanup_worktrees_on_success: bool` — prune at `workflow_end` only when the final state is all-completed (preserve on partial failure so users can inspect)
     - Must preserve the across-retries reuse that foreman relies on (keys trees by `phase_id`); GC runs against _completed_ workflow threads only
 
+## Observed during 2026-04-18 complex-demo build (examples/absurd-paper/)
+
+Building the 13-phase demo surfaced issues not previously cataloged. Kept here as a group so their cross-relationships stay visible.
+
+### ACP reliability
+
+- **Write tool with `../../`-traversing paths hangs indefinitely**
+    - Symptom: a minimal `persist` phase whose sole job was `Write(path="../../paper/paper.md", content="...")` timed out at 180s with no output, no error, no file written. Same behavior with `Bash` + heredoc.
+    - The worktree contains no partial file; the staging dir (`<workdir>/paper/`, pre-scaffolded) stays empty. Claude is not refusing — no text response is returned at all; the ACP session just stalls.
+    - Repro: any prompt phase asking Claude Code via ACP to Write or Bash-write to a path outside the session's apparent workdir (`cwd` = foreman worktree). Absolute paths may or may not behave differently — untested in this session.
+    - Investigate: whether claude-code-acp enforces a path-allowlist silently; whether there's a permission dialog waiting that our auto-approver doesn't recognize; whether `_send_lock` is hiding a hang in the dispatch path.
+    - Workflow-author workaround today: avoid Write/Bash to non-workdir paths; pass state via text outputs only. This blocks the documented "author-written merge phase" pattern in CLAUDE.md.
+
+- **`acp.exceptions.RequestError: Internal error` appears under concurrent LLM calls even with `_send_lock` in place**
+    - Stack trace fires from `acp/connection.py:237` via `acp/task/dispatcher.py:81`. Observed under `max_parallel_jobs=2` + `per_model_limits.sonnet=2` while the ACP backend serializes `send_prompt` via `_send_lock`.
+    - Phases still complete in these runs — the error is logged but recovery happens somewhere. Suggests the SDK is raising and the dispatcher is retrying or dropping.
+    - Needs root-cause diagnosis. Possibly related to background tasks per the supervisor traceback, or to in-flight session state while a new prompt arrives.
+
+### Orchestrator join semantics
+
+- **Multi-gated-predecessor join bug**
+    - Gated phases use `add_conditional_edges` — the router emits ALL dependents on completion. If phase Y depends on multiple gated phases [X, Z], Y fires on whichever of {X, Z} completes first, with the other's context empty (`{{z}}` renders as "" by Jinja default). Y proceeds, hangs/fails, and LangGraph doesn't re-fire it when Z eventually completes.
+    - Observed in `examples/absurd-paper/` before I restructured: reconcile depended on [abstract, intro, methods, results, discussion]; abstract (gated) completed first; reconcile ran with empty diamond inputs and timed out.
+    - Workflow-author workaround: keep at most ONE gated predecessor per multi-dep phase. Push shared upstream content INTO the one gated predecessor's output (e.g., outline's JSON now includes the abstract verbatim).
+    - Framework fix: either make gate routers emit via regular edges where possible, or have `_make_phase_node` detect missing deps and no-op / defer. Ties into the "Unify gate-eval via outcome-as-routing-signal" item above — the router design is the crux.
+
+- **Subphase context doesn't inherit parent's upstream deps**
+    - `compile/dynamic.py::_make_subphase_node` builds context as `{parent_phase.id: parent_output, **item_fields}` only. Upstream deps of the parent are not projected. So if the parent depended on `reconcile`, subphases cannot see `{{reconcile}}`.
+    - Forced the workaround of embedding the paper summary in each manifest item, duplicating content across items.
+    - Fix: project the parent's own `build_context` results into each subphase context, so subphases behave like direct children of the parent's deps. Small src change in `_make_subphase_node`.
+
+- **Final-phase output unreachable from downstream non-fan-out phases**
+    - `build_context` in `compile/nodes.py` only projects `{dep}`, `{dep}_structured`, `{dep}_worktree` for `phase.depends_on`. The `{dep}_subphases` / `{dep}_subphase_worktrees` synthetic keys only exist inside the final-phase context — they are not persisted to state.
+    - Consequence: a phase P that depends on a dynamic-subphase parent X fires AFTER X's last final_phase (via `exit_node` wiring) but has no access to any of X's fan-out results — only X's own text output (usually the manifest JSON).
+    - Current escape hatch: make P one of X's `final_phases` instead, so it gets the aggregated context. That forces downstream chaining to nest inside final_phases, which is not how most workflows want to compose.
+    - Fix: persist `{parent_id}_subphases` and `{parent_id}_subphase_worktrees` to state after fan-out completes. Then any downstream depending on the parent can use them in its template.
+
+### Data-flow gaps
+
+- **Command phase `args` are not Jinja-templated**
+    - `runtime/executor/command.py:25` constructs `cmd = [phase.execution.command, *phase.execution.args]` with no substitution. Command phases therefore cannot reach `{{dep}}` / `{{dep_worktree}}` in their arguments.
+    - Blocks the canonical "merge" pattern from CLAUDE.md (a `cp`/`git merge-file` command phase that consumes an upstream worktree path).
+    - Fix: render `command` + `args` through `render_template` with the same context prompt phases get. Minor change; may need to decide escaping for arguments with spaces/quotes.
+    - Separately: consider also templating `env` additions or piping dep outputs to stdin for command phases — would unlock simple Python-script "aggregator" phases.
+
+- **Gate validators can't see dep outputs; gate-only phases have no useful signal**
+    - Script gate stdin is the phase's own output (via `evaluate_gate_script(phase_output=...)`). For a `gate_only` phase the "output" is the hardcoded string `[gate-only] {id}` from `dispatch.py:48`. So a gate_only phase's validator can only match against that placeholder.
+    - This tanked the originally-planned `integrity_check` gate_only — it wanted to validate word count of `word_count`'s output, but couldn't see it.
+    - Fix: pass `state` (or at minimum `phase_outputs`) into the gate-eval context. Script gates could receive dep outputs as environment variables (like `PHASE_ID` today) or on stdin as JSON. LLM gates would need the same projection in their template context.
+
+### Observability
+
+- **Multi-dim gate `score` logged as 0.0 even when dimensions pass**
+    - `build_gate_outcome_update` writes `GateResult.score` into `gate_scores[phase_id]`. For dimension-based gates, `GateResult.score` is 0.0 by default (the parse only extracts dim values into `scores`). The JSONL `gate_evaluated` event and the CLI print both show 0.0 for passing multi-dim gates, which looks like a failure.
+    - Real dim scores live in `gate_feedback[phase_id]["scores"]`, not surfaced in logs.
+    - Fix: when the gate has dimensions, either (a) log dim scores alongside `score`, or (b) compute a synthetic summary score (`min(scores.values())` or weighted avg) for the top-level display.
+
+- **LLM gates inherit PromptBackend flakiness with misleading 0.0 fallback**
+    - `runtime/gates.py::evaluate_gate_llm` returns `GateResult(score=0.0, feedback="gate backend error: ...")` when the backend call fails. The backend error rolls up as a gate failure (score=0.0) rather than a phase error. On a bad ACP turn, a phase with a passing output can be retried or failed purely due to gate-dispatch flake.
+    - Observed in `abstract` phase across runs — same content, different LLM gate outputs (0.0 vs 0.92 dim scores) depending on whether the ACP call to the gate model returned parseable JSON.
+    - Fix: distinguish between "gate eval failed" (infrastructure) and "gate scored 0.0" (content judgment). A failed gate eval should retry the GATE call, not fail the phase. Possibly: separate retry budgets for gate-eval-infra failures vs. gate-scored-low.
+
 ## Gate-evaluation extensibility (after structured-feedback MVP lands)
 
 - **Customizable gate return schemas**
