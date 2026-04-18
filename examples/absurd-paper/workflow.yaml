@@ -60,10 +60,9 @@ phases:
 
   - id: reconcile
     name: "Assemble Paper + Bibliography"
-    model: "opus"
     prompt_file: "examples/absurd-paper/prompts/reconcile.md"
     depends_on: [intro, methods, results, discussion]
-    timeout: 300.0
+    timeout: 600.0
     output_contract:
       base_directory: "paper"
       required_files: ["paper.md", "bibliography.md"]
@@ -102,6 +101,8 @@ phases:
         - id: publish_verdict
           name: "Editorial Publication Verdict"
           prompt_file: "examples/absurd-paper/prompts/publish_verdict.md"
+          # Editor-in-Chief deserves the top-tier model for tone.
+          model: "opus"
           quality_gate:
             validator: "examples/absurd-paper/gates/publish_verdict.md"
             blocking: true
@@ -119,5 +120,5 @@ settings:
   retry_backoff: [5.0, 15.0]
   max_parallel_jobs: 2
   per_model_limits:
+    sonnet: 2
     opus: 1
-    sonnet: 3
