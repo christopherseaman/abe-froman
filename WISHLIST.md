@@ -78,8 +78,8 @@ Building the 13-phase demo surfaced issues not previously cataloged. Kept here a
 
 - **Gate validators can't see dep outputs; gate-only phases have no useful signal**
     - Script gate stdin is the phase's own output (via `evaluate_gate_script(phase_output=...)`). For a `gate_only` phase the "output" is the hardcoded string `[gate-only] {id}` from `dispatch.py:48`. So a gate_only phase's validator can only match against that placeholder.
-    - This tanked the originally-planned `integrity_check` gate_only — it wanted to validate word count of `word_count`'s output, but couldn't see it.
-    - Fix: pass `state` (or at minimum `phase_outputs`) into the gate-eval context. Script gates could receive dep outputs as environment variables (like `PHASE_ID` today) or on stdin as JSON. LLM gates would need the same projection in their template context.
+    - **Current workaround (see `examples/absurd-paper/gates/submission_check.py`):** a gate_only phase that runs *after* a persistence phase can read disk via `$WORKDIR` (injected env var) and validate whatever's on disk there. Works when the thing you want to check has already been written to `<workdir>/<path>`. Doesn't work pre-persistence.
+    - Fix: pass `state` (or at minimum `phase_outputs`) into the gate-eval context. Script gates could receive dep outputs as environment variables (like `PHASE_ID` today) or on stdin as JSON. LLM gates would need the same projection in their template context. This unlocks gate_only checkpoints that don't require a round-trip to disk.
 
 ### Observability
 
@@ -90,16 +90,11 @@ Building the 13-phase demo surfaced issues not previously cataloged. Kept here a
     - Observed in `abstract` phase across runs — same content, different LLM gate outputs (0.0 vs 0.92 dim scores) depending on whether the ACP call to the gate model returned parseable JSON.
     - Fix: distinguish between "gate eval failed" (infrastructure) and "gate scored 0.0" (content judgment). A failed gate eval should retry the GATE call, not fail the phase. Possibly: separate retry budgets for gate-eval-infra failures vs. gate-scored-low.
 
-## Gate-evaluation extensibility (after structured-feedback MVP lands)
+## Gate-evaluation extensibility
 
-- **Customizable gate return schemas**
-    - Default MVP: `{score: float, feedback: str | None}` — single dimension with threshold check
-    - Extension: gate YAML declares the shape and acceptance predicate
-        - Independent dimensions: `{correctness: 0.8, style: 0.6}` with per-dimension thresholds
-        - Composite scores with weighting: `{overall: weighted_sum(dims, weights)}`
-        - No overall score: pure criteria-based pass/fail over named fields
-    - Predicate language: start with a list of `{field, min}` checks; consider a small expression form later
-    - State shape change: `gate_scores: dict[str, float]` generalizes to `gate_values: dict[str, dict]` once dimensions land
+Multi-dim scoring with per-field `min` thresholds landed with the multi-dimension gate schema commit (`908a82f`). Remaining extensions:
+
+- **Composite / weighted score expressions** — today dimensions are compared independently via per-field `min`. Next: support `{overall: weighted_sum(dims, weights)}` or a tiny expression language for cross-dim predicates (AND/OR, arithmetic). Low urgency — per-field mins cover the current demo needs.
 
 - **Multi-tier retry escalation for fan-out + synthesis** — **Infrastructure landed (Stage 3, 2026-04-17)**; only the DSL surface remains. Routes now accept any destination + params and can use `{field: "invocation", op: ">=", value: N}` clauses, so tiered escalation is just a longer route list (no new enum, no new retry-counter channel). Still needed: (1) expose an `evaluation:` YAML block that lets authors write custom routes directly; (2) let route destinations name ancestor nodes (requires the Stage 3b graph-node split to properly re-enter upstream phases). Trunk/merge branch for synthesis merges (`settings.trunk_ref: main`) remains unbuilt.
 
@@ -119,7 +114,7 @@ Building the 13-phase demo surfaced issues not previously cataloged. Kept here a
 ## Architectural moves
 
 - **Phases as proper langgraph subgraphs**
-    - Each `Phase` compiles to a compiled `StateGraph` used as a node in the parent, replacing the inline expansion in `engine/builder.py:568-755`
+    - Each `Phase` compiles to a compiled `StateGraph` used as a node in the parent, replacing the flat expansion in `compile/nodes.py`
     - Enables encapsulation, reusability, nested workflows, cleaner retry semantics, explicit parent/child state boundary
     - Dynamic subphases collapse to "spawn N instances of the subgraph"
     - Open questions: state projection vs. full sharing, reducer composition at boundary, how `{{dep}}` template substitution resolves across subgraph boundaries
@@ -136,18 +131,9 @@ Building the 13-phase demo surfaced issues not previously cataloged. Kept here a
 ## Correctness
 
 - **Subphase quality gates with retries**
-    - `_make_subphase_node` (`engine/builder.py:340-464`) records score but never retries
-    - Unify with `_make_gate_router` retry loop (`builder.py:281-302`)
-    - CLAUDE.md known limitation #3
-
-- **Parallel execution at same DAG level**
-    - Verify first — langgraph supersteps should already parallelize sibling phases for free
-    - If broken, check for unnecessary sync nodes in the builder or serialization in `runner.py` `astream`
-    - Lock in behavior with `tests/test_parallel.py`
-
-- **Prompt-based gate validators**
-    - Wire through `PromptExecutor` with a tight context budget to evaluate gate quality via Claude against a rubric
-    - Previously stubbed in `runtime/gates.py`; removed pending real implementation
+    - Subphase gates currently use the Stage 3 record-only route (`when: []` → continue). Retries aren't wired because `_make_subphase_node` doesn't yet emit the execution+evaluation node pair (that's Stage 3b).
+    - Unblocked by: splitting subphase compilation to match the top-level Execution + Evaluation pattern, at which point routes with `invocation` clauses give retries for free.
+    - CLAUDE.md known limitation #3.
 
 ## Features
 
@@ -167,7 +153,7 @@ Building the 13-phase demo surfaced issues not previously cataloged. Kept here a
     - Distinct from `QualityGate` with `blocking: false`, which only skips dependents _after_ execution
 
 - **Workflow cancellation**
-    - `asyncio.CancelledError` handling in `engine/runner.py`
+    - `asyncio.CancelledError` handling in `runtime/runner.py`
     - Propagate to executors, persist partial state, clean up ACP subprocesses
 
 - **`abe-froman status` / `dump-state`**
@@ -175,37 +161,6 @@ Building the 13-phase demo surfaced issues not previously cataloged. Kept here a
     - Works against state file or a langgraph checkpointer if adopted
 
 ## Refactoring
-
-- Relationship with LangChain
-    - **Separate the three layers explicitly**
-        - DSL layer (Pydantic schema, YAML, CLI) — _wraps_: users see `Phase`/`QualityGate`/`OutputContract`, never hear "StateGraph"
-        - Compilation layer (`build_*_subgraph`, node/router factories) — _extends_: direct langgraph calls, reads like a tutorial
-        - Runtime layer (executors, backends, gate validators) — _composes_: abe_froman concepts slot into langgraph nodes as peers, not replacements
-        - Every file should be answerable at a glance: "which layer am I in?"
-        - Current code fails this because `_make_phase_node` mixes DSL concepts (output contracts, retry policy) with direct `StateGraph.add_node` / `add_conditional_edges` collapse
-    - **Rules for the refactor**
-        - Never hide langgraph imports behind abe_froman shims (no `from abe_froman.graph import StateGraph`)
-        - Never subclass or decorate langgraph primitives (no `AbeFromanStateGraph`, no `@phase_node` wrapper around `add_node`)
-        - Keep Pydantic DSL types as the top-level surface — they must not import from `langgraph`
-        - Inherit langgraph features rather than reinvent them (checkpointers, interrupts, visualization, subgraphs)
-        - `Send` already leaks in `builder.py:508` — a partial wrapper is worse than an honest extension
-        - Stability contract is the YAML schema, not the Python API underneath
-    - **Tests a refactor PR must pass**
-        - YAML schema has zero langgraph terminology
-        - Compilation layer has zero abe_froman shim over langgraph
-        - Any abe_froman feature can be explained to a langgraph user in one sentence (e.g., "a quality gate is an `add_conditional_edges` with a score-based router")
-        - A new contributor who knows langgraph can read `build_phase_subgraph` and immediately recognize the primitives
-        - Swapping `SqliteSaver` for `PostgresSaver` requires zero DSL changes
-        - Adding a new langgraph feature (e.g. `interrupt()`) is a localized compilation-layer change
-
-- **Split `engine/builder.py` (755 lines)**
-    - `builder/phases.py` — phase node factory + gate router
-    - `builder/dynamic.py` — subphase template, dynamic router, final phase
-    - `builder/graph.py` — top-level `build_workflow_graph`
-
-- **Extract `build_phase_subgraph` helper**
-    - Factor single-phase compile out of the top-level builder
-    - Stepping stone to "phases as subgraphs"
 
 - **Unified `ExecutionResult` type**
     - Merge `PhaseResult` + `PromptBackendResult` (overlapping `output`, `structured_output`, `tokens_used`)
@@ -216,20 +171,17 @@ Building the 13-phase demo surfaced issues not previously cataloged. Kept here a
     - Document `_subphase_item` as an explicit transient channel
     - Split `PhaseState` (phase-visible) from `WorkflowState` (runner-level)
 
-- **Test reorganization**
-    - `tests/unit/` per-module, `tests/e2e/` joke-workflow-through-ACP, `tests/builder/` graph-shape assertions
-
 ## Execution engines
 
 - **Direct Anthropic API backend**
-    - `executor/backends/anthropic.py` using the `anthropic` SDK — no ACP process
+    - `runtime/executor/backends/anthropic.py` using the `anthropic` SDK — no ACP process
     - Removes ACP as a hard runtime dependency
-    - Map 429 / 529 / rate-limit to `OverloadError` (activates the dormant model-downgrade path in `executor/prompt.py:94-110`)
+    - Map 429 / 529 / rate-limit to `OverloadError` (activates the dormant model-downgrade path in `runtime/executor/prompt.py`)
     - Expose input/output token counts via `PromptBackendResult.tokens_used`
     - `settings.executor: "anthropic"`
 
 - **OpenAI-compatible backend**
-    - `executor/backends/openai.py` using the `openai` SDK with configurable `base_url`
+    - `runtime/executor/backends/openai.py` using the `openai` SDK with configurable `base_url`
     - Unlocks OpenAI, Azure OpenAI, Ollama, vLLM, llama.cpp, LM Studio, LiteLLM
     - Separate model-downgrade chain
     - `settings.executor: "openai"` + `settings.openai_base_url`
@@ -243,14 +195,6 @@ Building the 13-phase demo surfaced issues not previously cataloged. Kept here a
 
 ## Langgraph adoption wins
 
-- **Dry-run DAG visualization**
-    - `compiled.get_graph().draw_mermaid()` / `draw_ascii()` / `draw_mermaid_png()` are built-in
-    - Wire into `abe-froman graph` and `abe-froman run --dry-run`
-
-- **Checkpointer-based resume**
-    - Replace `.abe-froman-state.json` with `SqliteSaver` (or `PostgresSaver`)
-    - Unlocks thread-level resume, parallel-run isolation, and interrupts
-
 - **Interrupts / human-in-the-loop**
     - `interrupt()` + `Command(resume=...)` from langgraph
-    - Free once on a checkpointer; enables "pause for operator approval, resume"
+    - Free once on a checkpointer (which now exists); enables "pause for operator approval, resume"
