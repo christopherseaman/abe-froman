@@ -6,13 +6,7 @@
 
 ## Simplification candidates (surfaced by 2026-04-17 refactor-done review)
 
-- **Unify gate-eval via outcome-as-routing-signal** — today `compile/nodes.py::evaluate_gate_and_outcome` (regular phases, full retry routing) and the inline gate block in `compile/dynamic.py::_make_subphase_node` (L91-123, record-only) are parallel implementations of "score → classify → update." Elegant fix: make the gate evaluator pure-shared and emit a `GateOutcome` enum (`pass | retry | fail_blocking | warn_continue | record_only | escalate`). Each node type owns a **router** that interprets the outcome against what's semantically valid for its position:
-    - Regular-phase router: `{pass → continue, retry → self-loop, fail_blocking → END, warn_continue → continue}`
-    - Subphase router (fan-out): every outcome → continue (record score; retry routing is meaningless inside a `Send`-fanned leaf)
-    - Synthesis router (future, ties to multi-tier retry): `{pass → continue, retry → self, escalate → parent fan-out, super_escalate → upstream}`
-    - Gate-only phase router: `{pass → continue, fail_blocking → END, warn_continue → continue}` (no execution → no retry semantics)
-    - Drops ~33 LOC of duplicated `evaluate_gate` → `asyncio.wait_for` → `gate_feedback` update in `dynamic.py`. Cleans up WISHLIST item "Subphase quality gates with retries" by making it a router change, not a logic rewrite.
-    - Also cleans up the current `outcome: str` string literal convention in `classify_gate_outcome` (nodes.py:159-176) — a proper enum catches typos at type-check time.
+- ~~**Unify gate-eval via outcome-as-routing-signal**~~ **CLOSED (Stage 3, 2026-04-17)** — generalized further than the original enum proposal: routes are now **data**, not named outcomes. `compile/evaluation.py` introduces `Criterion {field, op, value}`, `Route {when, to, params}`, and `walk_routes` (first-match-wins). `gate_to_routes(QualityGate, max_retries)` compiles the DSL sugar into this data form; `classify_gate_outcome` walks routes instead of running if/elif. Outcome strings ("pass"/"retry"/etc.) are emergent route destinations, not a primitive enum — multi-tier retry falls out for free by adding invocation-clause routes. `state.evaluations: {node_id: [EvaluationRecord]}` records full history. 36 new unit tests in `tests/unit/compile/test_evaluation.py`. The subphase gate block in `dynamic.py` is left parallel for now (Stage 3b: actual two-LangGraph-node split).
 
 - **Collapse `runtime/executor/backends/` → `runtime/backends/`** — 4-level nesting (`runtime/executor/backends/acp.py`) for 4 small files. Semantic loss: current nesting signals that only `PromptExecutor` uses backends. If we land the anthropic/openai backends (below), the signal still holds but less strongly — multiple executor types might route through one backends/ module. Low value, low risk; defer until a second executor family justifies the flattening.
 
@@ -71,29 +65,15 @@ Building the 13-phase demo surfaced issues not previously cataloged. Kept here a
 
 ### Orchestrator join semantics
 
-- **Multi-gated-predecessor join bug**
-    - Gated phases use `add_conditional_edges` — the router emits ALL dependents on completion. If phase Y depends on multiple gated phases [X, Z], Y fires on whichever of {X, Z} completes first, with the other's context empty (`{{z}}` renders as "" by Jinja default). Y proceeds, hangs/fails, and LangGraph doesn't re-fire it when Z eventually completes.
-    - Observed in `examples/absurd-paper/` before I restructured: reconcile depended on [abstract, intro, methods, results, discussion]; abstract (gated) completed first; reconcile ran with empty diamond inputs and timed out.
-    - Workflow-author workaround: keep at most ONE gated predecessor per multi-dep phase. Push shared upstream content INTO the one gated predecessor's output (e.g., outline's JSON now includes the abstract verbatim).
-    - Framework fix: either make gate routers emit via regular edges where possible, or have `_make_phase_node` detect missing deps and no-op / defer. Ties into the "Unify gate-eval via outcome-as-routing-signal" item above — the router design is the crux.
+- ~~**Multi-gated-predecessor join bug**~~ **CLOSED (Stage 1, 2026-04-17)** — `_make_phase_node::node_fn` now returns `{}` when any dep is missing from `completed_phases`. LangGraph re-fires the node on each subsequent pred completion; missing-pred returns turn the node into a natural join barrier. `examples/absurd-paper/` runs cleanly with natural topology (commit `593d1c3`). Regression test: `tests/e2e/test_orchestrator.py::TestParallelExecution::test_multi_gated_predecessor_joins_correctly`.
 
-- **Subphase context doesn't inherit parent's upstream deps**
-    - `compile/dynamic.py::_make_subphase_node` builds context as `{parent_phase.id: parent_output, **item_fields}` only. Upstream deps of the parent are not projected. So if the parent depended on `reconcile`, subphases cannot see `{{reconcile}}`.
-    - Forced the workaround of embedding the paper summary in each manifest item, duplicating content across items.
-    - Fix: project the parent's own `build_context` results into each subphase context, so subphases behave like direct children of the parent's deps. Small src change in `_make_subphase_node`.
+- ~~**Subphase context doesn't inherit parent's upstream deps**~~ **CLOSED (Stage 2a, 2026-04-17)** — `_make_subphase_node` now calls `build_context(parent_phase, state)` before layering in item fields, so subphase templates see the full upstream chain. Regression test: `tests/e2e/test_dynamic.py::TestManifestFieldPropagation::test_subphase_context_inherits_parent_deps`.
 
-- **Final-phase output unreachable from downstream non-fan-out phases**
-    - `build_context` in `compile/nodes.py` only projects `{dep}`, `{dep}_structured`, `{dep}_worktree` for `phase.depends_on`. The `{dep}_subphases` / `{dep}_subphase_worktrees` synthetic keys only exist inside the final-phase context — they are not persisted to state.
-    - Consequence: a phase P that depends on a dynamic-subphase parent X fires AFTER X's last final_phase (via `exit_node` wiring) but has no access to any of X's fan-out results — only X's own text output (usually the manifest JSON).
-    - Current escape hatch: make P one of X's `final_phases` instead, so it gets the aggregated context. That forces downstream chaining to nest inside final_phases, which is not how most workflows want to compose.
-    - Fix: persist `{parent_id}_subphases` and `{parent_id}_subphase_worktrees` to state after fan-out completes. Then any downstream depending on the parent can use them in its template.
+- ~~**Final-phase output unreachable from downstream non-fan-out phases**~~ **CLOSED (Stage 2b, 2026-04-17)** — `build_context` now synthesizes `{dep}_subphases` and `{dep}_subphase_worktrees` directly from `state.subphase_outputs` / `state.phase_worktrees`. Any downstream (final or otherwise) depending on a dynamic parent sees the same aggregate. `_make_final_phase_node` collapsed from ~25 LOC to a thin alias. Regression test: `tests/e2e/test_dynamic.py::TestManifestFieldPropagation::test_downstream_sees_subphase_aggregate`.
 
 ### Data-flow gaps
 
-- **Command phase `args` are not Jinja-templated**
-    - `runtime/executor/command.py:25` constructs `cmd = [phase.execution.command, *phase.execution.args]` with no substitution. Command phases therefore cannot reach `{{dep}}` / `{{dep_worktree}}` in their arguments.
-    - Blocks the canonical "merge" pattern from CLAUDE.md (a `cp`/`git merge-file` command phase that consumes an upstream worktree path).
-    - Fix: render `command` + `args` through `render_template` with the same context prompt phases get. Minor change; may need to decide escaping for arguments with spaces/quotes.
+- ~~**Command phase `args` are not Jinja-templated**~~ **CLOSED (Stage 2c, 2026-04-17)** — `CommandExecutor.execute` now renders each arg through `render_template(arg, context)` before building `cmd`. Plain strings pass through. `command` itself is not templated (security: keeps binary choice static). Regression tests: `tests/unit/runtime/test_command_executor.py::TestCommandExecutor::test_args_are_jinja_rendered` and `test_args_without_templating_render_literally`.
     - Separately: consider also templating `env` additions or piping dep outputs to stdin for command phases — would unlock simple Python-script "aggregator" phases.
 
 - **Gate validators can't see dep outputs; gate-only phases have no useful signal**
@@ -103,10 +83,7 @@ Building the 13-phase demo surfaced issues not previously cataloged. Kept here a
 
 ### Observability
 
-- **Multi-dim gate `score` logged as 0.0 even when dimensions pass**
-    - `build_gate_outcome_update` writes `GateResult.score` into `gate_scores[phase_id]`. For dimension-based gates, `GateResult.score` is 0.0 by default (the parse only extracts dim values into `scores`). The JSONL `gate_evaluated` event and the CLI print both show 0.0 for passing multi-dim gates, which looks like a failure.
-    - Real dim scores live in `gate_feedback[phase_id]["scores"]`, not surfaced in logs.
-    - Fix: when the gate has dimensions, either (a) log dim scores alongside `score`, or (b) compute a synthetic summary score (`min(scores.values())` or weighted avg) for the top-level display.
+- ~~**Multi-dim gate `score` logged as 0.0 even when dimensions pass**~~ **CLOSED (Stage 3, 2026-04-17)** — `gate_evaluated` events now source from `state.evaluations` (real evaluation records) and carry a `scores` dict with per-dimension values alongside the top-level `score`. Regression test: `tests/unit/workflow/test_logging.py::TestLogSnapshot::test_detects_multidim_gate`.
 
 - **LLM gates inherit PromptBackend flakiness with misleading 0.0 fallback**
     - `runtime/gates.py::evaluate_gate_llm` returns `GateResult(score=0.0, feedback="gate backend error: ...")` when the backend call fails. The backend error rolls up as a gate failure (score=0.0) rather than a phase error. On a bad ACP turn, a phase with a passing output can be retried or failed purely due to gate-dispatch flake.
@@ -124,17 +101,7 @@ Building the 13-phase demo surfaced issues not previously cataloged. Kept here a
     - Predicate language: start with a list of `{field, min}` checks; consider a small expression form later
     - State shape change: `gate_scores: dict[str, float]` generalizes to `gate_values: dict[str, dict]` once dimensions land
 
-- **Multi-tier retry escalation for fan-out + synthesis**
-    - Retry tiers:
-        - **I** — synthesis phase retries on its own (existing behavior; local to the synthesis phase)
-        - **J (escalated)** — after `I` exhausted, re-run fan-out subphases with synthesis-gate feedback injected into `_retry_reason`; subphase worktrees are preserved and reused. Reset `I` counter on escalation.
-        - **K (super-escalated)** — after `J` exhausted, re-run further upstream (phase dependency chain); reset `J` counter.
-        - Exhausted: policy flag (hard fail vs. warn-continue vs. human-in-the-loop)
-    - Requires:
-        - Retry counter per tier in state (`retries_tier: dict[phase_id, dict[tier, int]]`)
-        - Gate outcome can signal tier-escalation (`outcome: "retry" | "escalate" | "super_escalate" | "fail"`)
-        - Worktree pool already retains per-phase trees across attempts — reuse is free
-    - Trunk/merge branch declared in YAML: `settings.trunk_ref: main` to define the base for worktrees and the target for synthesis merges
+- **Multi-tier retry escalation for fan-out + synthesis** — **Infrastructure landed (Stage 3, 2026-04-17)**; only the DSL surface remains. Routes now accept any destination + params and can use `{field: "invocation", op: ">=", value: N}` clauses, so tiered escalation is just a longer route list (no new enum, no new retry-counter channel). Still needed: (1) expose an `evaluation:` YAML block that lets authors write custom routes directly; (2) let route destinations name ancestor nodes (requires the Stage 3b graph-node split to properly re-enter upstream phases). Trunk/merge branch for synthesis merges (`settings.trunk_ref: main`) remains unbuilt.
 
 - **Synthesis as first-class concept**
     - Today: `final_phases` is the implicit synthesis site for dynamic subphases; regular phases chain worktrees via `{{dep_worktree}}` context
