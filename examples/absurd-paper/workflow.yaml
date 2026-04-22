@@ -81,10 +81,30 @@ phases:
       base_directory: "output"
       required_files: ["paper.md"]
 
+  # Deterministic PDF render via `uv run --script` + PEP 723 inline
+  # dependencies (markdown + weasyprint). No project-wide install — uv
+  # resolves deps on first invocation and caches them. Journal-ish CSS
+  # (2-column serif, small-caps section headers, page numbers).
+  - id: render_pdf
+    name: "Render Paper to PDF"
+    depends_on: [persist_paper]
+    execution:
+      type: command
+      command: uv
+      args:
+        - "run"
+        - "--script"
+        - "examples/absurd-paper/scripts/render_pdf.py"
+        - "../../output/paper.md"
+        - "../../output/paper.pdf"
+    output_contract:
+      base_directory: "output"
+      required_files: ["paper.pdf"]
+
   - id: reviewer_pool
     name: "Reviewer Pool Manifest"
     prompt_file: "examples/absurd-paper/prompts/reviewer_pool.md"
-    depends_on: [reconcile, persist_paper]
+    depends_on: [reconcile, persist_paper, render_pdf]
     dynamic_subphases:
       enabled: true
       template:

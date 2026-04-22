@@ -63,7 +63,7 @@ Structure:
 <{{discussion}} content, same treatment>
 
 ## Conclusion
-<100-150 word new conclusion synthesizing the paper — the only net-new prose>
+<100-150 word punchy conclusion — the only net-new prose. MUST land a single striking observation, aphorism, or provocation — a quotable line that crystallizes the paper. NOT a recap of what was already said. Think "the closing sentence of a memorable TED talk," not "this paper has shown that..." Start strong, end stronger.>
 
 ## References
 
