@@ -5,7 +5,9 @@
 **Authors:** Margaux D. Villeneuve¹, Soren K. Lindström², Adaeze N. Okafor-Whitfield³, and Jae-Hyun Pfeiffer¹
 
 ¹ Center for Entertainment-Access Ergonomics, Loughborough Metropolitan University
+
 ² Department of Digital Cognition, Uppsala Institute for Applied Behavioral Science
+
 ³ Human Factors Laboratory, McMaster-Waterloo Joint Programme in Cognitive Engineering
 
 **Corresponding author:** m.villeneuve@lboro-metro.ac.uk

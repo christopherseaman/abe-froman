@@ -21,41 +21,68 @@ import markdown as md
 from weasyprint import CSS, HTML
 
 CSS_STYLE = """
+/* arXiv-ish single-column preprint style. Computer Modern isn't shipped
+   by default, so fall back through Latin Modern / Nimbus Roman / Times. */
+
 @page {
-  size: A4;
-  margin: 22mm 18mm 22mm 18mm;
-  @bottom-center { content: counter(page); font: 9pt 'Serif'; color: #555; }
+  size: letter;
+  margin: 25mm 25mm 25mm 25mm;
+  @bottom-center { content: counter(page); font: 10pt 'Latin Modern Roman',
+                   'Nimbus Roman', 'Times New Roman', serif; color: #222; }
 }
 
-html { font-family: 'Times New Roman', 'DejaVu Serif', serif; font-size: 10.5pt;
-       line-height: 1.35; color: #111; }
+html { font-family: 'Latin Modern Roman', 'Nimbus Roman', 'Times New Roman',
+       'DejaVu Serif', serif; font-size: 11pt; line-height: 1.35; color: #111; }
+body { text-align: justify; hyphens: auto; counter-reset: secnum; }
 
-/* Title block is full-width; body columns kick in after. */
-h1:first-of-type { column-span: all; font-size: 16pt; font-weight: 700;
-                   text-align: center; margin: 0 0 6mm 0; line-height: 1.2; }
-h1:first-of-type + p { column-span: all; text-align: center; margin: 0 0 2mm 0; }
+/* --- Title block --- */
+h1 { font-size: 17pt; font-weight: 700; text-align: center;
+     margin: 0 0 6mm 0; line-height: 1.2; letter-spacing: 0.01em; }
+h1 + p { text-align: center; margin: 0 0 2mm 0; font-size: 11pt; }
 
-body { column-count: 2; column-gap: 8mm; column-rule: none;
-       text-align: justify; hyphens: auto; }
+/* --- Abstract (first h2 in document) --- */
+h2:first-of-type {
+  font-size: 11pt; font-weight: 700; text-align: center;
+  margin: 8mm 0 2mm 0; border: none;
+  counter-increment: secnum 0;
+}
+h2:first-of-type::before { content: ""; }
+h2:first-of-type + p {
+  margin: 0 12mm 6mm 12mm; font-size: 10pt;
+  text-align: justify; text-indent: 0;
+}
 
-h2 { font-variant: small-caps; font-size: 10.5pt; font-weight: 700;
-     margin: 4mm 0 1mm 0; letter-spacing: 0.04em; border-bottom: 0.5pt solid #333;
-     padding-bottom: 0.5mm; break-after: avoid; }
-h3 { font-size: 10.5pt; font-style: italic; font-weight: 600;
-     margin: 3mm 0 0.5mm 0; break-after: avoid; }
+/* --- References (last h2) — unnumbered --- */
+h2:last-of-type { counter-increment: secnum 0; }
+h2:last-of-type::before { content: ""; }
+h2:last-of-type + ul {
+  font-size: 9.5pt;
+  padding-left: 6mm;
+}
+h2:last-of-type + ul li {
+  text-indent: -4mm; padding-left: 4mm;
+  margin-bottom: 1mm;
+}
 
-p { margin: 0 0 2mm 0; text-indent: 3mm; }
-h2 + p, h3 + p { text-indent: 0; }
+/* --- Numbered body sections --- */
+h2 { counter-increment: secnum;
+     font-size: 12pt; font-weight: 700; text-align: left;
+     margin: 5mm 0 2mm 0; break-after: avoid; }
+h2::before { content: counter(secnum) "  "; }
 
-ul { margin: 1mm 0 2mm 4mm; padding: 0; font-size: 9.5pt; }
+h3 { font-size: 11pt; font-style: italic; font-weight: 600;
+     margin: 3mm 0 1mm 0; break-after: avoid; }
+
+p { margin: 0 0 2mm 0; text-indent: 5mm; }
+h1 + p, h2 + p, h3 + p, li > p:first-child { text-indent: 0; }
+
+ul { margin: 1mm 0 2mm 4mm; padding: 0; }
 li { margin-bottom: 0.8mm; }
 
 strong { font-weight: 700; }
 em { font-style: italic; }
-code { font-family: 'DejaVu Sans Mono', monospace; font-size: 9.5pt; }
-
-/* References should flow across both columns as a continuous list */
-h2:last-of-type + ul { font-size: 9pt; }
+code { font-family: 'Latin Modern Mono', 'DejaVu Sans Mono', monospace;
+       font-size: 10pt; }
 """
 
 

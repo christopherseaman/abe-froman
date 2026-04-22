@@ -43,7 +43,9 @@ Structure:
 ```
 # <Invent a catchy academic title>
 
-**Authors:** <Invent 2-4 fake authors with affiliations at implausible but real-sounding institutions>
+**Authors:** <Invent 2-4 fake authors with superscripted affiliation markers (¹ ² ³), comma-separated on a single line.>
+
+<Each affiliation on its OWN line, separated by a blank line (not soft-wrap) so Markdown renders them as distinct paragraphs. Format: `¹ <Department>, <Institution>`.>
 
 **Corresponding author:** <fake>@<fake-edu-domain>
 
