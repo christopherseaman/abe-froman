@@ -141,6 +141,14 @@ Building the 13-phase demo surfaced issues not previously cataloged. Kept here a
     - Make synthesis explicit: a `synthesis_phase:` block with `merges_from: [...]` listing subphase ids, blocking gate, pre-merge worktree
     - Enables: synthesis-gate blocking merge (if gate fails, changes never fold back); reset semantics for the escalation tiers above
 
+## Forward-looking — surfaced during 2026-04-18 architecture plan
+
+- **Implicit Join (QoL, after Evaluation-as-node refactor lands)** — when that refactor lands, JoinNode exists as an internal primitive emitted whenever a phase has >1 predecessor. Next QoL step: make it implicit for any node with multiple incoming edges, so authors never have to think about join semantics. JoinNode stays available as a primitive for power users; 99% of workflows get correct join behavior for free.
+
+- **Multi-step subphase sequences inside fan-out** — today `dynamic_subphases.template` is a single `prompt_file`; each fan-out item traverses exactly one execution node before gather. There's no way to say "for each item, run step A → evaluate → step B → gather." Natural fit for the EvaluationNode world (step-A's eval routes into step-B, then B routes into gather), but requires DSL surface: probably `template: [phase-A, phase-B, ...]` or a new `subgraph:` key. Closely related to the subgraph-primitive item below.
+
+- **Subgraph with defined entry/exit nodes as a first-class primitive** — related to multi-step subphase above, and to the existing "Phases as proper langgraph subgraphs" item. A subgraph declares its **entry** node (what upstream routes into) and **exit** node (what routes to downstream); the body can be any shape. Dynamic subphases become "fan out N calls into the subgraph's entry, gather at exit." Reusable subgraph libraries become a real concept. Requires: schema for declaring entry/exit, context projection rules across the boundary, and deciding whether subgraphs get their own checkpointer / state scope.
+
 ## Architectural moves
 
 - **Phases as proper langgraph subgraphs**
