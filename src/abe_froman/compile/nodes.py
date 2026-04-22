@@ -52,6 +52,18 @@ def check_dep_failed(phase: Phase, state: WorkflowState) -> dict | None:
     return None
 
 
+def all_deps_completed(phase: Phase, state: WorkflowState) -> bool:
+    """True iff every dep is in completed_phases.
+
+    Multi-predecessor phases whose preds are gated get triggered by each
+    pred's router independently (conditional edges). Returning {} from the
+    node body until all preds are done causes LangGraph to re-fire the
+    node on each subsequent pred-trigger — a natural join barrier.
+    """
+    completed = set(state.get("completed_phases", []))
+    return all(dep in completed for dep in phase.depends_on)
+
+
 def check_dry_run(phase: Phase, state: WorkflowState) -> dict | None:
     if not state.get("dry_run", False):
         return None
@@ -279,6 +291,10 @@ def _make_phase_node(
         for check in (check_dep_failed, check_dry_run):
             if (r := check(phase, state)) is not None:
                 return r
+        if phase.depends_on and not all_deps_completed(phase, state):
+            # A gated predecessor routed here before its siblings finished.
+            # Return no-op — subsequent pred completions re-fire this node.
+            return {}
         if executor is None:
             update: dict[str, Any] = {
                 "completed_phases": [phase.id],

@@ -103,6 +103,46 @@ class TestParallelExecution:
         assert result["phase_outputs"]["d"] == "join"
 
     @pytest.mark.asyncio
+    async def test_multi_gated_predecessor_joins_correctly(self, tmp_path):
+        """Regression for the multi-gated-predecessor join bug.
+
+        The bug: a gated phase X's router emits ALL its dependents via
+        conditional edges. If a dependent Y depends on BOTH X and some
+        other phase Z (where Z is deeper in a chain from a common
+        upstream), X's completion routes to Y in the same superstep that
+        Z starts running. Y then runs in the next superstep with only X
+        in its completed_phases — Z still pending.
+
+        Topology mirrors the absurd-paper bug that triggered this fix:
+            root
+              ├─→ chain_1 ─→ chain_2          (slow branch)
+              └─→ fast_gated (gate passes)     (fast gated branch)
+                                                           ↘
+            join depends_on [chain_2, fast_gated]          ←
+        """
+        from mock_executor import MockExecutor
+
+        pass_script = tmp_path / "pass.py"
+        pass_script.write_text("import sys\nsys.stdin.read()\nprint('1.0')\n")
+        gate = {"validator": str(pass_script), "threshold": 0.5}
+
+        mock = MockExecutor()
+        config = make_config([
+            cmd_phase("root"),
+            cmd_phase("chain_1", depends_on=["root"]),
+            cmd_phase("chain_2", depends_on=["chain_1"]),
+            cmd_phase("fast_gated", depends_on=["root"], quality_gate=gate),
+            cmd_phase("join_node", depends_on=["chain_2", "fast_gated"]),
+        ])
+        graph = build_workflow_graph(config, mock)
+        result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
+
+        assert "join_node" in result["completed_phases"]
+        ctx = mock.received_contexts["join_node"]
+        assert ctx.get("chain_2") == "[mock] chain_2 completed"
+        assert ctx.get("fast_gated") == "[mock] fast_gated completed"
+
+    @pytest.mark.asyncio
     async def test_independent_phases_both_complete(self):
         """Two phases with no dependencies both run."""
         config = make_config([
