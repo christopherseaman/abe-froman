@@ -19,8 +19,8 @@ phases:
     # string flows into {{_retry_reason}} for the retry attempt.
     quality_gate:
       validator: "examples/absurd-paper/gates/choose_topic_eval.md"
-      blocking: false
-      max_retries: 1
+      blocking: true
+      max_retries: 2
       dimensions:
         - {field: absurdity,           min: 0.7}
         - {field: specificity,         min: 0.7}
