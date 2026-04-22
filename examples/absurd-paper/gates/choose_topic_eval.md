@@ -18,19 +18,12 @@ Score each on a 0.0–1.0 scale:
 
 ## Output
 
-Return ONLY a JSON object with this exact shape (no prose, no code fence):
+Return ONLY this JSON — no prose, no code fences, no markdown:
 
 ```
-{
-  "score": <weighted average, 0.0-1.0>,
-  "scores": {
-    "absurdity": <0.0-1.0>,
-    "specificity": <0.0-1.0>,
-    "methodological_hook": <0.0-1.0>
-  },
-  "feedback": "<1-2 sentences — if any dim < 0.7, say concretely what to change>",
-  "pass_criteria_unmet": ["<short bullet per failing criterion, empty list if all pass>"]
-}
+{"absurdity": 0.0-1.0, "specificity": 0.0-1.0, "methodological_hook": 0.0-1.0, "feedback": "<1-2 sentences — if any dim is below its minimum, say concretely what to change>", "pass_criteria_met": ["..."], "pass_criteria_unmet": ["..."]}
 ```
 
-Compute `score` as `(absurdity + specificity + methodological_hook) / 3`.
+Each dimension MUST be a **top-level numeric field** (not nested inside `"scores"`). The orchestrator derives the overall gate score from the per-dimension minimums declared in the workflow; do NOT emit a `"score"` field.
+
+(Phase id: `{{phase_id}}`, attempt: `{{attempt}}`.)
