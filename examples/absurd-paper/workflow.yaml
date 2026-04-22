@@ -62,16 +62,29 @@ phases:
     depends_on: [abstract, intro, methods, results, discussion]
     timeout: 240.0
 
-  # File-flow phases (persist/word_count/integrity_check/output_contract)
-  # were removed after live-ACP runs showed the Write tool + ../../paper/
-  # path combination hangs persistently. Demo flows as text only now.
-  # See WISHLIST for the "templated command args" + "ACP tool-write
-  # reliability" items that would restore the filesystem demo.
+  # Persist reconcile's text output to `<workdir>/output/paper.md`. This uses
+  # Stage 2c's Jinja-templated command args to feed the upstream reconcile
+  # output through argv to a helper script — sidesteps the ACP Write tool
+  # path-traversal hang documented in WISHLIST. output_contract validates
+  # the file landed on disk.
+  - id: persist_paper
+    name: "Persist Paper to Disk"
+    depends_on: [reconcile]
+    execution:
+      type: command
+      command: python3
+      args:
+        - "examples/absurd-paper/scripts/persist_paper.py"
+        - "{{reconcile}}"
+        - "../../output/paper.md"
+    output_contract:
+      base_directory: "output"
+      required_files: ["paper.md"]
 
   - id: reviewer_pool
     name: "Reviewer Pool Manifest"
     prompt_file: "examples/absurd-paper/prompts/reviewer_pool.md"
-    depends_on: [reconcile]
+    depends_on: [reconcile, persist_paper]
     dynamic_subphases:
       enabled: true
       template:
