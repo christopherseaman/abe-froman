@@ -12,6 +12,17 @@ def _merge_dicts(left: dict, right: dict) -> dict:
     return merged
 
 
+def _merge_evaluations(
+    left: dict[str, list[dict[str, Any]]],
+    right: dict[str, list[dict[str, Any]]],
+) -> dict[str, list[dict[str, Any]]]:
+    """Append-per-key reducer for `evaluations` — history grows, never replaces."""
+    merged: dict[str, list[dict[str, Any]]] = {k: list(v) for k, v in left.items()}
+    for key, new_records in right.items():
+        merged.setdefault(key, []).extend(new_records)
+    return merged
+
+
 class WorkflowState(TypedDict):
     workflow_name: str
     completed_phases: Annotated[list[str], operator.add]
@@ -20,6 +31,7 @@ class WorkflowState(TypedDict):
     phase_structured_outputs: Annotated[dict[str, Any], _merge_dicts]
     gate_scores: Annotated[dict[str, float], _merge_dicts]
     gate_feedback: Annotated[dict[str, dict[str, Any]], _merge_dicts]
+    evaluations: Annotated[dict[str, list[dict[str, Any]]], _merge_evaluations]
     retries: Annotated[dict[str, int], _merge_dicts]
     subphase_outputs: Annotated[dict[str, Any], _merge_dicts]
     token_usage: Annotated[dict[str, dict[str, int]], _merge_dicts]
@@ -48,6 +60,7 @@ def make_initial_state(
         "phase_structured_outputs": {},
         "gate_scores": {},
         "gate_feedback": {},
+        "evaluations": {},
         "retries": {},
         "subphase_outputs": {},
         "token_usage": {},

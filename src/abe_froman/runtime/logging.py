@@ -54,11 +54,23 @@ class JsonlLogger:
                     break
             self.emit({"event": "phase_failed", "phase": phase, "error": error})
 
-        prev_gates = prev.get("gate_scores", {})
-        curr_gates = curr.get("gate_scores", {})
-        for phase, score in curr_gates.items():
-            if phase not in prev_gates or prev_gates[phase] != score:
-                self.emit({"event": "gate_evaluated", "phase": phase, "score": score})
+        prev_evals = prev.get("evaluations", {})
+        curr_evals = curr.get("evaluations", {})
+        for phase, records in curr_evals.items():
+            prev_count = len(prev_evals.get(phase, []))
+            for record in records[prev_count:]:
+                result = record.get("result", {})
+                event: dict[str, Any] = {
+                    "event": "gate_evaluated",
+                    "phase": phase,
+                    "invocation": record.get("invocation", 0),
+                    "score": result.get("score", 0.0),
+                }
+                # Multi-dim gates: emit per-dimension scores so viewers
+                # see the actual signal, not the 0.0 top-level placeholder.
+                if result.get("scores"):
+                    event["scores"] = result["scores"]
+                self.emit(event)
 
         prev_retries = prev.get("retries", {})
         curr_retries = curr.get("retries", {})

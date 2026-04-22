@@ -78,16 +78,43 @@ class TestLogSnapshot:
         assert events[0]["error"] == "exit code 1"
 
     def test_detects_gate(self):
+        """gate_evaluated sources from state.evaluations (real scores)."""
         buf = StringIO()
         logger = JsonlLogger(buf)
-        prev = {"completed_phases": [], "failed_phases": [], "gate_scores": {}, "retries": {}, "errors": []}
-        curr = {**prev, "gate_scores": {"research": 0.95}}
+        prev = {"completed_phases": [], "failed_phases": [], "evaluations": {}, "retries": {}, "errors": []}
+        curr = {
+            **prev,
+            "evaluations": {
+                "research": [{"invocation": 0, "result": {"score": 0.95}, "timestamp": "t"}]
+            },
+        }
         logger.log_snapshot(prev, curr)
         events = [json.loads(l) for l in buf.getvalue().strip().split("\n")]
         assert len(events) == 1
         assert events[0]["event"] == "gate_evaluated"
         assert events[0]["phase"] == "research"
         assert events[0]["score"] == 0.95
+        assert events[0]["invocation"] == 0
+
+    def test_detects_multidim_gate(self):
+        """Per-dimension scores flow through (closes multi-dim log bug)."""
+        buf = StringIO()
+        logger = JsonlLogger(buf)
+        prev = {"completed_phases": [], "failed_phases": [], "evaluations": {}, "retries": {}, "errors": []}
+        curr = {
+            **prev,
+            "evaluations": {
+                "p": [{
+                    "invocation": 0,
+                    "result": {"score": 0.0, "scores": {"rigor": 0.8, "humor": 0.5}},
+                    "timestamp": "t",
+                }]
+            },
+        }
+        logger.log_snapshot(prev, curr)
+        events = [json.loads(l) for l in buf.getvalue().strip().split("\n")]
+        assert events[0]["event"] == "gate_evaluated"
+        assert events[0]["scores"] == {"rigor": 0.8, "humor": 0.5}
 
     def test_detects_retry(self):
         buf = StringIO()

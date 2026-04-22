@@ -377,6 +377,24 @@ class TestBuildGateOutcomeUpdate:
         assert fb["pass_criteria_unmet"] == ["docs"]
         assert fb["scores"] == {}
 
+    def test_evaluation_record_written_to_state(self):
+        """Each gate call appends an EvaluationRecord to state.evaluations."""
+        phase = _phase(quality_gate=_gate(threshold=0.8))
+        gr = GateResult(
+            score=0.6,
+            feedback="too thin",
+            pass_criteria_unmet=["detail"],
+        )
+        update = build_gate_outcome_update(phase, gr, "retry", 1, 3)
+        records = update["evaluations"]["p1"]
+        assert len(records) == 1
+        rec = records[0]
+        assert rec["invocation"] == 1
+        assert rec["result"]["score"] == 0.6
+        assert rec["result"]["feedback"] == "too thin"
+        assert rec["result"]["pass_criteria_unmet"] == ["detail"]
+        assert "T" in rec["timestamp"]  # ISO-8601
+
 
 # ---------------------------------------------------------------------------
 # Multi-dimension gate classification

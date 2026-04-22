@@ -10,6 +10,13 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any
 
+from abe_froman.compile.evaluation import (
+    EvaluationRecord,
+    build_eval_context,
+    gate_fallback,
+    gate_to_routes,
+    walk_routes,
+)
 from abe_froman.runtime.gates import (
     GateResult,
     scaffold_output_directory,
@@ -174,24 +181,47 @@ def assemble_success_update(phase: Phase, result: ExecutionResult) -> dict[str, 
     return update
 
 
+def _gate_result_payload(
+    gate_result: GateResult, gate: Any | None = None
+) -> dict[str, Any]:
+    """Flatten GateResult into the `result` dict the route walker sees.
+
+    When the gate declares dimensions, backfill any missing dims with 0.0
+    so numeric comparisons don't silently evaluate against None and escape
+    both pass and retry routes.
+    """
+    scores = dict(gate_result.scores)
+    if gate is not None and getattr(gate, "dimensions", None):
+        for d in gate.dimensions:
+            scores.setdefault(d.field, 0.0)
+    return {
+        "score": gate_result.score,
+        "scores": scores,
+        "feedback": gate_result.feedback,
+        "pass_criteria_met": list(gate_result.pass_criteria_met),
+        "pass_criteria_unmet": list(gate_result.pass_criteria_unmet),
+    }
+
+
 def classify_gate_outcome(
     phase: Phase, gate_result: GateResult, retries: int, max_retries: int
 ) -> str:
+    """Walk the routes generated from the QualityGate sugar.
+
+    Kept as public API (tests + external callers). Internally this is just
+    a thin adapter over `walk_routes` from compile/evaluation.py — the
+    string return value ("pass", "retry", "fail_blocking", "warn_continue")
+    is the matched route's destination label.
+    """
     gate = phase.quality_gate
-    if gate.dimensions:
-        passed = all(
-            gate_result.scores.get(dim.field, 0.0) >= dim.min
-            for dim in gate.dimensions
-        )
-    else:
-        passed = gate_result.score >= gate.threshold
-    if passed:
-        return "pass"
-    if retries < max_retries:
-        return "retry"
-    if gate.blocking:
-        return "fail_blocking"
-    return "warn_continue"
+    routes = gate_to_routes(gate, max_retries)
+    context = build_eval_context(
+        _gate_result_payload(gate_result, gate), invocation=retries, history=[]
+    )
+    matched = walk_routes(routes, context)
+    if matched is not None:
+        return matched.to
+    return gate_fallback(gate)
 
 
 def _gate_summary(phase: Phase, result: GateResult) -> str:
@@ -208,7 +238,12 @@ def _gate_summary(phase: Phase, result: GateResult) -> str:
 def build_gate_outcome_update(
     phase: Phase, result: GateResult, outcome: str, retries: int, max_retries: int
 ) -> dict[str, Any]:
+    record = EvaluationRecord.now(
+        invocation=retries,
+        result=_gate_result_payload(result, phase.quality_gate),
+    )
     update: dict[str, Any] = {
+        "evaluations": {phase.id: [record.to_dict()]},
         "gate_scores": {phase.id: result.score},
         "gate_feedback": {
             phase.id: {
