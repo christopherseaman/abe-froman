@@ -2,10 +2,10 @@
 
 ## Task
 
-The seed command has emitted the following research domain:
+The topic-synthesis phase has selected the following research domain (JSON with `topic` and `rationale` fields — use the `topic` value as the subject of the paper; the rationale is context only):
 
 ```
-{{seed_topic}}
+{{choose_topic}}
 ```
 
 Write an abstract for a research paper on this domain. The abstract must be 150-220 words and include:
