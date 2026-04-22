@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import json as _json
 from typing import TYPE_CHECKING, Any
 
 from abe_froman.compile.nodes import (
     _make_phase_node,
+    build_context,
     execute_with_timeout,
     make_failure_update,
 )
@@ -64,7 +64,10 @@ def _make_subphase_node(
             model=parent_phase.model,
         )
 
-        context: dict[str, Any] = {}
+        # Subphase templates inherit the parent phase's full upstream context
+        # so `{{dep}}` works for any of the parent's dependencies, not just
+        # the parent output itself. Per-item manifest fields layer on top.
+        context = build_context(parent_phase, state)
         parent_output = state.get("phase_outputs", {}).get(parent_phase.id, "")
         context[parent_phase.id] = parent_output
         for key, value in item.items():
@@ -136,7 +139,10 @@ def _make_final_phase_node(
 ):
     """Create a node function for a final phase in a dynamic subphase group.
 
-    Final phases receive all subphase outputs for the parent in their context.
+    Subphase aggregates reach the final phase through `build_context`'s
+    suffix synthesis (same mechanism any non-final downstream uses), so
+    this factory is a thin wrapper that just renames the synthetic phase
+    to stay out of the parent-id namespace.
     """
     node_id = f"_final_{parent_phase.id}_{final_phase.id}"
 
@@ -152,31 +158,5 @@ def _make_final_phase_node(
     )
 
     inner = _make_phase_node(synthetic, config, executor)
-
-    async def node_fn(state: WorkflowState) -> dict[str, Any]:
-        prefix = f"{parent_phase.id}::"
-        sub_outputs = {
-            k: v
-            for k, v in state.get("subphase_outputs", {}).items()
-            if k.startswith(prefix)
-        }
-        sub_worktrees = [
-            v
-            for k, v in state.get("phase_worktrees", {}).items()
-            if k.startswith(prefix)
-        ]
-
-        enriched = dict(state)
-        enriched_outputs = dict(state.get("phase_outputs", {}))
-        enriched_outputs[f"{parent_phase.id}_subphases"] = _json.dumps(
-            sub_outputs
-        )
-        enriched_outputs[f"{parent_phase.id}_subphase_worktrees"] = _json.dumps(
-            sub_worktrees
-        )
-        enriched["phase_outputs"] = enriched_outputs
-
-        return await inner(enriched)
-
-    node_fn.__name__ = f"final_{parent_phase.id}_{final_phase.id}"
-    return node_fn
+    inner.__name__ = f"final_{parent_phase.id}_{final_phase.id}"
+    return inner

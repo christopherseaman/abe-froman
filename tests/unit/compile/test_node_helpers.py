@@ -136,18 +136,43 @@ class TestBuildContext:
         assert "a_worktree" not in ctx
 
     def test_projects_subphase_aggregations(self):
-        """Final-phase context exposes `{dep_subphases}` + worktrees list."""
+        """Downstream context synthesizes `{dep}_subphases` + worktrees from state.
+
+        Stage 2b moved aggregation out of the final-phase wrapper; any
+        phase depending on a dynamic parent now sees the same aggregate
+        via build_context's state projection.
+        """
         phase = _phase(depends_on=["parent"])
         state = {
-            "phase_outputs": {
-                "parent": "parent-out",
-                "parent_subphases": '{"parent::a": "x"}',
-                "parent_subphase_worktrees": '["/tmp/wt-a"]',
-            }
+            "phase_outputs": {"parent": "parent-out"},
+            "subphase_outputs": {"parent::a": "x", "parent::b": "y"},
+            "phase_worktrees": {
+                "parent::a": "/tmp/wt-a",
+                "parent::b": "/tmp/wt-b",
+            },
         }
         ctx = build_context(phase, state)
-        assert ctx["parent_subphases"] == '{"parent::a": "x"}'
-        assert ctx["parent_subphase_worktrees"] == '["/tmp/wt-a"]'
+        import json as _json
+        assert _json.loads(ctx["parent_subphases"]) == {
+            "parent::a": "x",
+            "parent::b": "y",
+        }
+        assert sorted(_json.loads(ctx["parent_subphase_worktrees"])) == [
+            "/tmp/wt-a",
+            "/tmp/wt-b",
+        ]
+
+    def test_no_subphase_aggregations_when_absent(self):
+        """Phases with no dynamic parent in deps get no aggregate keys."""
+        phase = _phase(depends_on=["normal"])
+        state = {
+            "phase_outputs": {"normal": "out"},
+            "subphase_outputs": {},
+            "phase_worktrees": {},
+        }
+        ctx = build_context(phase, state)
+        assert "normal_subphases" not in ctx
+        assert "normal_subphase_worktrees" not in ctx
 
 
 class TestInjectRetryReason:

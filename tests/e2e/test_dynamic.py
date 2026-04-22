@@ -427,3 +427,91 @@ class TestManifestFieldPropagation:
         assert ctx["id"] == "x"
         assert ctx["custom_field"] == "v123"
         assert ctx["priority"] == "high"
+
+    @pytest.mark.asyncio
+    async def test_downstream_sees_subphase_aggregate(self, tmp_path):
+        """Any downstream phase depending on a dynamic parent sees aggregates.
+
+        Before Stage 2b, `{parent}_subphases` was synthesized only inside
+        `_make_final_phase_node`'s local enriched dict — unreachable from
+        a non-final downstream phase. Stage 2b moves the synthesis into
+        `build_context`, which reads state directly, so both final and
+        non-final downstream phases see the same aggregate.
+        """
+        from mock_executor import MockExecutor
+        from abe_froman.runtime.result import ExecutionResult
+
+        manifest = [{"id": "a"}, {"id": "b"}]
+        mock = MockExecutor(results={
+            "parent": ExecutionResult(
+                success=True,
+                output=json.dumps({"items": manifest}),
+            ),
+            "parent::a": ExecutionResult(success=True, output="out-a"),
+            "parent::b": ExecutionResult(success=True, output="out-b"),
+        })
+
+        (tmp_path / "template.md").write_text("sub")
+
+        phases = [
+            dynamic_parent("parent", manifest),
+            cmd_phase("downstream", depends_on=["parent"]),
+        ]
+        config = make_config(phases)
+        # Replace the command executor for downstream with the mock so we
+        # can inspect its context. Use the mock for everything: it returns
+        # mock results for keys it knows, defaults otherwise.
+        graph = build_workflow_graph(config, mock)
+        result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
+
+        assert "downstream" in result["completed_phases"]
+        ctx = mock.received_contexts["downstream"]
+        assert "parent_subphases" in ctx, (
+            f"downstream should see `parent_subphases`; got keys {list(ctx)}"
+        )
+        aggregate = json.loads(ctx["parent_subphases"])
+        assert aggregate == {"parent::a": "out-a", "parent::b": "out-b"}
+
+    @pytest.mark.asyncio
+    async def test_subphase_context_inherits_parent_deps(self, tmp_path):
+        """Subphase template sees its parent's upstream deps, not just parent output.
+
+        Topology: upstream -> parent (dynamic fan-out) -> subphase
+        The subphase template should be able to interpolate {{upstream}}
+        because upstream is in parent.depends_on. Before Stage 2a, subphase
+        context contained only {parent_id: output, ...item_fields} — any
+        template that referenced a grandparent dep would render empty.
+        """
+        from mock_executor import MockExecutor
+        from abe_froman.runtime.result import ExecutionResult
+
+        manifest = [{"id": "item1"}]
+        mock = MockExecutor(results={
+            "upstream": ExecutionResult(
+                success=True,
+                output="upstream-value-42",
+            ),
+            "parent": ExecutionResult(
+                success=True,
+                output=json.dumps({"items": manifest}),
+            ),
+        })
+
+        (tmp_path / "template.md").write_text("template")
+
+        phases = [
+            cmd_phase("upstream"),
+            dynamic_parent("parent", manifest, depends_on=["upstream"]),
+        ]
+        config = make_config(phases)
+        graph = build_workflow_graph(config, mock)
+        result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
+
+        assert "parent::item1" in result["completed_phases"]
+        ctx = mock.received_contexts["parent::item1"]
+        assert ctx.get("upstream") == "upstream-value-42", (
+            f"subphase context should inherit parent's upstream dep; got {ctx!r}"
+        )
+        assert ctx.get("parent") == json.dumps({"items": manifest}), (
+            "parent output still present alongside upstream"
+        )

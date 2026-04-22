@@ -77,10 +77,13 @@ def check_dry_run(phase: Phase, state: WorkflowState) -> dict | None:
 
 
 def build_context(phase: Phase, state: WorkflowState) -> dict[str, Any]:
+    import json as _json
+
     context: dict[str, Any] = {}
     outputs = state.get("phase_outputs", {})
     structured = state.get("phase_structured_outputs", {})
     worktrees = state.get("phase_worktrees", {})
+    sub_outputs = state.get("subphase_outputs", {})
     for dep in phase.depends_on:
         if dep in outputs:
             context[dep] = outputs[dep]
@@ -88,13 +91,16 @@ def build_context(phase: Phase, state: WorkflowState) -> dict[str, Any]:
             context[f"{dep}_structured"] = structured[dep]
         if dep in worktrees:
             context[f"{dep}_worktree"] = worktrees[dep]
-        # Dynamic parents expose fan-out aggregations via synthetic keys;
-        # forward them to the final-phase template as `{{dep_subphases}}`
-        # and `{{dep_subphase_worktrees}}`.
-        for suffix in ("_subphases", "_subphase_worktrees"):
-            key = f"{dep}{suffix}"
-            if key in outputs:
-                context[key] = outputs[key]
+        # Synthesize fan-out aggregates from state. Any phase depending on
+        # a dynamic parent sees `{{dep_subphases}}` (JSON id→output map) and
+        # `{{dep_subphase_worktrees}}` (JSON list of worktree paths) — not
+        # just the final-phase wrapper.
+        prefix = f"{dep}::"
+        dep_subs = {k: v for k, v in sub_outputs.items() if k.startswith(prefix)}
+        if dep_subs:
+            context[f"{dep}_subphases"] = _json.dumps(dep_subs)
+            dep_wts = [v for k, v in worktrees.items() if k.startswith(prefix)]
+            context[f"{dep}_subphase_worktrees"] = _json.dumps(dep_wts)
     return context
 
 

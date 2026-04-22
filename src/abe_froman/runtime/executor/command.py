@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from abe_froman.runtime.executor.prompt import render_template
 from abe_froman.runtime.result import ExecutionResult
 from abe_froman.schema.models import CommandExecution, Phase
 
@@ -22,7 +23,12 @@ class CommandExecutor:
                 error=f"CommandExecutor requires CommandExecution, got {type(phase.execution).__name__}",
             )
 
-        cmd = [phase.execution.command, *phase.execution.args]
+        # Render each arg as a Jinja2 template against the phase's context.
+        # Lets authors wire a command phase to dep outputs: e.g. args:
+        # ["--input", "{{upstream_phase}}"]. Bare strings with no template
+        # syntax render to themselves.
+        rendered_args = [render_template(a, context) for a in phase.execution.args]
+        cmd = [phase.execution.command, *rendered_args]
         cwd = workdir or self.workdir
 
         try:

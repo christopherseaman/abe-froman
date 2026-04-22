@@ -68,3 +68,31 @@ class TestCommandExecutor:
         )
         result = await executor.execute(phase, {}, workdir=None)
         assert result.output == "from-base"
+
+    @pytest.mark.asyncio
+    async def test_args_are_jinja_rendered(self, tmp_path):
+        """Command args render against the phase context; `{{dep}}` resolves."""
+        executor = CommandExecutor(workdir=str(tmp_path))
+        phase = Phase(
+            id="c", name="C",
+            execution={
+                "type": "command",
+                "command": "echo",
+                "args": ["-n", "prefix:{{upstream}}:suffix"],
+            },
+        )
+        result = await executor.execute(phase, {"upstream": "VALUE42"})
+        assert result.success is True
+        assert result.output == "prefix:VALUE42:suffix"
+
+    @pytest.mark.asyncio
+    async def test_args_without_templating_render_literally(self, tmp_path):
+        """Plain strings with no Jinja syntax pass through unchanged."""
+        (tmp_path / "data.txt").write_text("contents")
+        executor = CommandExecutor(workdir=str(tmp_path))
+        phase = Phase(
+            id="c", name="C",
+            execution={"type": "command", "command": "cat", "args": ["data.txt"]},
+        )
+        result = await executor.execute(phase, {})
+        assert result.output == "contents"
