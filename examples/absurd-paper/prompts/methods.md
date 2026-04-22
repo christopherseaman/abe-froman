@@ -2,7 +2,13 @@
 
 ## Context
 
-The outline phase emitted this JSON (contains the abstract, buzzwords, and section beats):
+**Abstract:**
+
+```
+{{abstract}}
+```
+
+**Outline:**
 
 ```
 {{outline}}

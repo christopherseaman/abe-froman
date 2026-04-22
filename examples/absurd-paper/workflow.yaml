@@ -31,37 +31,35 @@ phases:
       threshold: 1.0
       blocking: true
 
-  # Diamond body sections depend ONLY on outline (which bakes the abstract text
-  # into its JSON output). They are gate-free so their regular add_edges to
-  # reconcile create a proper join. Any gated phase whose router fans out to
-  # multiple dependents will fire those dependents in the same superstep, but
-  # each of THEM must have at most one gated predecessor — otherwise LangGraph's
-  # conditional edges trigger on first-emit and skip the join. See WISHLIST
-  # "gate-eval unification".
+  # Natural topology: each body phase reads abstract + outline directly;
+  # reconcile reads all four sections + abstract. This was BROKEN before
+  # the Stage 1 wait-check fix landed (reconcile fired prematurely when
+  # abstract's gate routed to it). With that fix in place, the multi-pred
+  # join is honored and this shape runs cleanly.
   - id: intro
     name: "Introduction"
     prompt_file: "examples/absurd-paper/prompts/intro.md"
-    depends_on: [outline]
+    depends_on: [abstract, outline]
 
   - id: methods
     name: "Methods"
     prompt_file: "examples/absurd-paper/prompts/methods.md"
-    depends_on: [outline]
+    depends_on: [abstract, outline]
 
   - id: results
     name: "Results"
     prompt_file: "examples/absurd-paper/prompts/results.md"
-    depends_on: [outline]
+    depends_on: [abstract, outline]
 
   - id: discussion
     name: "Discussion"
     prompt_file: "examples/absurd-paper/prompts/discussion.md"
-    depends_on: [outline]
+    depends_on: [abstract, outline]
 
   - id: reconcile
     name: "Compose Paper"
     prompt_file: "examples/absurd-paper/prompts/reconcile.md"
-    depends_on: [intro, methods, results, discussion]
+    depends_on: [abstract, intro, methods, results, discussion]
     timeout: 240.0
 
   # File-flow phases (persist/word_count/integrity_check/output_contract)

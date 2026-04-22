@@ -4,7 +4,13 @@
 
 All four body sections are complete. Compose the final paper as a single markdown document.
 
-**Introduction section (already contains `## Abstract` + `## Introduction`):**
+**Abstract (copy verbatim into the paper's `## Abstract` section):**
+
+```
+{{abstract}}
+```
+
+**Introduction:**
 
 ```
 {{intro}}
@@ -42,10 +48,10 @@ Structure:
 **Corresponding author:** <fake>@<fake-edu-domain>
 
 ## Abstract
-<Extract the abstract prose from the `## Abstract` block inside {{intro}}, verbatim.>
+<Copy the abstract prose from {{abstract}} verbatim — that's the `abstract` field of the JSON above, emitted as a single prose paragraph (no JSON wrapping).>
 
 ## Introduction
-<Extract the introduction text from {{intro}} — everything after `## Introduction`. Do NOT duplicate the abstract.>
+<{{intro}} content, drop its leading `## Introduction` header since this one replaces it>
 
 ## Methods
 <{{methods}} content, drop its leading `## Methods` header>
