@@ -1,7 +1,7 @@
 """Execution result type and executor protocols.
 
 ExecutionResult is the single result type for backends, executors, and
-subprocesses. PhaseExecutor and PromptBackend are the two duck-typed
+subprocesses. NodeExecutor and PromptBackend are the two duck-typed
 protocols that produce them.
 """
 
@@ -29,7 +29,7 @@ class OverloadError(Exception):
 
 
 @runtime_checkable
-class PhaseExecutor(Protocol):
+class NodeExecutor(Protocol):
     async def execute(
         self, node: Node, context: dict[str, Any], workdir: str | None = None
     ) -> ExecutionResult: ...

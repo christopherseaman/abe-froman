@@ -28,7 +28,7 @@ class WorkflowState(TypedDict):
     completed_nodes: Annotated[list[str], operator.add]
     failed_nodes: Annotated[list[str], operator.add]
     node_outputs: Annotated[dict[str, Any], _merge_dicts]
-    phase_structured_outputs: Annotated[dict[str, Any], _merge_dicts]
+    node_structured_outputs: Annotated[dict[str, Any], _merge_dicts]
     evaluations: Annotated[dict[str, list[dict[str, Any]]], _merge_evaluations]
     retries: Annotated[dict[str, int], _merge_dicts]
     child_outputs: Annotated[dict[str, Any], _merge_dicts]
@@ -59,7 +59,7 @@ def make_initial_state(
         "completed_nodes": [],
         "failed_nodes": [],
         "node_outputs": {},
-        "phase_structured_outputs": {},
+        "node_structured_outputs": {},
         "evaluations": {},
         "retries": {},
         "child_outputs": {},

@@ -104,7 +104,7 @@ class TestBuildContext:
         node = _phase(depends_on=["a"])
         state = {
             "node_outputs": {"a": "out-a"},
-            "phase_structured_outputs": {"a": {"k": "v"}},
+            "node_structured_outputs": {"a": {"k": "v"}},
         }
         ctx = build_context(node, state)
         assert ctx == {"a": "out-a", "a_structured": {"k": "v"}}
@@ -318,7 +318,7 @@ class TestAssembleSuccessUpdate:
     def test_with_structured_output(self):
         result = ExecutionResult(output="x", structured_output={"key": "val"})
         update = assemble_success_update(_phase(), result)
-        assert update["phase_structured_outputs"] == {"p1": {"key": "val"}}
+        assert update["node_structured_outputs"] == {"p1": {"key": "val"}}
 
     def test_none_tokens_excluded(self):
         result = ExecutionResult(output="x", tokens_used=None)
@@ -328,7 +328,7 @@ class TestAssembleSuccessUpdate:
     def test_none_structured_excluded(self):
         result = ExecutionResult(output="x", structured_output=None)
         update = assemble_success_update(_phase(), result)
-        assert "phase_structured_outputs" not in update
+        assert "node_structured_outputs" not in update
 
 
 class TestClassifyGateOutcome:

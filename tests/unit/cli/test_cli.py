@@ -87,12 +87,12 @@ class TestRunCommand:
         result = runner.invoke(cli, ["run", "nonexistent.yaml"])
         assert result.exit_code != 0
 
-    def test_run_dry_run_lists_phases(self, runner, example_workflow_path):
+    def test_run_dry_run_lists_nodes(self, runner, example_workflow_path):
         result = runner.invoke(
             cli, ["run", str(example_workflow_path), "--dry-run"]
         )
         assert result.exit_code == 0
-        assert "Phases:" in result.output
+        assert "Nodes:" in result.output
         assert "node-0" in result.output
 
     def test_run_simple_workflow(self, runner, tmp_path):

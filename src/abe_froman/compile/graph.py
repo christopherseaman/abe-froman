@@ -15,7 +15,7 @@ from abe_froman.runtime.state import WorkflowState
 from abe_froman.schema.models import Node, Graph
 
 if TYPE_CHECKING:
-    from abe_froman.runtime.result import PhaseExecutor
+    from abe_froman.runtime.result import NodeExecutor
 
 
 def _find_terminal_phases(config: Graph) -> set[str]:
@@ -89,7 +89,7 @@ def _register_evaluation_node(
     builder: StateGraph,
     node: Node,
     config: Graph,
-    executor: PhaseExecutor | None,
+    executor: NodeExecutor | None,
     exec_node_id: str | None = None,
 ) -> str:
     """Register `_eval_{exec_node_id}` and return its id."""
@@ -166,7 +166,7 @@ def _make_dynamic_router(node: Node, config: Graph):
 
 def build_workflow_graph(
     config: Graph,
-    executor: PhaseExecutor | None = None,
+    executor: NodeExecutor | None = None,
     checkpointer: Any = None,
     *,
     _depth: int = 0,

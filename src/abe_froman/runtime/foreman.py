@@ -1,6 +1,6 @@
 """ForemanExecutor: queue + per-model semaphores + worktree pool.
 
-Wraps an inner `PhaseExecutor` (typically `DispatchExecutor`) and adds:
+Wraps an inner `NodeExecutor` (typically `DispatchExecutor`) and adds:
   - A **global** `asyncio.Semaphore` bounding parallel jobs.
   - **Per-model** semaphores layered inside the global cap.
   - A **worktree pool** — each `node.id` gets a dedicated git worktree, reused
@@ -24,16 +24,16 @@ from pathlib import Path
 from typing import Any
 
 from abe_froman.runtime.executor.prompt import resolve_model
-from abe_froman.runtime.result import ExecutionResult, PhaseExecutor, PromptBackend
+from abe_froman.runtime.result import ExecutionResult, NodeExecutor, PromptBackend
 from abe_froman.schema.models import Node, Settings
 
 
 class ForemanExecutor:
-    """PhaseExecutor wrapper adding concurrency caps + worktree pool."""
+    """NodeExecutor wrapper adding concurrency caps + worktree pool."""
 
     def __init__(
         self,
-        inner: PhaseExecutor,
+        inner: NodeExecutor,
         base_workdir: str,
         max_parallel_jobs: int = 4,
         per_model_limits: dict[str, int] | None = None,

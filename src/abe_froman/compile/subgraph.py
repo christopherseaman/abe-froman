@@ -31,7 +31,7 @@ from abe_froman.runtime.state import WorkflowState, make_initial_state
 from abe_froman.schema.models import Graph, Node
 
 if TYPE_CHECKING:
-    from abe_froman.runtime.result import PhaseExecutor
+    from abe_froman.runtime.result import NodeExecutor
 
 
 class SubgraphCycleError(ValueError):
@@ -71,7 +71,7 @@ def make_subgraph_node(
     parent_node: Node,
     sub_config: Graph,
     compile_fn: Any,
-    executor: "PhaseExecutor | None",
+    executor: "NodeExecutor | None",
     depth: int,
 ):
     """Create the wrapper async function added as the parent graph's node.

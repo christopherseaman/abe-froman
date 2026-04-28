@@ -28,7 +28,7 @@ from abe_froman.runtime.state import WorkflowState
 from abe_froman.schema.models import Node, Settings, Graph
 
 if TYPE_CHECKING:
-    from abe_froman.runtime.result import PhaseExecutor
+    from abe_froman.runtime.result import NodeExecutor
 
 
 def _get_retry_delay(retry_count: int, backoff: list[float]) -> float:
@@ -91,7 +91,7 @@ def build_context(node: Node, state: WorkflowState) -> dict[str, Any]:
 
     context: dict[str, Any] = {}
     outputs = state.get("node_outputs", {})
-    structured = state.get("phase_structured_outputs", {})
+    structured = state.get("node_structured_outputs", {})
     worktrees = state.get("node_worktrees", {})
     sub_outputs = state.get("child_outputs", {})
     # Subgraph inputs (Stage 4c): inputs declared on a parent's subgraph-
@@ -193,7 +193,7 @@ def assemble_success_update(node: Node, result: ExecutionResult) -> dict[str, An
         "node_outputs": {node.id: result.output},
     }
     if result.structured_output is not None:
-        update["phase_structured_outputs"] = {node.id: result.structured_output}
+        update["node_structured_outputs"] = {node.id: result.structured_output}
     if result.tokens_used is not None:
         update["token_usage"] = {node.id: result.tokens_used}
     return update
@@ -354,7 +354,7 @@ async def run_evaluation_and_outcome(
 def _make_execution_node(
     node: Node,
     config: Graph,
-    executor: PhaseExecutor | None = None,
+    executor: NodeExecutor | None = None,
 ):
     max_retries = node.effective_max_retries(config.settings)
     timeout = node.effective_timeout(config.settings)
@@ -436,7 +436,7 @@ def _make_execution_node(
 def _make_evaluation_node(
     node: Node,
     config: Graph,
-    executor: "PhaseExecutor | None" = None,
+    executor: "NodeExecutor | None" = None,
     *,
     node_id_resolver: Callable[[WorkflowState], str] | None = None,
 ):
@@ -478,7 +478,7 @@ def _make_evaluation_node(
 
         history = list(state.get("evaluations", {}).get(node_id, []))
         output = state.get("node_outputs", {}).get(node_id, "")
-        structured = state.get("phase_structured_outputs", {}).get(node_id)
+        structured = state.get("node_structured_outputs", {}).get(node_id)
         synthetic_result = ExecutionResult(
             success=True, output=output, structured_output=structured
         )

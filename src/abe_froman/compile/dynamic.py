@@ -19,7 +19,7 @@ from abe_froman.runtime.state import WorkflowState
 from abe_froman.schema.models import Node, Graph
 
 if TYPE_CHECKING:
-    from abe_froman.runtime.result import PhaseExecutor
+    from abe_froman.runtime.result import NodeExecutor
 
 
 def _merge_updates(base: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
@@ -54,7 +54,7 @@ def _merge_updates(base: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any
 def _make_fan_out_node(
     parent_phase: Node,
     config: Graph,
-    executor: PhaseExecutor | None = None,
+    executor: NodeExecutor | None = None,
 ):
     """Create a template node function for dynamic children.
 
@@ -223,7 +223,7 @@ def _make_final_fan_out_node(
     parent_phase: Node,
     final_phase,
     config: Graph,
-    executor: PhaseExecutor | None = None,
+    executor: NodeExecutor | None = None,
 ):
     """Create a node function for a final node in a dynamic child group.
 

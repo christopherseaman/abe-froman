@@ -22,7 +22,7 @@ class TestMakeInitialState:
         state = make_initial_state()
         expected_keys = {
             "workflow_name", "completed_nodes",
-            "failed_nodes", "node_outputs", "phase_structured_outputs",
+            "failed_nodes", "node_outputs", "node_structured_outputs",
             "evaluations", "retries", "child_outputs",
             "token_usage", "node_worktrees", "errors", "workdir", "dry_run",
         }

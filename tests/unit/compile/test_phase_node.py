@@ -95,7 +95,7 @@ class TestEvaluationRouter:
 
 
 class _SlowExecutor:
-    """PhaseExecutor double that sleeps longer than any reasonable timeout."""
+    """NodeExecutor double that sleeps longer than any reasonable timeout."""
 
     async def execute(self, node, context):
         await asyncio.sleep(10.0)
