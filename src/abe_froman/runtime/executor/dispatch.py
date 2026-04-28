@@ -6,14 +6,22 @@ from abe_froman.runtime.result import ExecutionResult
 from abe_froman.runtime.executor.command import CommandExecutor
 from abe_froman.runtime.executor.prompt import PromptExecutor
 from abe_froman.runtime.result import PromptBackend
-from abe_froman.schema.models import CommandExecution, GateOnlyExecution, Node, PromptExecution, Settings
+from abe_froman.schema.models import (
+    CommandExecution,
+    GateOnlyExecution,
+    JoinExecution,
+    Node,
+    PromptExecution,
+    Settings,
+)
 
 
 class DispatchExecutor:
     """Routes execution to the appropriate executor based on node type.
 
     - CommandExecution → CommandExecutor (subprocess)
-    - GateOnlyExecution → no-op (gate evaluation happens in builder)
+    - GateOnlyExecution → no-op (gate evaluation happens downstream)
+    - JoinExecution → no-op (topology marker; LangGraph handles synchronization)
     - PromptExecution → PromptExecutor with pluggable PromptBackend
     """
 
@@ -46,6 +54,9 @@ class DispatchExecutor:
 
         if isinstance(execution, GateOnlyExecution):
             return ExecutionResult(success=True, output=f"[gate-only] {node.id}")
+
+        if isinstance(execution, JoinExecution):
+            return ExecutionResult(success=True, output="")
 
         if isinstance(execution, PromptExecution):
             if self._prompt_executor is not None:

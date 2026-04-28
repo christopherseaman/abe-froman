@@ -10,3 +10,5 @@ build/
 .ruff_cache/
 .abe-foreman/
 .abe-froman-checkpoint.db
+*.db-shm
+*.db-wal
