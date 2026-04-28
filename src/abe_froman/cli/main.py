@@ -221,7 +221,7 @@ def run(
         )
 
     if completed:
-        click.echo(f"  Phases: {', '.join(completed)}")
+        click.echo(f"  Nodes: {', '.join(completed)}")
 
     if failed:
         click.echo(f"  Failed: {', '.join(failed)}")
