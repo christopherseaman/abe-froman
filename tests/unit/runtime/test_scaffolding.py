@@ -51,9 +51,9 @@ class TestScaffoldingIntegration:
     """Integration tests through the full graph."""
 
     async def test_phase_creates_output_dir_before_execution(self, tmp_path):
-        """Command phase writes to base_directory that doesn't pre-exist."""
+        """Command node writes to base_directory that doesn't pre-exist."""
         outdir = tmp_path / "results"
-        phase = cmd_phase(
+        node = cmd_phase(
             "writer",
             output="hello",
             output_contract={
@@ -61,25 +61,25 @@ class TestScaffoldingIntegration:
                 "required_files": [],
             },
         )
-        config = make_config([phase])
+        config = make_config([node])
         executor = MockExecutor()
         graph = build_workflow_graph(config, executor=executor)
 
         result = await graph.ainvoke({"workdir": str(tmp_path)})
 
         assert outdir.is_dir()
-        assert "writer" in result["completed_phases"]
+        assert "writer" in result["completed_nodes"]
 
     async def test_dry_run_does_not_scaffold(self, tmp_path):
         """Dry run skips execution and should not create directories."""
-        phase = cmd_phase(
+        node = cmd_phase(
             "writer",
             output_contract={
                 "base_directory": "results",
                 "required_files": [],
             },
         )
-        config = make_config([phase])
+        config = make_config([node])
         graph = build_workflow_graph(config, executor=None)
 
         await graph.ainvoke({"workdir": str(tmp_path), "dry_run": True})
@@ -91,7 +91,7 @@ class TestScaffoldingIntegration:
         outdir = tmp_path / "output"
         outfile = outdir / "result.txt"
 
-        phase = {
+        node = {
             "id": "produce",
             "name": "produce",
             "execution": {
@@ -104,7 +104,7 @@ class TestScaffoldingIntegration:
                 "required_files": ["result.txt"],
             },
         }
-        config = make_config([phase])
+        config = make_config([node])
 
         from abe_froman.runtime.executor.dispatch import DispatchExecutor
 
@@ -118,5 +118,5 @@ class TestScaffoldingIntegration:
         assert outdir.is_dir()
         assert outfile.exists()
         assert outfile.read_text() == "done"
-        assert "produce" in result["completed_phases"]
-        assert not result.get("failed_phases")
+        assert "produce" in result["completed_nodes"]
+        assert not result.get("failed_nodes")

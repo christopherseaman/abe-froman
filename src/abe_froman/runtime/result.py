@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
-from abe_froman.schema.models import Phase
+from abe_froman.schema.models import Node
 
 
 @dataclass
@@ -31,7 +31,7 @@ class OverloadError(Exception):
 @runtime_checkable
 class PhaseExecutor(Protocol):
     async def execute(
-        self, phase: Phase, context: dict[str, Any], workdir: str | None = None
+        self, node: Node, context: dict[str, Any], workdir: str | None = None
     ) -> ExecutionResult: ...
 
 

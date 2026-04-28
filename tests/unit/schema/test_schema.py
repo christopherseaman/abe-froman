@@ -5,66 +5,66 @@ from pydantic import ValidationError
 from abe_froman.schema.models import (
     CommandExecution,
     DimensionCheck,
-    DynamicPhaseConfig,
+    FanOut,
     GateOnlyExecution,
     OutputContract,
-    Phase,
+    Node,
     PromptExecution,
     Evaluation,
     Settings,
-    WorkflowConfig,
+    Graph,
 )
 
 
 class TestMinimalWorkflow:
     def test_minimal_config(self, minimal_config_dict):
-        config = WorkflowConfig(**minimal_config_dict)
+        config = Graph(**minimal_config_dict)
         assert config.name == "Test Workflow"
         assert config.version == "1.0.0"
-        assert len(config.phases) == 1
+        assert len(config.nodes) == 1
 
     def test_name_required(self):
         with pytest.raises(ValidationError):
-            WorkflowConfig(version="1.0.0", phases=[])
+            Graph(version="1.0.0", nodes=[])
 
     def test_version_required(self):
         with pytest.raises(ValidationError):
-            WorkflowConfig(name="Test", phases=[])
+            Graph(name="Test", nodes=[])
 
     def test_empty_phases_allowed(self):
-        config = WorkflowConfig(name="Test", version="1.0.0", phases=[])
-        assert config.phases == []
+        config = Graph(name="Test", version="1.0.0", nodes=[])
+        assert config.nodes == []
 
 
 class TestPromptFileShorthand:
-    """prompt_file at phase level auto-converts to PromptExecution."""
+    """prompt_file at node level auto-converts to PromptExecution."""
 
     def test_prompt_file_creates_prompt_execution(self):
-        phase = Phase(id="p1", name="P1", prompt_file="test.md")
-        assert isinstance(phase.execution, PromptExecution)
-        assert phase.execution.prompt_file == "test.md"
+        node = Node(id="p1", name="P1", prompt_file="test.md")
+        assert isinstance(node.execution, PromptExecution)
+        assert node.execution.prompt_file == "test.md"
 
     def test_prompt_file_cleared_after_normalization(self):
-        phase = Phase(id="p1", name="P1", prompt_file="test.md")
-        assert phase.prompt_file is None
+        node = Node(id="p1", name="P1", prompt_file="test.md")
+        assert node.prompt_file is None
 
     def test_explicit_execution_takes_precedence(self):
-        phase = Phase(
+        node = Node(
             id="p1",
             name="P1",
             execution=CommandExecution(command="node", args=["test.js"]),
         )
-        assert isinstance(phase.execution, CommandExecution)
+        assert isinstance(node.execution, CommandExecution)
 
     def test_both_prompt_file_and_execution_keeps_execution(self):
         """When both prompt_file and execution are set, execution wins."""
-        phase = Phase(
+        node = Node(
             id="p1",
             name="P1",
             prompt_file="should-be-ignored.md",
             execution=CommandExecution(command="node"),
         )
-        assert isinstance(phase.execution, CommandExecution)
+        assert isinstance(node.execution, CommandExecution)
 
 
 class TestExecutionTypes:
@@ -89,21 +89,21 @@ class TestExecutionTypes:
 
     def test_execution_discriminated_union_from_dict(self):
         """Execution types parse correctly from raw dicts (YAML deserialization)."""
-        phase_prompt = Phase(
+        phase_prompt = Node(
             id="p1",
             name="P1",
             execution={"type": "prompt", "prompt_file": "test.md"},
         )
         assert isinstance(phase_prompt.execution, PromptExecution)
 
-        phase_cmd = Phase(
+        phase_cmd = Node(
             id="p2",
             name="P2",
             execution={"type": "command", "command": "node", "args": ["x.js"]},
         )
         assert isinstance(phase_cmd.execution, CommandExecution)
 
-        phase_gate = Phase(
+        phase_gate = Node(
             id="p3",
             name="P3",
             execution={"type": "gate_only"},
@@ -165,32 +165,32 @@ class TestQualityGate:
 
 
 class TestEffectiveMaxRetries:
-    """Phase.effective_max_retries resolves gate override vs settings default."""
+    """Node.effective_max_retries resolves gate override vs settings default."""
 
     def test_no_gate_uses_settings(self):
         settings = Settings(max_retries=5)
-        phase = Phase(id="p1", name="P1", prompt_file="t.md")
-        assert phase.effective_max_retries(settings) == 5
+        node = Node(id="p1", name="P1", prompt_file="t.md")
+        assert node.effective_max_retries(settings) == 5
 
     def test_gate_with_override(self):
         settings = Settings(max_retries=5)
-        phase = Phase(
+        node = Node(
             id="p1",
             name="P1",
             prompt_file="t.md",
-            quality_gate=Evaluation(validator="v.md", threshold=0.8, max_retries=2),
+            evaluation=Evaluation(validator="v.md", threshold=0.8, max_retries=2),
         )
-        assert phase.effective_max_retries(settings) == 2
+        assert node.effective_max_retries(settings) == 2
 
     def test_gate_without_override_uses_settings(self):
         settings = Settings(max_retries=7)
-        phase = Phase(
+        node = Node(
             id="p1",
             name="P1",
             prompt_file="t.md",
-            quality_gate=Evaluation(validator="v.md", threshold=0.8),
+            evaluation=Evaluation(validator="v.md", threshold=0.8),
         )
-        assert phase.effective_max_retries(settings) == 7
+        assert node.effective_max_retries(settings) == 7
 
 
 class TestOutputContract:
@@ -208,12 +208,12 @@ class TestOutputContract:
 
 class TestModelSelection:
     def test_phase_model(self):
-        phase = Phase(id="p1", name="P1", prompt_file="t.md", model="opus")
-        assert phase.model == "opus"
+        node = Node(id="p1", name="P1", prompt_file="t.md", model="opus")
+        assert node.model == "opus"
 
     def test_phase_model_default_none(self):
-        phase = Phase(id="p1", name="P1", prompt_file="t.md")
-        assert phase.model is None
+        node = Node(id="p1", name="P1", prompt_file="t.md")
+        assert node.model is None
 
     def test_settings_default_model(self):
         settings = Settings(default_model="haiku")
@@ -226,15 +226,15 @@ class TestModelSelection:
 
 class TestDependencyValidation:
     def test_valid_dependencies(self, multi_phase_config_dict):
-        config = WorkflowConfig(**multi_phase_config_dict)
-        assert config.phases[1].depends_on == ["phase-1"]
+        config = Graph(**multi_phase_config_dict)
+        assert config.nodes[1].depends_on == ["node-1"]
 
     def test_invalid_dependency_reference(self):
         with pytest.raises(ValidationError, match="nonexistent"):
-            WorkflowConfig(
+            Graph(
                 name="Test",
                 version="1.0.0",
-                phases=[
+                nodes=[
                     {"id": "p1", "name": "P1", "prompt_file": "t.md"},
                     {
                         "id": "p2",
@@ -247,10 +247,10 @@ class TestDependencyValidation:
 
     def test_duplicate_phase_ids(self):
         with pytest.raises(ValidationError, match="[Dd]uplicate"):
-            WorkflowConfig(
+            Graph(
                 name="Test",
                 version="1.0.0",
-                phases=[
+                nodes=[
                     {"id": "p1", "name": "P1", "prompt_file": "t.md"},
                     {"id": "p1", "name": "P1 Again", "prompt_file": "t2.md"},
                 ],
@@ -258,10 +258,10 @@ class TestDependencyValidation:
 
     def test_self_dependency(self):
         with pytest.raises(ValidationError, match="self-dependency"):
-            WorkflowConfig(
+            Graph(
                 name="Test",
                 version="1.0.0",
-                phases=[
+                nodes=[
                     {
                         "id": "p1",
                         "name": "P1",
@@ -272,13 +272,13 @@ class TestDependencyValidation:
             )
 
     def test_no_dependencies(self):
-        phase = Phase(id="p1", name="P1", prompt_file="t.md")
-        assert phase.depends_on == []
+        node = Node(id="p1", name="P1", prompt_file="t.md")
+        assert node.depends_on == []
 
 
 class TestDynamicSubphases:
     def test_dynamic_config(self):
-        config = DynamicPhaseConfig(
+        config = FanOut(
             enabled=True,
             manifest_path="manifest.json",
             template={"prompt_file": "template.md"},
@@ -286,31 +286,31 @@ class TestDynamicSubphases:
         assert config.enabled is True
         assert config.manifest_path == "manifest.json"
 
-    def test_template_with_quality_gate(self):
-        config = DynamicPhaseConfig(
+    def test_template_with_evaluation(self):
+        config = FanOut(
             enabled=True,
             manifest_path="m.json",
             template={
                 "prompt_file": "template.md",
-                "quality_gate": {"validator": "v.md", "threshold": 0.8},
+                "evaluation": {"validator": "v.md", "threshold": 0.8},
             },
         )
         assert config.template.evaluation.threshold == 0.8
 
-    def test_final_phases(self):
-        config = DynamicPhaseConfig(
+    def test_final_nodes(self):
+        config = FanOut(
             enabled=True,
             manifest_path="m.json",
             template={"prompt_file": "t.md"},
-            final_phases=[
+            final_nodes=[
                 {"id": "summary", "name": "Summary", "prompt_file": "s.md"}
             ],
         )
-        assert len(config.final_phases) == 1
-        assert config.final_phases[0].id == "summary"
+        assert len(config.final_nodes) == 1
+        assert config.final_nodes[0].id == "summary"
 
     def test_disabled_by_default(self):
-        config = DynamicPhaseConfig()
+        config = FanOut()
         assert config.enabled is False
 
 
@@ -318,11 +318,11 @@ class TestFullExampleParse:
     def test_parse_example_yaml(self, example_workflow_path):
         with open(example_workflow_path) as f:
             raw = yaml.safe_load(f)
-        config = WorkflowConfig(**raw)
+        config = Graph(**raw)
 
         assert config.name == "CFRA Default Workflow"
         assert config.version == "1.0.0"
-        assert len(config.phases) > 0
+        assert len(config.nodes) > 0
         assert config.settings.default_model == "sonnet"
         assert config.settings.output_directory == "prd"
 
@@ -330,63 +330,63 @@ class TestFullExampleParse:
         """Example YAML exercises command, prompt, and gate_only types."""
         with open(example_workflow_path) as f:
             raw = yaml.safe_load(f)
-        config = WorkflowConfig(**raw)
+        config = Graph(**raw)
 
-        exec_types = {type(p.execution).__name__ for p in config.phases if p.execution}
+        exec_types = {type(p.execution).__name__ for p in config.nodes if p.execution}
         assert "CommandExecution" in exec_types
         assert "PromptExecution" in exec_types
 
     def test_example_phase_types(self, example_workflow_path):
         with open(example_workflow_path) as f:
             raw = yaml.safe_load(f)
-        config = WorkflowConfig(**raw)
+        config = Graph(**raw)
 
-        phase_map = {p.id: p for p in config.phases}
+        phase_map = {p.id: p for p in config.nodes}
 
-        # phase-0 is a command execution
-        assert isinstance(phase_map["phase-0"].execution, CommandExecution)
-        assert phase_map["phase-0"].execution.command == "node"
+        # node-0 is a command execution
+        assert isinstance(phase_map["node-0"].execution, CommandExecution)
+        assert phase_map["node-0"].execution.command == "node"
 
-        # phase-1 is a prompt execution (via shorthand) with model override
-        assert isinstance(phase_map["phase-1"].execution, PromptExecution)
-        assert phase_map["phase-1"].model == "sonnet"
+        # node-1 is a prompt execution (via shorthand) with model override
+        assert isinstance(phase_map["node-1"].execution, PromptExecution)
+        assert phase_map["node-1"].model == "sonnet"
 
     def test_example_dynamic_subphases(self, example_workflow_path):
         with open(example_workflow_path) as f:
             raw = yaml.safe_load(f)
-        config = WorkflowConfig(**raw)
+        config = Graph(**raw)
 
-        phase_map = {p.id: p for p in config.phases}
-        phase2 = phase_map["phase-2"]
-        assert phase2.dynamic_subphases is not None
-        assert phase2.dynamic_subphases.enabled is True
-        assert len(phase2.dynamic_subphases.final_phases) > 0
+        phase_map = {p.id: p for p in config.nodes}
+        phase2 = phase_map["node-2"]
+        assert phase2.fan_out is not None
+        assert phase2.fan_out.enabled is True
+        assert len(phase2.fan_out.final_nodes) > 0
 
     def test_example_fan_in_dependency(self, example_workflow_path):
-        """phase-4 depends on all phase-3-* phases (fan-in)."""
+        """node-4 depends on all node-3-* nodes (fan-in)."""
         with open(example_workflow_path) as f:
             raw = yaml.safe_load(f)
-        config = WorkflowConfig(**raw)
+        config = Graph(**raw)
 
-        phase_map = {p.id: p for p in config.phases}
-        phase4 = phase_map["phase-4"]
-        # All phase-3-* phases should be in depends_on
-        phase3_ids = {p.id for p in config.phases if p.id.startswith("phase-3")}
+        phase_map = {p.id: p for p in config.nodes}
+        phase4 = phase_map["node-4"]
+        # All node-3-* nodes should be in depends_on
+        phase3_ids = {p.id for p in config.nodes if p.id.startswith("node-3")}
         assert phase3_ids == set(phase4.depends_on)
 
 
 # ---------------------------------------------------------------------------
-# Phase timeout fields + effective_timeout
+# Node timeout fields + effective_timeout
 # ---------------------------------------------------------------------------
 
 
 class TestPhaseTimeout:
     def test_phase_timeout_field(self):
-        p = Phase(id="a", name="A", timeout=30.0)
+        p = Node(id="a", name="A", timeout=30.0)
         assert p.timeout == 30.0
 
     def test_phase_timeout_defaults_none(self):
-        p = Phase(id="a", name="A")
+        p = Node(id="a", name="A")
         assert p.timeout is None
 
     def test_settings_default_timeout(self):
@@ -399,16 +399,16 @@ class TestPhaseTimeout:
 
     def test_effective_timeout_phase_overrides_settings(self):
         s = Settings(default_timeout=60.0)
-        p = Phase(id="a", name="A", timeout=10.0)
+        p = Node(id="a", name="A", timeout=10.0)
         assert p.effective_timeout(s) == 10.0
 
     def test_effective_timeout_falls_back_to_settings(self):
         s = Settings(default_timeout=60.0)
-        p = Phase(id="a", name="A")
+        p = Node(id="a", name="A")
         assert p.effective_timeout(s) == 60.0
 
     def test_effective_timeout_both_none(self):
         s = Settings()
-        p = Phase(id="a", name="A")
+        p = Node(id="a", name="A")
         assert p.effective_timeout(s) is None
 

@@ -8,7 +8,7 @@ Draws a handful of seed prompts from two buckets:
     Irreproducible Results, which has been publishing deadpan absurd
     science since 1955)
 
-The downstream `choose_topic` prompt phase reads these and synthesizes
+The downstream `choose_topic` prompt node reads these and synthesizes
 a single absurd research domain. Splitting seed → synthesis exercises
 the command→prompt handoff and gives Claude room to riff instead of
 picking verbatim from a list.

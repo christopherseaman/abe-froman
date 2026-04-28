@@ -9,24 +9,24 @@ from typing import TYPE_CHECKING, Any, Callable
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
 
-from abe_froman.compile.dynamic import _make_final_phase_node, _make_subphase_node
-from abe_froman.compile.nodes import _make_evaluation_node, _make_phase_node
+from abe_froman.compile.dynamic import _make_final_fan_out_node, _make_fan_out_node
+from abe_froman.compile.nodes import _make_evaluation_node, _make_execution_node
 from abe_froman.runtime.state import WorkflowState
-from abe_froman.schema.models import Phase, WorkflowConfig
+from abe_froman.schema.models import Node, Graph
 
 if TYPE_CHECKING:
     from abe_froman.runtime.result import PhaseExecutor
 
 
-def _find_terminal_phases(config: WorkflowConfig) -> set[str]:
+def _find_terminal_phases(config: Graph) -> set[str]:
     depended_on: set[str] = set()
-    for phase in config.phases:
-        depended_on.update(phase.depends_on)
-    return {p.id for p in config.phases if p.id not in depended_on}
+    for node in config.nodes:
+        depended_on.update(node.depends_on)
+    return {p.id for p in config.nodes if p.id not in depended_on}
 
 
-def _detect_cycles(config: WorkflowConfig) -> None:
-    adj: dict[str, list[str]] = {p.id: list(p.depends_on) for p in config.phases}
+def _detect_cycles(config: Graph) -> None:
+    adj: dict[str, list[str]] = {p.id: list(p.depends_on) for p in config.nodes}
     WHITE, GRAY, BLACK = 0, 1, 2
     color = {pid: WHITE for pid in adj}
 
@@ -60,17 +60,17 @@ def _make_evaluation_router(
     a destination: failed → END, completed → pass targets, else (retry)
     → the upstream execution node for another attempt.
 
-    ``node_id_resolver`` lets subphase routers derive the per-branch id
-    from ``state._subphase_item`` — the subphase node evaluates inline
+    ``node_id_resolver`` lets child routers derive the per-branch id
+    from ``state._fan_out_item`` — the child node evaluates inline
     and loops back via a conditional edge, preserving per-branch state.
     """
     resolve = node_id_resolver or (lambda _s: execution_node_id)
 
     def router(state: WorkflowState) -> str | list[str]:
         node_id = resolve(state)
-        if node_id in state.get("failed_phases", []):
+        if node_id in state.get("failed_nodes", []):
             return END
-        if node_id in state.get("completed_phases", []):
+        if node_id in state.get("completed_nodes", []):
             return pass_targets[0] if len(pass_targets) == 1 else pass_targets
         return execution_node_id
 
@@ -78,23 +78,23 @@ def _make_evaluation_router(
 
 
 def _subphase_id_resolver(parent_id: str) -> Callable[[WorkflowState], str]:
-    """Resolve the per-branch subphase node_id from `_subphase_item`."""
+    """Resolve the per-branch child node_id from `_fan_out_item`."""
     def resolve(state: WorkflowState) -> str:
-        item = state.get("_subphase_item", {}) or {}
+        item = state.get("_fan_out_item", {}) or {}
         return f"{parent_id}::{item.get('id', 'unknown')}"
     return resolve
 
 
 def _register_evaluation_node(
     builder: StateGraph,
-    phase: Phase,
-    config: WorkflowConfig,
+    node: Node,
+    config: Graph,
     executor: PhaseExecutor | None,
     exec_node_id: str | None = None,
 ) -> str:
     """Register `_eval_{exec_node_id}` and return its id."""
-    eval_id = f"_eval_{exec_node_id or phase.id}"
-    builder.add_node(eval_id, _make_evaluation_node(phase, config, executor))
+    eval_id = f"_eval_{exec_node_id or node.id}"
+    builder.add_node(eval_id, _make_evaluation_node(node, config, executor))
     return eval_id
 
 
@@ -110,8 +110,8 @@ def _wire_evaluation_pair(
     builder.add_conditional_edges(eval_id, router, [exec_id, END, *pass_targets])
 
 
-def _read_manifest(state: WorkflowState, phase: Phase) -> list[dict]:
-    output = state.get("phase_outputs", {}).get(phase.id, "")
+def _read_manifest(state: WorkflowState, node: Node) -> list[dict]:
+    output = state.get("node_outputs", {}).get(node.id, "")
     try:
         data = json.loads(output)
         if isinstance(data, dict) and "items" in data:
@@ -121,9 +121,9 @@ def _read_manifest(state: WorkflowState, phase: Phase) -> list[dict]:
     except (json.JSONDecodeError, TypeError):
         pass
 
-    if phase.dynamic_subphases and phase.dynamic_subphases.manifest_path:
+    if node.fan_out and node.fan_out.manifest_path:
         manifest_file = (
-            Path(state.get("workdir", ".")) / phase.dynamic_subphases.manifest_path
+            Path(state.get("workdir", ".")) / node.fan_out.manifest_path
         )
         try:
             data = json.loads(manifest_file.read_text())
@@ -137,27 +137,27 @@ def _read_manifest(state: WorkflowState, phase: Phase) -> list[dict]:
     return []
 
 
-def _make_dynamic_router(phase: Phase, config: WorkflowConfig):
-    template_node_id = f"_sub_{phase.id}"
+def _make_dynamic_router(node: Node, config: Graph):
+    template_node_id = f"_sub_{node.id}"
 
-    dsc = phase.dynamic_subphases
-    if dsc.final_phases:
-        no_items_target = f"_final_{phase.id}_{dsc.final_phases[0].id}"
+    dsc = node.fan_out
+    if dsc.final_nodes:
+        no_items_target = f"_final_{node.id}_{dsc.final_nodes[0].id}"
     else:
         no_items_target = None
 
     def router(state: WorkflowState):
-        if phase.id in state.get("failed_phases", []):
+        if node.id in state.get("failed_nodes", []):
             return "fail"
-        if phase.evaluation and phase.id not in state.get("completed_phases", []):
+        if node.evaluation and node.id not in state.get("completed_nodes", []):
             return "retry"
 
-        items = _read_manifest(state, phase)
+        items = _read_manifest(state, node)
         if not items:
             return "no_items"
 
         return [
-            Send(template_node_id, {**state, "_subphase_item": item})
+            Send(template_node_id, {**state, "_fan_out_item": item})
             for item in items
         ]
 
@@ -165,7 +165,7 @@ def _make_dynamic_router(phase: Phase, config: WorkflowConfig):
 
 
 def build_workflow_graph(
-    config: WorkflowConfig,
+    config: Graph,
     executor: PhaseExecutor | None = None,
     checkpointer: Any = None,
 ) -> Any:
@@ -178,163 +178,163 @@ def build_workflow_graph(
 
     builder = StateGraph(WorkflowState)
     terminal_ids = _find_terminal_phases(config)
-    phase_map = {p.id: p for p in config.phases}
+    phase_map = {p.id: p for p in config.nodes}
 
     gated_phase_ids: set[str] = set()
     dynamic_phase_ids: set[str] = set()
     gated_dynamic_template_ids: set[str] = set()
 
-    for phase in config.phases:
-        if phase.evaluation:
-            gated_phase_ids.add(phase.id)
-        if phase.dynamic_subphases and phase.dynamic_subphases.enabled:
-            dynamic_phase_ids.add(phase.id)
-            if phase.dynamic_subphases.template.evaluation:
-                gated_dynamic_template_ids.add(phase.id)
+    for node in config.nodes:
+        if node.evaluation:
+            gated_phase_ids.add(node.id)
+        if node.fan_out and node.fan_out.enabled:
+            dynamic_phase_ids.add(node.id)
+            if node.fan_out.template.evaluation:
+                gated_dynamic_template_ids.add(node.id)
 
     # ----- Node registration -----
 
-    # Execution nodes for every configured phase.
-    for phase in config.phases:
-        builder.add_node(phase.id, _make_phase_node(phase, config, executor))
+    # Execution nodes for every configured node.
+    for node in config.nodes:
+        builder.add_node(node.id, _make_execution_node(node, config, executor))
 
-    # Evaluation nodes for every gated phase (top-level, dynamic parents,
-    # and gated final phases). Dynamic parents' eval runs before the fan-
+    # Evaluation nodes for every gated node (top-level, dynamic parents,
+    # and gated final nodes). Dynamic parents' eval runs before the fan-
     # out router so it sees completed/retries/failed state.
-    for phase in config.phases:
-        if phase.evaluation:
-            _register_evaluation_node(builder, phase, config, executor)
+    for node in config.nodes:
+        if node.evaluation:
+            _register_evaluation_node(builder, node, config, executor)
 
-    # Dynamic phase subphase template + final nodes.
+    # Dynamic node child template + final nodes.
     final_node_ids: dict[tuple[str, str], str] = {}
     gated_final_ids: set[str] = set()
-    for phase_id in dynamic_phase_ids:
-        phase = phase_map[phase_id]
-        builder.add_node(f"_sub_{phase.id}", _make_subphase_node(phase, config, executor))
+    for node_id in dynamic_phase_ids:
+        node = phase_map[node_id]
+        builder.add_node(f"_sub_{node.id}", _make_fan_out_node(node, config, executor))
 
-        for final_phase in phase.dynamic_subphases.final_phases:
-            fid = f"_final_{phase.id}_{final_phase.id}"
-            final_node_ids[(phase.id, final_phase.id)] = fid
+        for final_phase in node.fan_out.final_nodes:
+            fid = f"_final_{node.id}_{final_phase.id}"
+            final_node_ids[(node.id, final_phase.id)] = fid
             builder.add_node(
-                fid, _make_final_phase_node(phase, final_phase, config, executor),
+                fid, _make_final_fan_out_node(node, final_phase, config, executor),
             )
             if final_phase.evaluation:
                 gated_final_ids.add(fid)
-                synthetic = Phase(
+                synthetic = Node(
                     id=fid, name=final_phase.name, evaluation=final_phase.evaluation,
-                    model=phase.model,
+                    model=node.model,
                 )
                 _register_evaluation_node(builder, synthetic, config, executor, exec_node_id=fid)
 
     # ----- exit_node: what downstream deps plain-edge from -----
-    # For gated phases, downstream waits on the eval node, not execution.
+    # For gated nodes, downstream waits on the eval node, not execution.
 
     exit_node: dict[str, str] = {}
     needs_conditional: set[str] = set()
 
-    for phase in config.phases:
-        if phase.id in dynamic_phase_ids:
-            dsc = phase.dynamic_subphases
-            if dsc.final_phases:
-                last_final_id = final_node_ids[(phase.id, dsc.final_phases[-1].id)]
-                exit_node[phase.id] = (
+    for node in config.nodes:
+        if node.id in dynamic_phase_ids:
+            dsc = node.fan_out
+            if dsc.final_nodes:
+                last_final_id = final_node_ids[(node.id, dsc.final_nodes[-1].id)]
+                exit_node[node.id] = (
                     f"_eval_{last_final_id}"
                     if last_final_id in gated_final_ids
                     else last_final_id
                 )
             else:
-                exit_node[phase.id] = f"_sub_{phase.id}"
-            needs_conditional.add(phase.id)
-        elif phase.id in gated_phase_ids:
-            exit_node[phase.id] = f"_eval_{phase.id}"
-            needs_conditional.add(phase.id)
+                exit_node[node.id] = f"_sub_{node.id}"
+            needs_conditional.add(node.id)
+        elif node.id in gated_phase_ids:
+            exit_node[node.id] = f"_eval_{node.id}"
+            needs_conditional.add(node.id)
         else:
-            exit_node[phase.id] = phase.id
+            exit_node[node.id] = node.id
 
-    # ----- Plain edges: start + dep-to-phase -----
+    # ----- Plain edges: start + dep-to-node -----
 
     has_incoming: set[str] = set()
 
-    for phase in config.phases:
-        if not phase.depends_on:
+    for node in config.nodes:
+        if not node.depends_on:
             continue
 
-        for dep in phase.depends_on:
+        for dep in node.depends_on:
             if dep in needs_conditional:
                 # Conditional edge from the dep (or its eval) handles routing.
                 pass
             else:
-                builder.add_edge(exit_node[dep], phase.id)
-            has_incoming.add(phase.id)
+                builder.add_edge(exit_node[dep], node.id)
+            has_incoming.add(node.id)
 
-    for phase in config.phases:
-        if phase.id not in has_incoming:
-            builder.add_edge(START, phase.id)
+    for node in config.nodes:
+        if node.id not in has_incoming:
+            builder.add_edge(START, node.id)
 
-    # ----- Top-level gated phase wiring (non-dynamic) -----
+    # ----- Top-level gated node wiring (non-dynamic) -----
 
-    for phase in config.phases:
-        if phase.id not in gated_phase_ids or phase.id in dynamic_phase_ids:
+    for node in config.nodes:
+        if node.id not in gated_phase_ids or node.id in dynamic_phase_ids:
             continue
-        deps_of = [p.id for p in config.phases if phase.id in p.depends_on]
-        _wire_evaluation_pair(builder, phase.id, deps_of or [END])
+        deps_of = [p.id for p in config.nodes if node.id in p.depends_on]
+        _wire_evaluation_pair(builder, node.id, deps_of or [END])
 
-    # ----- Dynamic phase wiring -----
+    # ----- Dynamic node wiring -----
 
-    for phase_id in dynamic_phase_ids:
-        phase = phase_map[phase_id]
-        dsc = phase.dynamic_subphases
-        template_id = f"_sub_{phase.id}"
+    for node_id in dynamic_phase_ids:
+        node = phase_map[node_id]
+        dsc = node.fan_out
+        template_id = f"_sub_{node.id}"
 
-        # Gated parent: plain edge phase → _eval_phase so the dynamic router
+        # Gated parent: plain edge node → _eval_phase so the dynamic router
         # attaches to the eval node (and sees completed/retries/failed).
-        if phase.id in gated_phase_ids:
-            builder.add_edge(phase.id, f"_eval_{phase.id}")
-            dynamic_source = f"_eval_{phase.id}"
+        if node.id in gated_phase_ids:
+            builder.add_edge(node.id, f"_eval_{node.id}")
+            dynamic_source = f"_eval_{node.id}"
         else:
-            dynamic_source = phase.id
+            dynamic_source = node.id
 
-        # _sub_ → first_final (subphase evaluates inline per branch).
+        # _sub_ → first_final (child evaluates inline per branch).
         # Final chain: each gated final is followed by its eval with retry
         # self-loop; ungated finals get a plain edge to the next in line.
-        if dsc.final_phases:
-            builder.add_edge(template_id, final_node_ids[(phase.id, dsc.final_phases[0].id)])
-            for i in range(len(dsc.final_phases) - 1):
-                cur = final_node_ids[(phase.id, dsc.final_phases[i].id)]
-                nxt = final_node_ids[(phase.id, dsc.final_phases[i + 1].id)]
+        if dsc.final_nodes:
+            builder.add_edge(template_id, final_node_ids[(node.id, dsc.final_nodes[0].id)])
+            for i in range(len(dsc.final_nodes) - 1):
+                cur = final_node_ids[(node.id, dsc.final_nodes[i].id)]
+                nxt = final_node_ids[(node.id, dsc.final_nodes[i + 1].id)]
                 if cur in gated_final_ids:
                     _wire_evaluation_pair(builder, cur, [nxt])
                 else:
                     builder.add_edge(cur, nxt)
 
         # Branch exit → parent's dependents.
-        deps_of = [p.id for p in config.phases if phase.id in p.depends_on]
+        deps_of = [p.id for p in config.nodes if node.id in p.depends_on]
         last_final = (
-            final_node_ids[(phase.id, dsc.final_phases[-1].id)]
-            if dsc.final_phases else None
+            final_node_ids[(node.id, dsc.final_nodes[-1].id)]
+            if dsc.final_nodes else None
         )
         if last_final and last_final in gated_final_ids:
             _wire_evaluation_pair(builder, last_final, deps_of or [END])
         else:
             for tgt in (deps_of or [END]):
-                builder.add_edge(exit_node[phase.id], tgt)
+                builder.add_edge(exit_node[node.id], tgt)
 
         # Fan-out router at the dynamic source.
-        router, no_items_target = _make_dynamic_router(phase, config)
+        router, no_items_target = _make_dynamic_router(node, config)
         route_map = {
-            "retry": phase.id, "fail": END,
+            "retry": node.id, "fail": END,
             "no_items": no_items_target or (deps_of[0] if deps_of else END),
         }
         builder.add_conditional_edges(dynamic_source, router, route_map)
 
-    # ----- Terminal plain-end edges for ungated, non-dynamic phases -----
+    # ----- Terminal plain-end edges for ungated, non-dynamic nodes -----
 
-    for phase in config.phases:
+    for node in config.nodes:
         if (
-            phase.id in terminal_ids
-            and phase.id not in gated_phase_ids
-            and phase.id not in dynamic_phase_ids
+            node.id in terminal_ids
+            and node.id not in gated_phase_ids
+            and node.id not in dynamic_phase_ids
         ):
-            builder.add_edge(phase.id, END)
+            builder.add_edge(node.id, END)
 
     return builder.compile(checkpointer=checkpointer)

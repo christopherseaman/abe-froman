@@ -1,4 +1,4 @@
-"""Validate that the outline phase emitted a well-formed 4-section JSON manifest.
+"""Validate that the outline node emitted a well-formed 4-section JSON manifest.
 
 Required shape:
     {"items": [

@@ -2,7 +2,7 @@
 
 ## Task
 
-The topic-synthesis phase has selected the following research domain (JSON with `topic` and `rationale` fields — use the `topic` value as the subject of the paper; the rationale is context only):
+The topic-synthesis node has selected the following research domain (JSON with `topic` and `rationale` fields — use the `topic` value as the subject of the paper; the rationale is context only):
 
 ```
 {{choose_topic}}

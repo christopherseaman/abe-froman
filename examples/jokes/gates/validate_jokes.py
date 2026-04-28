@@ -1,4 +1,4 @@
-"""Validate that phase output is valid JSON with exactly 5 joke strings."""
+"""Validate that node output is valid JSON with exactly 5 joke strings."""
 
 import json
 import sys

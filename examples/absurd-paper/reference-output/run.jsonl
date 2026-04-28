@@ -1,24 +1,24 @@
 {"ts": "2026-04-22T20:31:51.378689+00:00", "event": "workflow_start", "workflow": "Absurd Academic Paper", "version": "0.1.0"}
-{"ts": "2026-04-22T20:31:51.418123+00:00", "event": "phase_completed", "phase": "seed_inspiration"}
-{"ts": "2026-04-22T20:32:10.574515+00:00", "event": "phase_completed", "phase": "choose_topic"}
-{"ts": "2026-04-22T20:32:10.574609+00:00", "event": "gate_evaluated", "phase": "choose_topic", "invocation": 0, "score": 0.0, "scores": {"absurdity": 0.85, "specificity": 0.75, "methodological_hook": 0.9}}
-{"ts": "2026-04-22T20:32:31.022914+00:00", "event": "phase_completed", "phase": "abstract"}
-{"ts": "2026-04-22T20:32:31.023018+00:00", "event": "gate_evaluated", "phase": "abstract", "invocation": 0, "score": 0.0, "scores": {"rigor": 0.92, "humor": 0.88, "buzzwords": 0.95}}
-{"ts": "2026-04-22T20:33:09.217863+00:00", "event": "phase_completed", "phase": "outline"}
-{"ts": "2026-04-22T20:33:09.217914+00:00", "event": "gate_evaluated", "phase": "outline", "invocation": 0, "score": 1.0}
-{"ts": "2026-04-22T20:35:01.020857+00:00", "event": "phase_completed", "phase": "intro"}
-{"ts": "2026-04-22T20:35:01.020958+00:00", "event": "phase_completed", "phase": "results"}
-{"ts": "2026-04-22T20:35:01.020977+00:00", "event": "phase_completed", "phase": "methods"}
-{"ts": "2026-04-22T20:35:01.020989+00:00", "event": "phase_completed", "phase": "discussion"}
-{"ts": "2026-04-22T20:37:12.534546+00:00", "event": "phase_completed", "phase": "reconcile"}
-{"ts": "2026-04-22T20:37:12.573555+00:00", "event": "phase_completed", "phase": "persist_paper"}
-{"ts": "2026-04-22T20:37:12.613643+00:00", "event": "phase_completed", "phase": "submission_check"}
-{"ts": "2026-04-22T20:37:12.613706+00:00", "event": "gate_evaluated", "phase": "submission_check", "invocation": 0, "score": 1.0}
-{"ts": "2026-04-22T20:37:14.871847+00:00", "event": "phase_completed", "phase": "render_pdf"}
-{"ts": "2026-04-22T20:37:42.455381+00:00", "event": "phase_completed", "phase": "reviewer_pool"}
-{"ts": "2026-04-22T20:38:59.728491+00:00", "event": "phase_completed", "phase": "reviewer_pool::applied"}
-{"ts": "2026-04-22T20:38:59.728575+00:00", "event": "phase_completed", "phase": "reviewer_pool::pedant"}
-{"ts": "2026-04-22T20:38:59.728592+00:00", "event": "phase_completed", "phase": "reviewer_pool::maverick"}
-{"ts": "2026-04-22T20:39:40.019821+00:00", "event": "phase_completed", "phase": "_final_reviewer_pool_publish_verdict"}
-{"ts": "2026-04-22T20:39:40.019862+00:00", "event": "gate_evaluated", "phase": "_final_reviewer_pool_publish_verdict", "invocation": 0, "score": 0.0, "scores": {"tone": 0.95, "coherence": 0.97}}
+{"ts": "2026-04-22T20:31:51.418123+00:00", "event": "node_completed", "node": "seed_inspiration"}
+{"ts": "2026-04-22T20:32:10.574515+00:00", "event": "node_completed", "node": "choose_topic"}
+{"ts": "2026-04-22T20:32:10.574609+00:00", "event": "gate_evaluated", "node": "choose_topic", "invocation": 0, "score": 0.0, "scores": {"absurdity": 0.85, "specificity": 0.75, "methodological_hook": 0.9}}
+{"ts": "2026-04-22T20:32:31.022914+00:00", "event": "node_completed", "node": "abstract"}
+{"ts": "2026-04-22T20:32:31.023018+00:00", "event": "gate_evaluated", "node": "abstract", "invocation": 0, "score": 0.0, "scores": {"rigor": 0.92, "humor": 0.88, "buzzwords": 0.95}}
+{"ts": "2026-04-22T20:33:09.217863+00:00", "event": "node_completed", "node": "outline"}
+{"ts": "2026-04-22T20:33:09.217914+00:00", "event": "gate_evaluated", "node": "outline", "invocation": 0, "score": 1.0}
+{"ts": "2026-04-22T20:35:01.020857+00:00", "event": "node_completed", "node": "intro"}
+{"ts": "2026-04-22T20:35:01.020958+00:00", "event": "node_completed", "node": "results"}
+{"ts": "2026-04-22T20:35:01.020977+00:00", "event": "node_completed", "node": "methods"}
+{"ts": "2026-04-22T20:35:01.020989+00:00", "event": "node_completed", "node": "discussion"}
+{"ts": "2026-04-22T20:37:12.534546+00:00", "event": "node_completed", "node": "reconcile"}
+{"ts": "2026-04-22T20:37:12.573555+00:00", "event": "node_completed", "node": "persist_paper"}
+{"ts": "2026-04-22T20:37:12.613643+00:00", "event": "node_completed", "node": "submission_check"}
+{"ts": "2026-04-22T20:37:12.613706+00:00", "event": "gate_evaluated", "node": "submission_check", "invocation": 0, "score": 1.0}
+{"ts": "2026-04-22T20:37:14.871847+00:00", "event": "node_completed", "node": "render_pdf"}
+{"ts": "2026-04-22T20:37:42.455381+00:00", "event": "node_completed", "node": "reviewer_pool"}
+{"ts": "2026-04-22T20:38:59.728491+00:00", "event": "node_completed", "node": "reviewer_pool::applied"}
+{"ts": "2026-04-22T20:38:59.728575+00:00", "event": "node_completed", "node": "reviewer_pool::pedant"}
+{"ts": "2026-04-22T20:38:59.728592+00:00", "event": "node_completed", "node": "reviewer_pool::maverick"}
+{"ts": "2026-04-22T20:39:40.019821+00:00", "event": "node_completed", "node": "_final_reviewer_pool_publish_verdict"}
+{"ts": "2026-04-22T20:39:40.019862+00:00", "event": "gate_evaluated", "node": "_final_reviewer_pool_publish_verdict", "invocation": 0, "score": 0.0, "scores": {"tone": 0.95, "coherence": 0.97}}
 {"ts": "2026-04-22T20:39:40.019934+00:00", "event": "workflow_end", "completed": 17, "failed": 0}

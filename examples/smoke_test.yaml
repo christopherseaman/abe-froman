@@ -1,7 +1,7 @@
 name: "ACP Smoke Test"
 version: "0.1.0"
 
-phases:
+nodes:
   - id: hello
     name: "Hello World"
     prompt_file: "examples/prompts/hello.md"

@@ -88,7 +88,7 @@ def _parse_evaluation_output(
 
 async def run_evaluation_script(
     validator_path: str,
-    phase_id: str,
+    node_id: str,
     workdir: str,
     phase_output: str = "",
     workflow_name: str = "",
@@ -97,7 +97,7 @@ async def run_evaluation_script(
 ) -> EvaluationResult:
     """Run a .py or .js validator script and parse its response.
 
-    The phase output is passed via stdin so validators can inspect it.
+    The node output is passed via stdin so validators can inspect it.
     Returns an EvaluationResult; bare-float output is wrapped with feedback=None.
     """
     path = Path(validator_path)
@@ -114,7 +114,7 @@ async def run_evaluation_script(
 
     env = {
         **os.environ,
-        "PHASE_ID": phase_id,
+        "NODE_ID": node_id,
         "WORKFLOW_NAME": workflow_name,
         "ATTEMPT_NUMBER": str(attempt_number),
         "WORKDIR": workdir,
@@ -150,7 +150,7 @@ async def run_evaluation_script(
 
 async def run_evaluation_llm(
     evaluation: Evaluation,
-    phase_id: str,
+    node_id: str,
     workdir: str,
     phase_output: str,
     backend: Any,
@@ -161,7 +161,7 @@ async def run_evaluation_llm(
     """Evaluate a .md prompt-based evaluation via an LLM backend.
 
     The evaluation's .md file is rendered as a Jinja2 template with the
-    phase output, phase id, and attempt number available as context. The
+    node output, node id, and attempt number available as context. The
     backend's response must be JSON matching the feedback schema.
     """
     from abe_froman.runtime.executor.prompt import render_template
@@ -178,7 +178,7 @@ async def run_evaluation_llm(
         template_text,
         {
             "output": phase_output,
-            "phase_id": phase_id,
+            "node_id": node_id,
             "attempt": attempt_number,
         },
     )
@@ -196,7 +196,7 @@ async def run_evaluation_llm(
 
 async def run_evaluation(
     evaluation: Evaluation,
-    phase_id: str,
+    node_id: str,
     workdir: str = ".",
     phase_output: str = "",
     workflow_name: str = "",
@@ -215,7 +215,7 @@ async def run_evaluation(
 
     if suffix in (".py", ".js"):
         return await run_evaluation_script(
-            evaluation.validator, phase_id, workdir, phase_output,
+            evaluation.validator, node_id, workdir, phase_output,
             workflow_name=workflow_name, attempt_number=attempt_number,
             require_score=require_score,
         )
@@ -226,7 +226,7 @@ async def run_evaluation(
                 f"PromptBackend but none was provided"
             )
         return await run_evaluation_llm(
-            evaluation, phase_id, workdir, phase_output,
+            evaluation, node_id, workdir, phase_output,
             backend=backend, default_model=default_model,
             attempt_number=attempt_number, require_score=require_score,
         )
@@ -237,7 +237,7 @@ async def run_evaluation(
 
 
 def scaffold_output_directory(contract: OutputContract, workdir: str) -> None:
-    """Pre-create the output directory tree for a phase's output contract."""
+    """Pre-create the output directory tree for a node's output contract."""
     base = Path(workdir) / contract.base_directory
     base.mkdir(parents=True, exist_ok=True)
 

@@ -135,7 +135,7 @@ class TestGateEvaluation:
 
 class TestGateNodePassFail:
     """Test gates in the context of actual graph execution with real validators
-    that inspect phase output via stdin."""
+    that inspect node output via stdin."""
 
     @pytest.mark.asyncio
     async def test_passing_gate_allows_dependent(self, tmp_path):
@@ -151,7 +151,7 @@ class TestGateNodePassFail:
                     "id": "a",
                     "name": "A",
                     "execution": {"type": "command", "command": "cat", "args": [str(payload)]},
-                    "quality_gate": {
+                    "evaluation": {
                         "validator": str(validator),
                         "threshold": 1.0,
                         "blocking": True,
@@ -169,8 +169,8 @@ class TestGateNodePassFail:
         graph = build_workflow_graph(config, executor)
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
 
-        assert "a" in result["completed_phases"]
-        assert "b" in result["completed_phases"]
+        assert "a" in result["completed_nodes"]
+        assert "b" in result["completed_nodes"]
         assert result["evaluations"]["a"][-1]["result"]["score"] == 1.0
 
     @pytest.mark.asyncio
@@ -185,7 +185,7 @@ class TestGateNodePassFail:
                     "id": "a",
                     "name": "A",
                     "execution": {"type": "command", "command": "echo", "args": ["not json"]},
-                    "quality_gate": {
+                    "evaluation": {
                         "validator": str(validator),
                         "threshold": 1.0,
                         "blocking": True,
@@ -204,13 +204,13 @@ class TestGateNodePassFail:
         graph = build_workflow_graph(config, executor)
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
 
-        assert "a" in result["failed_phases"]
-        assert "b" not in result["completed_phases"]
+        assert "a" in result["failed_nodes"]
+        assert "b" not in result["completed_nodes"]
         assert result["evaluations"]["a"][-1]["result"]["score"] == 0.0
 
     @pytest.mark.asyncio
     async def test_non_blocking_gate_failure_continues(self, tmp_path):
-        """Non-blocking gate failure: phase completes with warning, dependent runs."""
+        """Non-blocking gate failure: node completes with warning, dependent runs."""
         validator = tmp_path / "validator.py"
         validator.write_text(JSON_VALIDATOR)
 
@@ -220,7 +220,7 @@ class TestGateNodePassFail:
                     "id": "a",
                     "name": "A",
                     "execution": {"type": "command", "command": "echo", "args": ["bad"]},
-                    "quality_gate": {
+                    "evaluation": {
                         "validator": str(validator),
                         "threshold": 1.0,
                         "blocking": False,
@@ -239,8 +239,8 @@ class TestGateNodePassFail:
         graph = build_workflow_graph(config, executor)
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
 
-        assert "a" in result["completed_phases"]
-        assert "b" in result["completed_phases"]
+        assert "a" in result["completed_nodes"]
+        assert "b" in result["completed_nodes"]
         assert any("non-blocking" in e["error"].lower() for e in result["errors"])
 
 
@@ -276,10 +276,10 @@ class TestGateEnvironment:
         script = tmp_path / "env_check.py"
         script.write_text(
             "import os\n"
-            "print('1.0' if os.environ.get('PHASE_ID') == 'my-phase' else '0.0')\n"
+            "print('1.0' if os.environ.get('NODE_ID') == 'my-node' else '0.0')\n"
         )
         gate = Evaluation(validator=str(script), threshold=0.8)
-        result = await run_evaluation(gate, "my-phase", workdir=str(tmp_path))
+        result = await run_evaluation(gate, "my-node", workdir=str(tmp_path))
         assert result.score == 1.0
 
     @pytest.mark.asyncio
@@ -347,7 +347,7 @@ class TestGateEnvironment:
                         "command": "python3",
                         "args": [str(counter_script)],
                     },
-                    "quality_gate": {
+                    "evaluation": {
                         "validator": str(validator),
                         "threshold": 1.0,
                         "blocking": True,
@@ -360,7 +360,7 @@ class TestGateEnvironment:
         graph = build_workflow_graph(config, executor)
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
 
-        assert "a" in result["completed_phases"]
+        assert "a" in result["completed_nodes"]
         assert result["evaluations"]["a"][-1]["result"]["score"] == 1.0
 
     @pytest.mark.asyncio
@@ -415,7 +415,7 @@ class TestRetryBackoff:
                         "command": "python3",
                         "args": [str(counter_script)],
                     },
-                    "quality_gate": {
+                    "evaluation": {
                         "validator": str(validator),
                         "threshold": 1.0,
                         "blocking": True,
@@ -432,7 +432,7 @@ class TestRetryBackoff:
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
         elapsed = time.monotonic() - t0
 
-        assert "a" in result["completed_phases"]
+        assert "a" in result["completed_nodes"]
         assert elapsed >= 0.05 + 0.1, f"retries ran too fast ({elapsed:.3f}s); backoff not applied"
         # Upper bound: backoff (0.15s) + generous wall-clock slack for 3 subprocess
         # executions + 3 validator runs. If we blow past this, something other
@@ -480,7 +480,7 @@ class TestJokeWorkflowIntegration:
                     "id": "generate",
                     "name": "Generate Jokes",
                     "prompt_file": "generate.md",
-                    "quality_gate": {
+                    "evaluation": {
                         "validator": str(validator),
                         "threshold": 1.0,
                         "blocking": True,
@@ -505,15 +505,15 @@ class TestJokeWorkflowIntegration:
             graph = build_workflow_graph(config, executor)
             result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
 
-            assert "generate" in result["completed_phases"]
-            assert "select" in result["completed_phases"]
+            assert "generate" in result["completed_nodes"]
+            assert "select" in result["completed_nodes"]
             assert result["evaluations"]["generate"][-1]["result"]["score"] == 1.0
 
-            gen_output = result["phase_outputs"]["generate"]
+            gen_output = result["node_outputs"]["generate"]
             data = json.loads(gen_output)
             assert len(data["jokes"]) == 3
 
-            assert len(result["phase_outputs"]["select"]) > 0
+            assert len(result["node_outputs"]["select"]) > 0
         finally:
             await executor.close()
 
@@ -745,7 +745,7 @@ class TestMDGateDispatchGuard:
     @pytest.mark.asyncio
     async def test_llm_gate_missing_template_returns_loud_failure(self, tmp_path):
         """A typo'd or deleted `.md` template must yield a structured EvaluationResult,
-        not raise FileNotFoundError up through the phase node."""
+        not raise FileNotFoundError up through the node node."""
         from abe_froman.runtime.executor.backends.stub import StubBackend
 
         gate = Evaluation(validator="gates/nonexistent.md", threshold=0.8)
@@ -787,7 +787,7 @@ class TestRetryWithFeedback:
                 "id": "p",
                 "name": "P",
                 "execution": {"type": "command", "command": "echo", "args": ["out"]},
-                "quality_gate": {
+                "evaluation": {
                     "validator": str(validator),
                     "threshold": 0.5,
                     "blocking": True,
@@ -810,10 +810,10 @@ class TestRetryWithFeedback:
         the retry reads the prior feedback from state-derived artifacts and
         asserts the orchestrator flows it through correctly.
 
-        Mechanism: the command phase writes the _retry_reason it receives
-        (via an env var we pipe in by having the phase be a real subprocess
+        Mechanism: the command node writes the _retry_reason it receives
+        (via an env var we pipe in by having the node be a real subprocess
         that records what's visible). We can't see {{_retry_reason}} from
-        inside a command phase directly, but we CAN assert end-to-end that
+        inside a command node directly, but we CAN assert end-to-end that
         gate_feedback persists in state across the retry.
         """
         attempt_file = tmp_path / "n.txt"
@@ -839,7 +839,7 @@ class TestRetryWithFeedback:
                 "id": "p",
                 "name": "P",
                 "execution": {"type": "command", "command": "python3", "args": [str(runner)]},
-                "quality_gate": {
+                "evaluation": {
                     "validator": str(validator),
                     "threshold": 0.8,
                     "blocking": True,
@@ -852,25 +852,25 @@ class TestRetryWithFeedback:
 
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
 
-        assert "p" in result["completed_phases"]
+        assert "p" in result["completed_nodes"]
         last_result = result["evaluations"]["p"][-1]["result"]
         assert last_result["feedback"] == "good"
         assert last_result["score"] == 1.0
 
     @pytest.mark.asyncio
     async def test_retry_reason_visible_to_prompt_phase_via_preamble(self, tmp_path):
-        """For prompt phases, the retry reason IS rendered into the template.
+        """For prompt nodes, the retry reason IS rendered into the template.
         We verify the rendered-prompt path by constructing the context the way
         inject_retry_reason does and asserting the rendering substitutes.
         """
         from abe_froman.compile.nodes import inject_retry_reason
         from abe_froman.runtime.executor.prompt import render_template
-        from abe_froman.schema.models import Phase, Evaluation
+        from abe_froman.schema.models import Node, Evaluation
 
-        phase = Phase(
+        node = Node(
             id="p",
             name="P",
-            quality_gate=Evaluation(validator="v.py", threshold=0.8),
+            evaluation=Evaluation(validator="v.py", threshold=0.8),
         )
         state = {
             "retries": {"p": 1},
@@ -888,7 +888,7 @@ class TestRetryWithFeedback:
                 }],
             },
         }
-        ctx = inject_retry_reason({}, phase, state, 3)
+        ctx = inject_retry_reason({}, node, state, 3)
         template = "Previous feedback:\n{{ _retry_reason }}\n\nTry again."
         rendered = render_template(template, ctx)
         assert "more depth please" in rendered
@@ -904,12 +904,12 @@ class TestRetryWithFeedback:
 class TestInjectRetryReasonFeedback:
     def test_retry_reason_without_feedback_is_score_only(self):
         from abe_froman.compile.nodes import inject_retry_reason
-        from abe_froman.schema.models import Phase, Evaluation
+        from abe_froman.schema.models import Node, Evaluation
 
-        phase = Phase(
+        node = Node(
             id="p",
             name="P",
-            quality_gate=Evaluation(validator="v.py", threshold=0.8),
+            evaluation=Evaluation(validator="v.py", threshold=0.8),
         )
         state = {
             "retries": {"p": 1},
@@ -927,18 +927,18 @@ class TestInjectRetryReasonFeedback:
                 }],
             },
         }
-        ctx = inject_retry_reason({}, phase, state, 3)
+        ctx = inject_retry_reason({}, node, state, 3)
         assert "Attempt 1 failed" in ctx["_retry_reason"]
         assert "Feedback:" not in ctx["_retry_reason"]
 
     def test_retry_reason_with_feedback_includes_it(self):
         from abe_froman.compile.nodes import inject_retry_reason
-        from abe_froman.schema.models import Phase, Evaluation
+        from abe_froman.schema.models import Node, Evaluation
 
-        phase = Phase(
+        node = Node(
             id="p",
             name="P",
-            quality_gate=Evaluation(validator="v.py", threshold=0.8),
+            evaluation=Evaluation(validator="v.py", threshold=0.8),
         )
         state = {
             "retries": {"p": 1},
@@ -956,7 +956,7 @@ class TestInjectRetryReasonFeedback:
                 }],
             },
         }
-        ctx = inject_retry_reason({}, phase, state, 3)
+        ctx = inject_retry_reason({}, node, state, 3)
         reason = ctx["_retry_reason"]
         assert "Feedback: add more depth" in reason
         assert "- depth" in reason
@@ -964,14 +964,14 @@ class TestInjectRetryReasonFeedback:
 
     def test_retry_reason_no_retry_returns_context_unchanged(self):
         from abe_froman.compile.nodes import inject_retry_reason
-        from abe_froman.schema.models import Phase, Evaluation
+        from abe_froman.schema.models import Node, Evaluation
 
-        phase = Phase(
+        node = Node(
             id="p",
             name="P",
-            quality_gate=Evaluation(validator="v.py", threshold=0.8),
+            evaluation=Evaluation(validator="v.py", threshold=0.8),
         )
         state = {"retries": {"p": 0}, "evaluations": {}}
-        ctx = inject_retry_reason({"x": 1}, phase, state, 3)
+        ctx = inject_retry_reason({"x": 1}, node, state, 3)
         assert ctx == {"x": 1}
         assert "_retry_reason" not in ctx

@@ -53,35 +53,35 @@ class TestLogSnapshot:
     def test_detects_completed(self):
         buf = StringIO()
         logger = JsonlLogger(buf)
-        prev = {"completed_phases": [], "failed_phases": [], "retries": {}, "errors": []}
-        curr = {**prev, "completed_phases": ["research"]}
+        prev = {"completed_nodes": [], "failed_nodes": [], "retries": {}, "errors": []}
+        curr = {**prev, "completed_nodes": ["research"]}
         logger.log_snapshot(prev, curr)
         events = [json.loads(l) for l in buf.getvalue().strip().split("\n")]
         assert len(events) == 1
-        assert events[0]["event"] == "phase_completed"
-        assert events[0]["phase"] == "research"
+        assert events[0]["event"] == "node_completed"
+        assert events[0]["node"] == "research"
 
     def test_detects_failed(self):
         buf = StringIO()
         logger = JsonlLogger(buf)
-        prev = {"completed_phases": [], "failed_phases": [], "retries": {}, "errors": []}
+        prev = {"completed_nodes": [], "failed_nodes": [], "retries": {}, "errors": []}
         curr = {
             **prev,
-            "failed_phases": ["build"],
-            "errors": [{"phase": "build", "error": "exit code 1"}],
+            "failed_nodes": ["build"],
+            "errors": [{"node": "build", "error": "exit code 1"}],
         }
         logger.log_snapshot(prev, curr)
         events = [json.loads(l) for l in buf.getvalue().strip().split("\n")]
         assert len(events) == 1
-        assert events[0]["event"] == "phase_failed"
-        assert events[0]["phase"] == "build"
+        assert events[0]["event"] == "node_failed"
+        assert events[0]["node"] == "build"
         assert events[0]["error"] == "exit code 1"
 
     def test_detects_gate(self):
         """gate_evaluated sources from state.evaluations (real scores)."""
         buf = StringIO()
         logger = JsonlLogger(buf)
-        prev = {"completed_phases": [], "failed_phases": [], "evaluations": {}, "retries": {}, "errors": []}
+        prev = {"completed_nodes": [], "failed_nodes": [], "evaluations": {}, "retries": {}, "errors": []}
         curr = {
             **prev,
             "evaluations": {
@@ -92,7 +92,7 @@ class TestLogSnapshot:
         events = [json.loads(l) for l in buf.getvalue().strip().split("\n")]
         assert len(events) == 1
         assert events[0]["event"] == "gate_evaluated"
-        assert events[0]["phase"] == "research"
+        assert events[0]["node"] == "research"
         assert events[0]["score"] == 0.95
         assert events[0]["invocation"] == 0
 
@@ -100,7 +100,7 @@ class TestLogSnapshot:
         """Per-dimension scores flow through (closes multi-dim log bug)."""
         buf = StringIO()
         logger = JsonlLogger(buf)
-        prev = {"completed_phases": [], "failed_phases": [], "evaluations": {}, "retries": {}, "errors": []}
+        prev = {"completed_nodes": [], "failed_nodes": [], "evaluations": {}, "retries": {}, "errors": []}
         curr = {
             **prev,
             "evaluations": {
@@ -119,31 +119,31 @@ class TestLogSnapshot:
     def test_detects_retry(self):
         buf = StringIO()
         logger = JsonlLogger(buf)
-        prev = {"completed_phases": [], "failed_phases": [], "retries": {}, "errors": []}
+        prev = {"completed_nodes": [], "failed_nodes": [], "retries": {}, "errors": []}
         curr = {**prev, "retries": {"research": 2}}
         logger.log_snapshot(prev, curr)
         events = [json.loads(l) for l in buf.getvalue().strip().split("\n")]
         assert len(events) == 1
-        assert events[0]["event"] == "phase_retried"
-        assert events[0]["phase"] == "research"
+        assert events[0]["event"] == "node_retried"
+        assert events[0]["node"] == "research"
         assert events[0]["attempt"] == 2
 
     def test_completed_phase_includes_tokens(self):
         buf = StringIO()
         logger = JsonlLogger(buf)
-        prev = {"completed_phases": [], "failed_phases": [], "retries": {}, "errors": [], "token_usage": {}}
-        curr = {**prev, "completed_phases": ["research"], "token_usage": {"research": {"input": 500, "output": 120}}}
+        prev = {"completed_nodes": [], "failed_nodes": [], "retries": {}, "errors": [], "token_usage": {}}
+        curr = {**prev, "completed_nodes": ["research"], "token_usage": {"research": {"input": 500, "output": 120}}}
         logger.log_snapshot(prev, curr)
         events = [json.loads(l) for l in buf.getvalue().strip().split("\n")]
         assert len(events) == 1
-        assert events[0]["event"] == "phase_completed"
+        assert events[0]["event"] == "node_completed"
         assert events[0]["tokens"] == {"input": 500, "output": 120}
 
     def test_completed_phase_without_tokens_has_no_tokens_key(self):
         buf = StringIO()
         logger = JsonlLogger(buf)
-        prev = {"completed_phases": [], "failed_phases": [], "retries": {}, "errors": [], "token_usage": {}}
-        curr = {**prev, "completed_phases": ["research"]}
+        prev = {"completed_nodes": [], "failed_nodes": [], "retries": {}, "errors": [], "token_usage": {}}
+        curr = {**prev, "completed_nodes": ["research"]}
         logger.log_snapshot(prev, curr)
         events = [json.loads(l) for l in buf.getvalue().strip().split("\n")]
         assert len(events) == 1
@@ -152,7 +152,7 @@ class TestLogSnapshot:
     def test_no_events_on_identical_snapshots(self):
         buf = StringIO()
         logger = JsonlLogger(buf)
-        state = {"completed_phases": ["a"], "failed_phases": [], "retries": {}, "errors": []}
+        state = {"completed_nodes": ["a"], "failed_nodes": [], "retries": {}, "errors": []}
         logger.log_snapshot(state, state)
         # Parse rather than string-compare so stray whitespace can't silently pass.
         events = [json.loads(l) for l in buf.getvalue().splitlines() if l.strip()]
@@ -167,7 +167,7 @@ class TestLogSnapshot:
 class TestRunWorkflowLogging:
     @pytest.mark.asyncio
     async def test_log_file_captures_workflow_events(self, tmp_path):
-        """Two-phase workflow should produce start, 2x completed, end."""
+        """Two-node workflow should produce start, 2x completed, end."""
         log_path = str(tmp_path / "events.jsonl")
         config = make_config([
             cmd_phase("a", output="hello"),
@@ -185,13 +185,13 @@ class TestRunWorkflowLogging:
         event_types = [e["event"] for e in events]
         assert event_types[0] == "workflow_start"
         assert event_types[-1] == "workflow_end"
-        assert event_types.count("phase_completed") == 2
+        assert event_types.count("node_completed") == 2
         assert events[-1]["completed"] == 2
         assert events[-1]["failed"] == 0
 
     @pytest.mark.asyncio
     async def test_log_captures_failure(self, tmp_path):
-        """Failed phase should produce phase_failed event."""
+        """Failed node should produce node_failed event."""
         log_path = str(tmp_path / "events.jsonl")
         config = make_config([fail_phase("broken")])
         executor = DispatchExecutor(workdir=str(tmp_path))
@@ -204,13 +204,13 @@ class TestRunWorkflowLogging:
 
         events = [json.loads(l) for l in (tmp_path / "events.jsonl").read_text().strip().split("\n")]
         event_types = [e["event"] for e in events]
-        assert "phase_failed" in event_types
+        assert "node_failed" in event_types
         assert events[-1]["event"] == "workflow_end"
         assert events[-1]["failed"] == 1
 
     @pytest.mark.asyncio
     async def test_log_captures_gate_and_retry(self, tmp_path):
-        """Gated phase that fails gate should produce gate + retry events."""
+        """Gated node that fails gate should produce gate + retry events."""
         validator = tmp_path / "gate.py"
         validator.write_text("print('0.0')\n")
 
@@ -219,7 +219,7 @@ class TestRunWorkflowLogging:
                 "id": "gated",
                 "name": "gated",
                 "execution": {"type": "command", "command": "echo", "args": ["-n", "output"]},
-                "quality_gate": {
+                "evaluation": {
                     "validator": str(validator),
                     "threshold": 0.9,
                     "blocking": True,
@@ -239,7 +239,7 @@ class TestRunWorkflowLogging:
         events = [json.loads(l) for l in (tmp_path / "events.jsonl").read_text().strip().split("\n")]
         event_types = [e["event"] for e in events]
         assert "gate_evaluated" in event_types
-        assert "phase_retried" in event_types
+        assert "node_retried" in event_types
 
     @pytest.mark.asyncio
     async def test_no_log_file_no_side_effects(self, tmp_path):
@@ -269,7 +269,7 @@ class TestCliLogFlag:
 
         config_path = tmp_path / "workflow.yaml"
         config_path.write_text(
-            "name: Test\nversion: '1.0'\nphases:\n"
+            "name: Test\nversion: '1.0'\nnodes:\n"
             "  - id: a\n    name: A\n    execution:\n"
             "      type: command\n      command: echo\n      args: ['-n', 'hi']\n"
         )

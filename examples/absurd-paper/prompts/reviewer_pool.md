@@ -6,7 +6,7 @@ The assembled paper is:
 {{reconcile}}
 ```
 
-Generate a manifest of **3 fake reviewers** with distinct personas. Each item must also carry a **shared 2-3 paragraph paper summary** so downstream per-reviewer subphases have enough context without re-reading the full paper.
+Generate a manifest of **3 fake reviewers** with distinct personas. Each item must also carry a **shared 2-3 paragraph paper summary** so downstream per-reviewer children have enough context without re-reading the full paper.
 
 Return ONLY a JSON object with this exact shape (no prose, no fences):
 

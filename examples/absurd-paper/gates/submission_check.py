@@ -13,8 +13,8 @@ Emits the full structured gate feedback schema so failures flow into
 `{{_retry_reason}}` — though this gate is wired as blocking with no
 retries since a malformed reconcile is a hard failure.
 
-Invoked as a `gate_only` phase's validator: ignores stdin (gate-only
-phases emit a stub output that is not the paper), reads from disk via
+Invoked as a `gate_only` node's validator: ignores stdin (gate-only
+nodes emit a stub output that is not the paper), reads from disk via
 the WORKDIR env var injected by the orchestrator.
 """
 

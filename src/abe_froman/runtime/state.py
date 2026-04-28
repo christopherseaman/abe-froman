@@ -25,19 +25,19 @@ def _merge_evaluations(
 
 class WorkflowState(TypedDict):
     workflow_name: str
-    completed_phases: Annotated[list[str], operator.add]
-    failed_phases: Annotated[list[str], operator.add]
-    phase_outputs: Annotated[dict[str, Any], _merge_dicts]
+    completed_nodes: Annotated[list[str], operator.add]
+    failed_nodes: Annotated[list[str], operator.add]
+    node_outputs: Annotated[dict[str, Any], _merge_dicts]
     phase_structured_outputs: Annotated[dict[str, Any], _merge_dicts]
     evaluations: Annotated[dict[str, list[dict[str, Any]]], _merge_evaluations]
     retries: Annotated[dict[str, int], _merge_dicts]
-    subphase_outputs: Annotated[dict[str, Any], _merge_dicts]
+    child_outputs: Annotated[dict[str, Any], _merge_dicts]
     token_usage: Annotated[dict[str, dict[str, int]], _merge_dicts]
-    phase_worktrees: Annotated[dict[str, str], _merge_dicts]
+    node_worktrees: Annotated[dict[str, str], _merge_dicts]
     errors: Annotated[list[dict], operator.add]
     workdir: str
     dry_run: bool
-    _subphase_item: NotRequired[dict[str, Any]]
+    _fan_out_item: NotRequired[dict[str, Any]]
 
 
 def make_initial_state(
@@ -52,15 +52,15 @@ def make_initial_state(
     """
     state: dict[str, Any] = {
         "workflow_name": workflow_name,
-        "completed_phases": [],
-        "failed_phases": [],
-        "phase_outputs": {},
+        "completed_nodes": [],
+        "failed_nodes": [],
+        "node_outputs": {},
         "phase_structured_outputs": {},
         "evaluations": {},
         "retries": {},
-        "subphase_outputs": {},
+        "child_outputs": {},
         "token_usage": {},
-        "phase_worktrees": {},
+        "node_worktrees": {},
         "errors": [],
         "workdir": workdir,
         "dry_run": dry_run,

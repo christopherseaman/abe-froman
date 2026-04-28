@@ -12,7 +12,7 @@ from helpers import cmd_phase, make_config
 
 
 # ---------------------------------------------------------------------------
-# Integration tests — command phases with real subprocesses
+# Integration tests — command nodes with real subprocesses
 # ---------------------------------------------------------------------------
 
 
@@ -35,7 +35,7 @@ class TestTimeoutCommandPhase:
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
         elapsed = time.monotonic() - t0
 
-        assert "slow" in result["failed_phases"]
+        assert "slow" in result["failed_nodes"]
         assert any("timed out" in e["error"] for e in result["errors"])
         assert elapsed < 5.0, f"timeout should fire at 0.5s, not wait {elapsed:.1f}s"
 
@@ -48,8 +48,8 @@ class TestTimeoutCommandPhase:
         graph = build_workflow_graph(config, executor)
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
 
-        assert "fast" in result["completed_phases"]
-        assert result["phase_outputs"]["fast"] == "hello"
+        assert "fast" in result["completed_nodes"]
+        assert result["node_outputs"]["fast"] == "hello"
 
     @pytest.mark.asyncio
     async def test_default_timeout_from_settings(self, tmp_path):
@@ -69,7 +69,7 @@ class TestTimeoutCommandPhase:
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
         elapsed = time.monotonic() - t0
 
-        assert "slow" in result["failed_phases"]
+        assert "slow" in result["failed_nodes"]
         assert any("timed out" in e["error"] for e in result["errors"])
         assert elapsed < 5.0, f"timeout should fire at 0.5s, not wait {elapsed:.1f}s"
 
@@ -91,7 +91,7 @@ class TestTimeoutGateValidator:
                     "id": "gated",
                     "name": "Gated",
                     "execution": {"type": "command", "command": "echo", "args": ["-n", "ok"]},
-                    "quality_gate": {
+                    "evaluation": {
                         "validator": str(slow_validator),
                         "threshold": 0.8,
                         "blocking": True,
@@ -107,13 +107,13 @@ class TestTimeoutGateValidator:
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
         elapsed = time.monotonic() - t0
 
-        assert "gated" in result["failed_phases"]
+        assert "gated" in result["failed_nodes"]
         assert any("evaluation timed out" in e["error"].lower() for e in result["errors"])
         assert elapsed < 5.0, f"gate timeout should fire at 0.5s, not wait {elapsed:.1f}s"
 
 
 # ---------------------------------------------------------------------------
-# Integration tests — mock executor (slow prompt phases)
+# Integration tests — mock executor (slow prompt nodes)
 # ---------------------------------------------------------------------------
 
 
@@ -123,9 +123,9 @@ class SlowMockExecutor:
     def __init__(self, delay: float):
         self._delay = delay
 
-    async def execute(self, phase, context):
+    async def execute(self, node, context):
         await asyncio.sleep(self._delay)
-        return ExecutionResult(success=True, output=f"[slow-mock] {phase.id}")
+        return ExecutionResult(success=True, output=f"[slow-mock] {node.id}")
 
 
 class TestTimeoutPromptPhase:
@@ -147,7 +147,7 @@ class TestTimeoutPromptPhase:
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
         elapsed = time.monotonic() - t0
 
-        assert "slow_prompt" in result["failed_phases"]
+        assert "slow_prompt" in result["failed_nodes"]
         assert any("timed out" in e["error"] for e in result["errors"])
         assert elapsed < 3.0, f"timeout should fire at 0.3s, not wait {elapsed:.1f}s"
 
@@ -167,26 +167,26 @@ class TestTimeoutPromptPhase:
         graph = build_workflow_graph(config, fast_executor)
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
 
-        assert "fast_prompt" in result["completed_phases"]
+        assert "fast_prompt" in result["completed_nodes"]
 
 
 # ---------------------------------------------------------------------------
-# Integration tests — subphase timeout inheritance
+# Integration tests — child timeout inheritance
 # ---------------------------------------------------------------------------
 
 
 class SelectiveSlowExecutor:
-    """Executor that is fast for parent phases, slow for subphases."""
+    """Executor that is fast for parent nodes, slow for children."""
 
     def __init__(self, slow_delay: float):
         self._slow_delay = slow_delay
 
-    async def execute(self, phase, context):
-        if "::" in phase.id:
+    async def execute(self, node, context):
+        if "::" in node.id:
             await asyncio.sleep(self._slow_delay)
         return ExecutionResult(
             success=True,
-            output=f"[mock] {phase.id}",
+            output=f"[mock] {node.id}",
         )
 
 
@@ -208,7 +208,7 @@ class TestSubphaseTimeout:
                     "name": "Parent",
                     "execution": {"type": "command", "command": "echo", "args": ["-n", "ok"]},
                     "timeout": 0.3,
-                    "dynamic_subphases": {
+                    "fan_out": {
                         "enabled": True,
                         "manifest_path": "manifest.json",
                         "template": {"prompt_file": "template.md"},
@@ -222,7 +222,7 @@ class TestSubphaseTimeout:
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
         elapsed = time.monotonic() - t0
 
-        subphase_id = "parent::item1"
-        assert subphase_id in result["failed_phases"]
+        child_id = "parent::item1"
+        assert child_id in result["failed_nodes"]
         assert any("timed out" in e["error"] for e in result["errors"])
-        assert elapsed < 1.5, f"subphase timeout should fire at 0.3s, not wait {elapsed:.1f}s"
+        assert elapsed < 1.5, f"child timeout should fire at 0.3s, not wait {elapsed:.1f}s"

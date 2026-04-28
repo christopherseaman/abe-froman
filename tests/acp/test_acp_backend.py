@@ -162,7 +162,7 @@ class TestACPIntegration:
         """End-to-end: DispatchExecutor → PromptExecutor → ACPBackend."""
         from abe_froman.runtime.executor.backends.acp import ACPBackend
         from abe_froman.runtime.executor.dispatch import DispatchExecutor
-        from abe_froman.schema.models import Phase, Settings
+        from abe_froman.schema.models import Node, Settings
 
         prompt_file = tmp_path / "test.md"
         prompt_file.write_text(
@@ -176,8 +176,8 @@ class TestACPIntegration:
         )
         try:
             async with asyncio.timeout(ACP_TIMEOUT):
-                phase = Phase(id="test", name="Test", prompt_file="test.md")
-                result = await executor.execute(phase, {})
+                node = Node(id="test", name="Test", prompt_file="test.md")
+                result = await executor.execute(node, {})
             assert result.success is True
             _assert_non_refusal_contains(result.output, r"\babe\s+froman\b")
         finally:

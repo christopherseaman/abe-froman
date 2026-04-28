@@ -21,16 +21,16 @@ class TestMakeInitialState:
     def test_default_state_has_all_keys(self):
         state = make_initial_state()
         expected_keys = {
-            "workflow_name", "completed_phases",
-            "failed_phases", "phase_outputs", "phase_structured_outputs",
-            "evaluations", "retries", "subphase_outputs",
-            "token_usage", "phase_worktrees", "errors", "workdir", "dry_run",
+            "workflow_name", "completed_nodes",
+            "failed_nodes", "node_outputs", "phase_structured_outputs",
+            "evaluations", "retries", "child_outputs",
+            "token_usage", "node_worktrees", "errors", "workdir", "dry_run",
         }
         assert set(state.keys()) == expected_keys
         assert state["workflow_name"] == "Workflow"
-        assert state["completed_phases"] == []
-        assert state["failed_phases"] == []
-        assert state["phase_outputs"] == {}
+        assert state["completed_nodes"] == []
+        assert state["failed_nodes"] == []
+        assert state["node_outputs"] == {}
         assert state["token_usage"] == {}
         assert state["dry_run"] is False
 
@@ -51,12 +51,12 @@ class TestMakeInitialState:
         that would silently corrupt LangGraph state across invocations.
         """
         first = make_initial_state()
-        first["errors"].append({"phase": "p1", "error": "boom"})
-        first["completed_phases"].append("p1")
+        first["errors"].append({"node": "p1", "error": "boom"})
+        first["completed_nodes"].append("p1")
 
         second = make_initial_state()
         assert second["errors"] == []
-        assert second["completed_phases"] == []
+        assert second["completed_nodes"] == []
 
 
 class TestMergeEvaluations:

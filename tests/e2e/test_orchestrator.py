@@ -1,6 +1,6 @@
 """Orchestrator tests — full LangGraph pipeline execution.
 
-Most tests use real subprocesses via DispatchExecutor + command phases.
+Most tests use real subprocesses via DispatchExecutor + command nodes.
 MockExecutor is used only where the thing under test is wiring/context
 propagation rather than executor semantics.
 """
@@ -10,13 +10,13 @@ import pytest
 from abe_froman.compile.graph import build_workflow_graph
 from abe_froman.runtime.state import make_initial_state
 from abe_froman.runtime.executor.dispatch import DispatchExecutor
-from abe_froman.schema.models import Phase
+from abe_froman.schema.models import Node
 
 from helpers import cmd_phase, fail_phase, make_config
 
 
 # ---------------------------------------------------------------------------
-# Single phase execution
+# Single node execution
 # ---------------------------------------------------------------------------
 
 
@@ -27,8 +27,8 @@ class TestSinglePhaseExecution:
         executor = DispatchExecutor()
         graph = build_workflow_graph(config, executor)
         result = await graph.ainvoke(make_initial_state())
-        assert "p1" in result["completed_phases"]
-        assert result["phase_outputs"]["p1"] == "hello"
+        assert "p1" in result["completed_nodes"]
+        assert result["node_outputs"]["p1"] == "hello"
 
     @pytest.mark.asyncio
     async def test_dry_run_skips_execution(self):
@@ -38,8 +38,8 @@ class TestSinglePhaseExecution:
         config = make_config([cmd_phase("p1")])
         graph = build_workflow_graph(config, mock)
         result = await graph.ainvoke(make_initial_state(dry_run=True))
-        assert "p1" in result["completed_phases"]
-        assert "dry-run" in result["phase_outputs"]["p1"]
+        assert "p1" in result["completed_nodes"]
+        assert "dry-run" in result["node_outputs"]["p1"]
         assert mock.execution_order == [], "executor should not be called in dry-run"
 
 
@@ -58,9 +58,9 @@ class TestLinearExecution:
         executor = DispatchExecutor()
         graph = build_workflow_graph(config, executor)
         result = await graph.ainvoke(make_initial_state())
-        assert result["completed_phases"] == ["a", "b"]
-        assert result["phase_outputs"]["a"] == "a-out"
-        assert result["phase_outputs"]["b"] == "b-out"
+        assert result["completed_nodes"] == ["a", "b"]
+        assert result["node_outputs"]["a"] == "a-out"
+        assert result["node_outputs"]["b"] == "b-out"
 
     @pytest.mark.asyncio
     async def test_three_phase_chain(self):
@@ -72,10 +72,10 @@ class TestLinearExecution:
         executor = DispatchExecutor()
         graph = build_workflow_graph(config, executor)
         result = await graph.ainvoke(make_initial_state())
-        assert set(result["completed_phases"]) == {"a", "b", "c"}
-        assert result["phase_outputs"]["a"] == "1"
-        assert result["phase_outputs"]["b"] == "2"
-        assert result["phase_outputs"]["c"] == "3"
+        assert set(result["completed_nodes"]) == {"a", "b", "c"}
+        assert result["node_outputs"]["a"] == "1"
+        assert result["node_outputs"]["b"] == "2"
+        assert result["node_outputs"]["c"] == "3"
 
 
 # ---------------------------------------------------------------------------
@@ -96,22 +96,22 @@ class TestParallelExecution:
         executor = DispatchExecutor()
         graph = build_workflow_graph(config, executor)
         result = await graph.ainvoke(make_initial_state())
-        assert set(result["completed_phases"]) == {"a", "b", "c", "d"}
-        assert result["phase_outputs"]["a"] == "root"
-        assert result["phase_outputs"]["b"] == "left"
-        assert result["phase_outputs"]["c"] == "right"
-        assert result["phase_outputs"]["d"] == "join"
+        assert set(result["completed_nodes"]) == {"a", "b", "c", "d"}
+        assert result["node_outputs"]["a"] == "root"
+        assert result["node_outputs"]["b"] == "left"
+        assert result["node_outputs"]["c"] == "right"
+        assert result["node_outputs"]["d"] == "join"
 
     @pytest.mark.asyncio
     async def test_multi_gated_predecessor_joins_correctly(self, tmp_path):
         """Regression for the multi-gated-predecessor join bug.
 
-        The bug: a gated phase X's router emits ALL its dependents via
+        The bug: a gated node X's router emits ALL its dependents via
         conditional edges. If a dependent Y depends on BOTH X and some
-        other phase Z (where Z is deeper in a chain from a common
+        other node Z (where Z is deeper in a chain from a common
         upstream), X's completion routes to Y in the same superstep that
         Z starts running. Y then runs in the next superstep with only X
-        in its completed_phases — Z still pending.
+        in its completed_nodes — Z still pending.
 
         Topology mirrors the absurd-paper bug that triggered this fix:
             root
@@ -131,20 +131,20 @@ class TestParallelExecution:
             cmd_phase("root"),
             cmd_phase("chain_1", depends_on=["root"]),
             cmd_phase("chain_2", depends_on=["chain_1"]),
-            cmd_phase("fast_gated", depends_on=["root"], quality_gate=gate),
+            cmd_phase("fast_gated", depends_on=["root"], evaluation=gate),
             cmd_phase("join_node", depends_on=["chain_2", "fast_gated"]),
         ])
         graph = build_workflow_graph(config, mock)
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
 
-        assert "join_node" in result["completed_phases"]
+        assert "join_node" in result["completed_nodes"]
         ctx = mock.received_contexts["join_node"]
         assert ctx.get("chain_2") == "[mock] chain_2 completed"
         assert ctx.get("fast_gated") == "[mock] fast_gated completed"
 
     @pytest.mark.asyncio
     async def test_independent_phases_both_complete(self):
-        """Two phases with no dependencies both run."""
+        """Two nodes with no dependencies both run."""
         config = make_config([
             cmd_phase("x", output="x-out"),
             cmd_phase("y", output="y-out"),
@@ -152,9 +152,9 @@ class TestParallelExecution:
         executor = DispatchExecutor()
         graph = build_workflow_graph(config, executor)
         result = await graph.ainvoke(make_initial_state())
-        assert set(result["completed_phases"]) == {"x", "y"}
-        assert result["phase_outputs"]["x"] == "x-out"
-        assert result["phase_outputs"]["y"] == "y-out"
+        assert set(result["completed_nodes"]) == {"x", "y"}
+        assert result["node_outputs"]["x"] == "x-out"
+        assert result["node_outputs"]["y"] == "y-out"
 
 
 # ---------------------------------------------------------------------------
@@ -172,10 +172,10 @@ class TestFailureHandling:
         executor = DispatchExecutor()
         graph = build_workflow_graph(config, executor)
         result = await graph.ainvoke(make_initial_state())
-        assert "a" in result["failed_phases"]
-        assert "b" in result["failed_phases"]
-        assert "b" not in result["completed_phases"]
-        errors_by_phase = {e["phase"]: e["error"] for e in result["errors"]}
+        assert "a" in result["failed_nodes"]
+        assert "b" in result["failed_nodes"]
+        assert "b" not in result["completed_nodes"]
+        errors_by_phase = {e["node"]: e["error"] for e in result["errors"]}
         assert "dependency" in errors_by_phase["b"].lower()
 
     @pytest.mark.asyncio
@@ -190,10 +190,10 @@ class TestFailureHandling:
         executor = DispatchExecutor()
         graph = build_workflow_graph(config, executor)
         result = await graph.ainvoke(make_initial_state())
-        assert "a" in result["completed_phases"]
-        assert "c" in result["completed_phases"]
-        assert "b" in result["failed_phases"]
-        assert "d" in result["failed_phases"]
+        assert "a" in result["completed_nodes"]
+        assert "c" in result["completed_nodes"]
+        assert "b" in result["failed_nodes"]
+        assert "d" in result["failed_nodes"]
 
     @pytest.mark.asyncio
     async def test_error_captures_message(self):
@@ -201,9 +201,9 @@ class TestFailureHandling:
         executor = DispatchExecutor()
         graph = build_workflow_graph(config, executor)
         result = await graph.ainvoke(make_initial_state())
-        assert "p1" in result["failed_phases"]
+        assert "p1" in result["failed_nodes"]
         assert len(result["errors"]) > 0
-        assert result["errors"][0]["phase"] == "p1"
+        assert result["errors"][0]["node"] == "p1"
 
 
 # ---------------------------------------------------------------------------
@@ -214,10 +214,10 @@ class TestFailureHandling:
 class TestGateIntegration:
     @pytest.mark.asyncio
     async def test_multi_retry_then_pass(self, tmp_path):
-        """Stage 3b: a gated phase whose validator fails twice and passes
+        """Stage 3b: a gated node whose validator fails twice and passes
         on the third call produces three EvaluationRecords (invocations
-        0, 1, 2) and ends in completed_phases. Exercises the eval-node
-        retry self-loop back through the phase execution node."""
+        0, 1, 2) and ends in completed_nodes. Exercises the eval-node
+        retry self-loop back through the node execution node."""
         counter = tmp_path / "n.txt"
         counter.write_text("0")
         validator = tmp_path / "staged.py"
@@ -230,7 +230,7 @@ class TestGateIntegration:
         config = make_config([
             cmd_phase(
                 "p1", output="data",
-                quality_gate={
+                evaluation={
                     "validator": str(validator),
                     "threshold": 0.5,
                     "blocking": True,
@@ -242,7 +242,7 @@ class TestGateIntegration:
         graph = build_workflow_graph(config, executor)
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
 
-        assert "p1" in result["completed_phases"]
+        assert "p1" in result["completed_nodes"]
         records = result["evaluations"]["p1"]
         invocations = [r["invocation"] for r in records]
         assert invocations == [0, 1, 2], f"expected [0, 1, 2], got {invocations}"
@@ -254,13 +254,13 @@ class TestGateIntegration:
         script.write_text("print(0.95)")
         config = make_config([
             cmd_phase("p1", output="data",
-                      quality_gate={"validator": str(script), "threshold": 0.8}),
+                      evaluation={"validator": str(script), "threshold": 0.8}),
         ])
         executor = DispatchExecutor(workdir=str(tmp_path))
         graph = build_workflow_graph(config, executor)
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
         assert result["evaluations"]["p1"][-1]["result"]["score"] == 0.95
-        assert "p1" in result["completed_phases"]
+        assert "p1" in result["completed_nodes"]
 
     @pytest.mark.asyncio
     async def test_gate_pass_allows_dependent(self, tmp_path):
@@ -268,14 +268,14 @@ class TestGateIntegration:
         script.write_text("print(1.0)")
         config = make_config([
             cmd_phase("a", output="ok",
-                      quality_gate={"validator": str(script), "threshold": 0.8}),
+                      evaluation={"validator": str(script), "threshold": 0.8}),
             cmd_phase("b", output="ok", depends_on=["a"]),
         ])
         executor = DispatchExecutor(workdir=str(tmp_path))
         graph = build_workflow_graph(config, executor)
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
-        assert "a" in result["completed_phases"]
-        assert "b" in result["completed_phases"]
+        assert "a" in result["completed_nodes"]
+        assert "b" in result["completed_nodes"]
 
     @pytest.mark.asyncio
     async def test_blocking_gate_failure_blocks(self, tmp_path):
@@ -283,7 +283,7 @@ class TestGateIntegration:
         script.write_text("print(0.1)")
         config = make_config([
             cmd_phase("p1", output="data",
-                      quality_gate={
+                      evaluation={
                           "validator": str(script), "threshold": 0.8,
                           "blocking": True, "max_retries": 0,
                       }),
@@ -291,7 +291,7 @@ class TestGateIntegration:
         executor = DispatchExecutor(workdir=str(tmp_path))
         graph = build_workflow_graph(config, executor)
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
-        assert "p1" in result["failed_phases"]
+        assert "p1" in result["failed_nodes"]
         assert any("evaluation failed" in e["error"].lower() for e in result["errors"])
 
     @pytest.mark.asyncio
@@ -300,7 +300,7 @@ class TestGateIntegration:
         script.write_text("print(0.1)")
         config = make_config([
             cmd_phase("p1", output="data",
-                      quality_gate={
+                      evaluation={
                           "validator": str(script), "threshold": 0.8,
                           "blocking": False, "max_retries": 0,
                       }),
@@ -308,7 +308,7 @@ class TestGateIntegration:
         executor = DispatchExecutor(workdir=str(tmp_path))
         graph = build_workflow_graph(config, executor)
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
-        assert "p1" in result["completed_phases"]
+        assert "p1" in result["completed_nodes"]
         assert any("non-blocking" in e["error"].lower() for e in result["errors"])
 
 
@@ -321,13 +321,13 @@ class TestDryRun:
     @pytest.mark.asyncio
     async def test_dry_run_traces_gated_chain(self):
         config = make_config([
-            cmd_phase("a", quality_gate={"validator": "v.md", "threshold": 0.99}),
+            cmd_phase("a", evaluation={"validator": "v.md", "threshold": 0.99}),
             cmd_phase("b", depends_on=["a"]),
         ])
         graph = build_workflow_graph(config)
         result = await graph.ainvoke(make_initial_state(dry_run=True))
-        assert "a" in result["completed_phases"]
-        assert "b" in result["completed_phases"]
+        assert "a" in result["completed_nodes"]
+        assert "b" in result["completed_nodes"]
 
 
 # ---------------------------------------------------------------------------
@@ -339,37 +339,37 @@ class TestDispatchExecutor:
     @pytest.mark.asyncio
     async def test_command_phase_runs_subprocess(self):
         executor = DispatchExecutor()
-        phase = Phase(
+        node = Node(
             id="c1", name="C1",
             execution={"type": "command", "command": "echo", "args": ["hello"]},
         )
-        result = await executor.execute(phase, {})
+        result = await executor.execute(node, {})
         assert result.success is True
         assert "hello" in result.output
 
     @pytest.mark.asyncio
     async def test_gate_only_phase(self):
         executor = DispatchExecutor()
-        phase = Phase(id="g1", name="G1", execution={"type": "gate_only"})
-        result = await executor.execute(phase, {})
+        node = Node(id="g1", name="G1", execution={"type": "gate_only"})
+        result = await executor.execute(node, {})
         assert result.success is True
         assert "gate-only" in result.output
 
     @pytest.mark.asyncio
     async def test_command_phase_failure(self):
         executor = DispatchExecutor()
-        phase = Phase(
+        node = Node(
             id="c1", name="C1",
             execution={"type": "command", "command": "false"},
         )
-        result = await executor.execute(phase, {})
+        result = await executor.execute(node, {})
         assert result.success is False
 
     @pytest.mark.asyncio
     async def test_no_execution_returns_error(self):
         executor = DispatchExecutor()
-        phase = Phase(id="p1", name="P1")
-        result = await executor.execute(phase, {})
+        node = Node(id="p1", name="P1")
+        result = await executor.execute(node, {})
         assert result.success is False
         assert "no execution" in result.error.lower()
 
@@ -377,8 +377,8 @@ class TestDispatchExecutor:
     async def test_prompt_without_backend_returns_stub(self):
         """DispatchExecutor with no backend returns inline stub for prompts."""
         executor = DispatchExecutor()
-        phase = Phase(id="p1", name="P1", prompt_file="t.md")
-        result = await executor.execute(phase, {})
+        node = Node(id="p1", name="P1", prompt_file="t.md")
+        result = await executor.execute(node, {})
         assert result.success is True
         assert "prompt-stub" in result.output
 
@@ -408,7 +408,7 @@ class TestGateRetryExecution:
         config = make_config([
             cmd_phase(
                 "p1", output="data",
-                quality_gate={
+                evaluation={
                     "validator": str(validator),
                     "threshold": 1.0,
                     "blocking": True,
@@ -420,7 +420,7 @@ class TestGateRetryExecution:
         graph = build_workflow_graph(config, executor)
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
 
-        assert "p1" in result["completed_phases"]
+        assert "p1" in result["completed_nodes"]
         assert int(counter.read_text().strip()) == 2
 
 
@@ -457,7 +457,7 @@ class TestRetryContextInjection:
                 "id": "p1",
                 "name": "P1",
                 "prompt_file": "t.md",
-                "quality_gate": {
+                "evaluation": {
                     "validator": str(validator),
                     "threshold": 1.0,
                     "blocking": True,
@@ -468,10 +468,10 @@ class TestRetryContextInjection:
         graph = build_workflow_graph(config, mock)
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
 
-        assert "p1" in result["completed_phases"]
-        # Phase was executed twice (initial + retry)
+        assert "p1" in result["completed_nodes"]
+        # Node was executed twice (initial + retry)
         assert mock.execution_order.count("p1") == 2
-        # MockExecutor overwrites context per phase ID, so last call wins —
+        # MockExecutor overwrites context per node ID, so last call wins —
         # the retry call should have _retry_reason
         assert "_retry_reason" in mock.received_contexts["p1"]
 
@@ -502,7 +502,7 @@ class TestRetryContextInjection:
                 "id": "p1",
                 "name": "P1",
                 "prompt_file": "t.md",
-                "quality_gate": {
+                "evaluation": {
                     "validator": str(validator),
                     "threshold": 1.0,
                     "blocking": True,
@@ -513,7 +513,7 @@ class TestRetryContextInjection:
         graph = build_workflow_graph(config, mock)
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
 
-        assert "p1" in result["completed_phases"]
+        assert "p1" in result["completed_nodes"]
         # MockExecutor overwrites context on each call, so last call has _retry_reason
         ctx = mock.received_contexts["p1"]
         assert "_retry_reason" in ctx
@@ -538,7 +538,7 @@ class TestRetryContextInjection:
                 "id": "p1",
                 "name": "P1",
                 "prompt_file": "t.md",
-                "quality_gate": {
+                "evaluation": {
                     "validator": str(script),
                     "threshold": 0.8,
                     "blocking": True,
@@ -548,7 +548,7 @@ class TestRetryContextInjection:
         graph = build_workflow_graph(config, mock)
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
 
-        assert "p1" in result["completed_phases"]
+        assert "p1" in result["completed_nodes"]
         assert "_retry_reason" not in mock.received_contexts["p1"]
 
 
@@ -559,7 +559,7 @@ class TestRetryContextInjection:
 
 class TestContextPropagation:
     """Wiring tests — uses MockExecutor because the thing under test is
-    context-flow between phases, not executor semantics."""
+    context-flow between nodes, not executor semantics."""
 
     @pytest.mark.asyncio
     async def test_dependency_output_in_executor_context(self):
@@ -576,8 +576,8 @@ class TestContextPropagation:
         graph = build_workflow_graph(config, mock)
         result = await graph.ainvoke(make_initial_state())
 
-        assert "a" in result["completed_phases"]
-        assert "b" in result["completed_phases"]
+        assert "a" in result["completed_nodes"]
+        assert "b" in result["completed_nodes"]
         assert mock.received_contexts["b"]["a"] == "a-output"
 
     @pytest.mark.asyncio
@@ -598,7 +598,7 @@ class TestContextPropagation:
         graph = build_workflow_graph(config, mock)
         result = await graph.ainvoke(make_initial_state())
 
-        assert "b" in result["completed_phases"]
+        assert "b" in result["completed_nodes"]
         assert mock.received_contexts["b"]["a_structured"] == {"key": "val"}
 
 
@@ -619,7 +619,7 @@ class TestDimensionGateExecution:
         config = make_config([
             cmd_phase(
                 "p1", output="data",
-                quality_gate={
+                evaluation={
                     "validator": str(validator),
                     "dimensions": [
                         {"field": "correctness", "min": 0.8},
@@ -632,7 +632,7 @@ class TestDimensionGateExecution:
         graph = build_workflow_graph(config, executor)
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
 
-        assert "p1" in result["completed_phases"]
+        assert "p1" in result["completed_nodes"]
         last_result = result["evaluations"]["p1"][-1]["result"]
         assert last_result["scores"]["correctness"] == 0.9
         assert last_result["scores"]["style"] == 0.7
@@ -657,7 +657,7 @@ class TestDimensionGateExecution:
         config = make_config([
             cmd_phase(
                 "p1", output="data",
-                quality_gate={
+                evaluation={
                     "validator": str(validator),
                     "max_retries": 2,
                     "blocking": True,
@@ -672,7 +672,7 @@ class TestDimensionGateExecution:
         graph = build_workflow_graph(config, executor)
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
 
-        assert "p1" in result["completed_phases"]
+        assert "p1" in result["completed_nodes"]
         assert int(counter.read_text().strip()) == 2
 
 
@@ -711,7 +711,7 @@ class TestTokenUsageAccumulation:
         graph = build_workflow_graph(config, executor)
         result = await graph.ainvoke(make_initial_state())
 
-        assert "p1" in result["completed_phases"]
+        assert "p1" in result["completed_nodes"]
         assert result.get("token_usage", {}) == {}
 
     @pytest.mark.asyncio
@@ -734,7 +734,7 @@ class TestTokenUsageAccumulation:
 class TestOutputContract:
     @pytest.mark.asyncio
     async def test_contract_pass_continues_to_gate(self, tmp_path):
-        """Files exist → gate runs → phase completes."""
+        """Files exist → gate runs → node completes."""
         out = tmp_path / "out"
         out.mkdir()
         (out / "result.txt").write_text("done")
@@ -746,35 +746,35 @@ class TestOutputContract:
             cmd_phase(
                 "p1", output="data",
                 output_contract={"base_directory": "out", "required_files": ["result.txt"]},
-                quality_gate={"validator": str(script), "threshold": 0.8},
+                evaluation={"validator": str(script), "threshold": 0.8},
             ),
         ])
         executor = DispatchExecutor(workdir=str(tmp_path))
         graph = build_workflow_graph(config, executor)
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
-        assert "p1" in result["completed_phases"]
+        assert "p1" in result["completed_nodes"]
         assert result["evaluations"]["p1"][-1]["result"]["score"] == 1.0
 
     @pytest.mark.asyncio
     async def test_contract_fail_blocks_phase(self, tmp_path):
-        """Missing files → phase fails, gate never runs."""
+        """Missing files → node fails, gate never runs."""
         config = make_config([
             cmd_phase(
                 "p1", output="data",
                 output_contract={"base_directory": "out", "required_files": ["missing.txt"]},
-                quality_gate={"validator": "never_called.py", "threshold": 0.8},
+                evaluation={"validator": "never_called.py", "threshold": 0.8},
             ),
         ])
         executor = DispatchExecutor(workdir=str(tmp_path))
         graph = build_workflow_graph(config, executor)
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
-        assert "p1" in result["failed_phases"]
+        assert "p1" in result["failed_nodes"]
         assert "p1" not in result.get("evaluations", {})
         assert any("contract violated" in e["error"].lower() for e in result["errors"])
 
     @pytest.mark.asyncio
     async def test_contract_fail_skips_dependent(self, tmp_path):
-        """Contract failure cascades — downstream phase also fails."""
+        """Contract failure cascades — downstream node also fails."""
         config = make_config([
             cmd_phase(
                 "a", output="data",
@@ -785,12 +785,12 @@ class TestOutputContract:
         executor = DispatchExecutor(workdir=str(tmp_path))
         graph = build_workflow_graph(config, executor)
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
-        assert "a" in result["failed_phases"]
-        assert "b" in result["failed_phases"]
+        assert "a" in result["failed_nodes"]
+        assert "b" in result["failed_nodes"]
 
     @pytest.mark.asyncio
     async def test_contract_without_gate(self, tmp_path):
-        """Contract checked even when no quality_gate is defined."""
+        """Contract checked even when no evaluation is defined."""
         config = make_config([
             cmd_phase(
                 "p1", output="data",
@@ -800,7 +800,7 @@ class TestOutputContract:
         executor = DispatchExecutor(workdir=str(tmp_path))
         graph = build_workflow_graph(config, executor)
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
-        assert "p1" in result["failed_phases"]
+        assert "p1" in result["failed_nodes"]
 
     @pytest.mark.asyncio
     async def test_contract_fail_no_retry(self, tmp_path):
@@ -809,7 +809,7 @@ class TestOutputContract:
             cmd_phase(
                 "p1", output="data",
                 output_contract={"base_directory": "out", "required_files": ["missing.txt"]},
-                quality_gate={
+                evaluation={
                     "validator": "never_called.py", "threshold": 0.8,
                     "blocking": True, "max_retries": 3,
                 },
@@ -818,7 +818,7 @@ class TestOutputContract:
         executor = DispatchExecutor(workdir=str(tmp_path))
         graph = build_workflow_graph(config, executor)
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
-        assert "p1" in result["failed_phases"]
+        assert "p1" in result["failed_nodes"]
         assert result.get("retries", {}).get("p1", 0) == 0
 
 

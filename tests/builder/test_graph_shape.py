@@ -2,7 +2,7 @@ import pytest
 from langgraph.graph import END, START
 
 from abe_froman.compile.graph import build_workflow_graph
-from abe_froman.schema.models import WorkflowConfig
+from abe_froman.schema.models import Graph
 
 from helpers import make_config
 
@@ -50,7 +50,7 @@ class TestSingleNodeGraph:
                     "id": "g1",
                     "name": "G1",
                     "execution": {"type": "gate_only"},
-                    "quality_gate": {"validator": "v.md", "threshold": 0.9},
+                    "evaluation": {"validator": "v.md", "threshold": 0.9},
                 }
             ]
         )
@@ -58,7 +58,7 @@ class TestSingleNodeGraph:
         nodes = graph.get_graph().nodes
         assert "g1" in nodes and "_eval_g1" in nodes
         edges = _edges(graph)
-        # Gated phase: execution → evaluation (plain), then eval fans conditional.
+        # Gated node: execution → evaluation (plain), then eval fans conditional.
         assert (START, "g1") in edges
         assert ("g1", "_eval_g1") in edges
         # Eval routes: pass → END, retry → g1 (re-execute), fail → END.
@@ -67,12 +67,12 @@ class TestSingleNodeGraph:
 
 class TestLinearChain:
     def test_two_phase_chain(self, multi_phase_config_dict):
-        config = WorkflowConfig(**multi_phase_config_dict)
+        config = Graph(**multi_phase_config_dict)
         graph = build_workflow_graph(config)
         assert _edges(graph) == {
-            (START, "phase-1"),
-            ("phase-1", "phase-2"),
-            ("phase-2", END),
+            (START, "node-1"),
+            ("node-1", "node-2"),
+            ("node-2", END),
         }
 
     def test_three_phase_chain(self):
@@ -95,7 +95,7 @@ class TestLinearChain:
 class TestParallelPhases:
     def test_diamond_dependency(self, parallel_config_dict):
         """A → (B, C) → D — both forks must be wired, and D must fan in from both."""
-        config = WorkflowConfig(**parallel_config_dict)
+        config = Graph(**parallel_config_dict)
         graph = build_workflow_graph(config)
         assert _edges(graph) == {
             (START, "a"),
@@ -125,14 +125,14 @@ class TestParallelPhases:
 
 class TestGateRouting:
     def test_terminal_gate_wiring(self):
-        """Terminal gated phase: execution → eval (plain); eval → END (pass/fail) or p1 (retry)."""
+        """Terminal gated node: execution → eval (plain); eval → END (pass/fail) or p1 (retry)."""
         config = make_config(
             [
                 {
                     "id": "p1",
                     "name": "P1",
                     "prompt_file": "t.md",
-                    "quality_gate": {"validator": "v.md", "threshold": 0.8},
+                    "evaluation": {"validator": "v.md", "threshold": 0.8},
                 }
             ]
         )
@@ -153,7 +153,7 @@ class TestGateRouting:
                     "id": "a",
                     "name": "A",
                     "prompt_file": "a.md",
-                    "quality_gate": {"validator": "v.md", "threshold": 0.8},
+                    "evaluation": {"validator": "v.md", "threshold": 0.8},
                 },
                 {
                     "id": "b",
@@ -182,7 +182,7 @@ class TestGateRouting:
                     "id": "a",
                     "name": "A",
                     "prompt_file": "a.md",
-                    "quality_gate": {"validator": "v.md", "threshold": 0.8},
+                    "evaluation": {"validator": "v.md", "threshold": 0.8},
                 },
                 {"id": "b", "name": "B", "prompt_file": "b.md", "depends_on": ["a"]},
                 {"id": "c", "name": "C", "prompt_file": "c.md", "depends_on": ["a"]},
@@ -210,12 +210,12 @@ class TestModelConfig:
             [{"id": "p1", "name": "P1", "prompt_file": "t.md", "model": "opus"}],
             default_model="haiku",
         )
-        assert config.phases[0].model == "opus"
+        assert config.nodes[0].model == "opus"
         assert config.settings.default_model == "haiku"
 
 
 class TestEvaluationNodeShape:
-    """Stage 3b: gated phases emit a distinct `_eval_{id}` node."""
+    """Stage 3b: gated nodes emit a distinct `_eval_{id}` node."""
 
     def test_ungated_phase_no_eval_node(self):
         config = make_config(
@@ -228,26 +228,26 @@ class TestEvaluationNodeShape:
 
 
 class TestDynamicGraphShape:
-    """Stage 3b: dynamic phases with gated templates get a conditional
+    """Stage 3b: dynamic nodes with gated templates get a conditional
     self-loop edge at `_sub_{parent}` (inline evaluation keeps per-branch
-    `_subphase_item` state preserved across the Send-dispatched flow).
+    `_fan_out_item` state preserved across the Send-dispatched flow).
     """
 
-    def _dynamic_phase(self, template_quality_gate=None):
+    def _dynamic_phase(self, template_evaluation=None):
         dsc = {
             "enabled": True,
             "template": {"prompt_file": "template.md"},
         }
-        if template_quality_gate is not None:
-            dsc["template"]["quality_gate"] = template_quality_gate
-        dsc["final_phases"] = [
+        if template_evaluation is not None:
+            dsc["template"]["evaluation"] = template_evaluation
+        dsc["final_nodes"] = [
             {"id": "f0", "name": "F0", "prompt_file": "f0.md"},
         ]
         return {
             "id": "p",
             "name": "P",
             "execution": {"type": "command", "command": "echo", "args": ["manifest"]},
-            "dynamic_subphases": dsc,
+            "fan_out": dsc,
         }
 
     def test_ungated_template_registers_template_and_final_nodes(self):
@@ -261,18 +261,18 @@ class TestDynamicGraphShape:
         conditional fan-out router targets `_final_p_f0` for `no_items`
         and `p` itself for retry (gated-parent path not exercised here).
 
-        The subphase's own inline-evaluation self-loop edges at `_sub_p`
+        The child's own inline-evaluation self-loop edges at `_sub_p`
         are only reachable via Send-dispatch and are exercised by the
         e2e `test_subphase_gate_triggers_retry` test, not graph-shape.
         """
         config = make_config([self._dynamic_phase(
-            template_quality_gate={"validator": "v.md", "threshold": 0.8},
+            template_evaluation={"validator": "v.md", "threshold": 0.8},
         )])
         graph = build_workflow_graph(config)
         nodes = graph.get_graph().nodes
         assert "_sub_p" in nodes
-        # Parent phase-level conditional edges still include the retry
-        # self-loop (parent has no quality_gate here; no_items / retry
+        # Parent node-level conditional edges still include the retry
+        # self-loop (parent has no evaluation here; no_items / retry
         # / fail branches stay in place).
         conditional = _conditional_edges(graph)
         assert ("p", "_final_p_f0") in conditional

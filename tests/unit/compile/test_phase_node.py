@@ -1,8 +1,8 @@
 """Unit tests for _make_evaluation_router from compile/graph.py.
 
-The router is a pure state-reader: it inspects `completed_phases` /
-`failed_phases` written by the Evaluation node and returns concrete
-targets (END, the execution node id for retry, or dependent phase ids
+The router is a pure state-reader: it inspects `completed_nodes` /
+`failed_nodes` written by the Evaluation node and returns concrete
+targets (END, the execution node id for retry, or dependent node ids
 for pass). Classification logic (score vs threshold, blocking, retry
 budget) lives in the Evaluation node body (`compile/nodes.py`), not here.
 """
@@ -14,15 +14,15 @@ import pytest
 from langgraph.graph import END
 
 from abe_froman.compile.graph import _make_evaluation_router
-from abe_froman.compile.nodes import _make_phase_node
+from abe_froman.compile.nodes import _make_execution_node
 from abe_froman.runtime.result import ExecutionResult
 from abe_froman.runtime.state import make_initial_state
 from abe_froman.schema.models import (
     OutputContract,
-    Phase,
+    Node,
     Evaluation,
     Settings,
-    WorkflowConfig,
+    Graph,
 )
 from mock_executor import MockExecutor
 
@@ -31,25 +31,25 @@ class TestEvaluationRouter:
     def test_pass_single_target(self):
         """Completed with one pass target → return that target directly."""
         router = _make_evaluation_router("p1", pass_targets=["b"])
-        state = make_initial_state(completed_phases=["p1"])
+        state = make_initial_state(completed_nodes=["p1"])
         assert router(state) == "b"
 
     def test_pass_multiple_targets_fans_out(self):
         """Completed with multiple pass targets → return list for fan-out."""
         router = _make_evaluation_router("p1", pass_targets=["b", "c"])
-        state = make_initial_state(completed_phases=["p1"])
+        state = make_initial_state(completed_nodes=["p1"])
         assert router(state) == ["b", "c"]
 
     def test_pass_defaults_to_end(self):
-        """Terminal gated phase → pass routes to END."""
+        """Terminal gated node → pass routes to END."""
         router = _make_evaluation_router("p1", pass_targets=[END])
-        state = make_initial_state(completed_phases=["p1"])
+        state = make_initial_state(completed_nodes=["p1"])
         assert router(state) == END
 
     def test_fail_routes_to_end(self):
-        """failed_phases contains id → router returns END."""
+        """failed_nodes contains id → router returns END."""
         router = _make_evaluation_router("p1", pass_targets=["b"])
-        state = make_initial_state(failed_phases=["p1"])
+        state = make_initial_state(failed_nodes=["p1"])
         assert router(state) == END
 
     def test_retry_returns_execution_node_id(self):
@@ -62,7 +62,7 @@ class TestEvaluationRouter:
         """Defensive: if both lists contain the id, fail wins."""
         router = _make_evaluation_router("p1", pass_targets=["b"])
         state = make_initial_state(
-            completed_phases=["p1"], failed_phases=["p1"]
+            completed_nodes=["p1"], failed_nodes=["p1"]
         )
         assert router(state) == END
 
@@ -73,23 +73,23 @@ class TestEvaluationRouter:
         assert router(state) == "p1"
 
     def test_resolver_switches_node_id(self):
-        """node_id_resolver lets subphase routers key off _subphase_item."""
+        """node_id_resolver lets child routers key off _fan_out_item."""
         def resolve(state):
-            return f"parent::{state.get('_subphase_item', {}).get('id', '?')}"
+            return f"parent::{state.get('_fan_out_item', {}).get('id', '?')}"
 
         router = _make_evaluation_router(
             "_sub_parent", pass_targets=["_final_parent_f0"], node_id_resolver=resolve,
         )
-        state = make_initial_state(completed_phases=["parent::x"])
-        state["_subphase_item"] = {"id": "x"}
+        state = make_initial_state(completed_nodes=["parent::x"])
+        state["_fan_out_item"] = {"id": "x"}
         assert router(state) == "_final_parent_f0"
 
 
 # ---------------------------------------------------------------------------
-# Closure-level unit tests for _make_phase_node
+# Closure-level unit tests for _make_execution_node
 #
 # These call the returned closure directly with a MockExecutor and fake
-# state dict. Gated phases only exercise the execution half here — the
+# state dict. Gated nodes only exercise the execution half here — the
 # Evaluation node half is tested in test_evaluation_node.py.
 # ---------------------------------------------------------------------------
 
@@ -97,15 +97,15 @@ class TestEvaluationRouter:
 class _SlowExecutor:
     """PhaseExecutor double that sleeps longer than any reasonable timeout."""
 
-    async def execute(self, phase, context):
+    async def execute(self, node, context):
         await asyncio.sleep(10.0)
         return ExecutionResult(output="never")
 
 
-def _config_with(phase: Phase, **settings_kwargs) -> WorkflowConfig:
-    return WorkflowConfig(
+def _config_with(node: Node, **settings_kwargs) -> Graph:
+    return Graph(
         name="T", version="1.0",
-        phases=[phase],
+        nodes=[node],
         settings=Settings(**settings_kwargs),
     )
 
@@ -114,39 +114,39 @@ class TestPhaseNodeClosure:
     @pytest.mark.asyncio
     async def test_already_completed_returns_empty(self):
         """Re-entering a completed node is a no-op (idempotent)."""
-        phase = Phase(id="p1", name="P1", prompt_file="t.md")
-        node = _make_phase_node(phase, _config_with(phase), MockExecutor())
-        state = make_initial_state(completed_phases=["p1"])
+        node = Node(id="p1", name="P1", prompt_file="t.md")
+        node = _make_execution_node(node, _config_with(node), MockExecutor())
+        state = make_initial_state(completed_nodes=["p1"])
         assert await node(state) == {}
 
     @pytest.mark.asyncio
     async def test_none_executor_returns_no_executor_update(self):
         """CLI fallback when no git repo available: executor=None → graceful completion."""
-        phase = Phase(id="p1", name="P1", prompt_file="t.md")
-        node = _make_phase_node(phase, _config_with(phase), executor=None)
+        node = Node(id="p1", name="P1", prompt_file="t.md")
+        node = _make_execution_node(node, _config_with(node), executor=None)
         update = await node(make_initial_state())
-        assert update["completed_phases"] == ["p1"]
-        assert "[no-executor]" in update["phase_outputs"]["p1"]
+        assert update["completed_nodes"] == ["p1"]
+        assert "[no-executor]" in update["node_outputs"]["p1"]
 
     @pytest.mark.asyncio
     async def test_none_executor_with_gate_emits_output_only(self):
-        """Gated phase without executor: phase node emits phase_outputs but does
-        NOT write completed_phases — the downstream Evaluation node handles that."""
-        phase = Phase(
+        """Gated node without executor: node node emits node_outputs but does
+        NOT write completed_nodes — the downstream Evaluation node handles that."""
+        node = Node(
             id="p1", name="P1", prompt_file="t.md",
-            quality_gate=Evaluation(validator="v.py", threshold=0.8),
+            evaluation=Evaluation(validator="v.py", threshold=0.8),
         )
-        node = _make_phase_node(phase, _config_with(phase), executor=None)
+        node = _make_execution_node(node, _config_with(node), executor=None)
         update = await node(make_initial_state())
-        assert "completed_phases" not in update
-        assert "[no-executor]" in update["phase_outputs"]["p1"]
+        assert "completed_nodes" not in update
+        assert "[no-executor]" in update["node_outputs"]["p1"]
 
     @pytest.mark.asyncio
     async def test_retry_delay_is_awaited(self):
         """retry_count > 0 with nonzero backoff → closure sleeps before executing."""
-        phase = Phase(id="p1", name="P1", prompt_file="t.md")
-        node = _make_phase_node(
-            phase, _config_with(phase, retry_backoff=[0.05]), MockExecutor(),
+        node = Node(id="p1", name="P1", prompt_file="t.md")
+        node = _make_execution_node(
+            node, _config_with(node, retry_backoff=[0.05]), MockExecutor(),
         )
         state = make_initial_state(retries={"p1": 1})
         t0 = time.monotonic()
@@ -157,9 +157,9 @@ class TestPhaseNodeClosure:
     @pytest.mark.asyncio
     async def test_no_retry_no_delay(self):
         """retry_count == 0 → no sleep, even if backoff configured."""
-        phase = Phase(id="p1", name="P1", prompt_file="t.md")
-        node = _make_phase_node(
-            phase, _config_with(phase, retry_backoff=[5.0]), MockExecutor(),
+        node = Node(id="p1", name="P1", prompt_file="t.md")
+        node = _make_execution_node(
+            node, _config_with(node, retry_backoff=[5.0]), MockExecutor(),
         )
         t0 = time.monotonic()
         await node(make_initial_state())
@@ -168,45 +168,45 @@ class TestPhaseNodeClosure:
 
     @pytest.mark.asyncio
     async def test_execution_failure_returns_failure_update(self):
-        """Executor returns success=False → failed_phases + error in update."""
-        phase = Phase(id="p1", name="P1", prompt_file="t.md")
+        """Executor returns success=False → failed_nodes + error in update."""
+        node = Node(id="p1", name="P1", prompt_file="t.md")
         executor = MockExecutor(
             results={"p1": ExecutionResult(success=False, error="boom")},
         )
-        node = _make_phase_node(phase, _config_with(phase), executor)
+        node = _make_execution_node(node, _config_with(node), executor)
         update = await node(make_initial_state())
-        assert update["failed_phases"] == ["p1"]
+        assert update["failed_nodes"] == ["p1"]
         assert update["errors"][0]["error"] == "boom"
 
     @pytest.mark.asyncio
     async def test_execution_timeout_returns_failure(self):
-        """Slow executor + tight timeout → failed_phases with timeout message."""
-        phase = Phase(id="p1", name="P1", prompt_file="t.md", timeout=0.01)
-        node = _make_phase_node(phase, _config_with(phase), _SlowExecutor())
+        """Slow executor + tight timeout → failed_nodes with timeout message."""
+        node = Node(id="p1", name="P1", prompt_file="t.md", timeout=0.01)
+        node = _make_execution_node(node, _config_with(node), _SlowExecutor())
         update = await node(make_initial_state())
-        assert update["failed_phases"] == ["p1"]
+        assert update["failed_nodes"] == ["p1"]
         assert "timed out" in update["errors"][0]["error"]
 
     @pytest.mark.asyncio
     async def test_output_contract_violation_hard_fails(self, tmp_path):
-        """Successful execution + missing required file → failed_phases, no retry."""
-        phase = Phase(
+        """Successful execution + missing required file → failed_nodes, no retry."""
+        node = Node(
             id="p1", name="P1", prompt_file="t.md",
             output_contract=OutputContract(
                 base_directory="out", required_files=["expected.md"],
             ),
         )
-        node = _make_phase_node(phase, _config_with(phase), MockExecutor())
+        node = _make_execution_node(node, _config_with(node), MockExecutor())
         state = make_initial_state(workdir=str(tmp_path))
         update = await node(state)
-        assert update["failed_phases"] == ["p1"]
+        assert update["failed_nodes"] == ["p1"]
         assert "missing files" in update["errors"][0]["error"]
         assert "expected.md" in update["errors"][0]["error"]
 
     @pytest.mark.asyncio
     async def test_output_contract_satisfied_allows_success(self, tmp_path):
         """Required file present post-execution → completion proceeds."""
-        phase = Phase(
+        node = Node(
             id="p1", name="P1", prompt_file="t.md",
             output_contract=OutputContract(
                 base_directory="out", required_files=["expected.md"],
@@ -214,32 +214,32 @@ class TestPhaseNodeClosure:
         )
         (tmp_path / "out").mkdir()
         (tmp_path / "out" / "expected.md").write_text("present")
-        node = _make_phase_node(phase, _config_with(phase), MockExecutor())
+        node = _make_execution_node(node, _config_with(node), MockExecutor())
         state = make_initial_state(workdir=str(tmp_path))
         update = await node(state)
-        assert update["completed_phases"] == ["p1"]
+        assert update["completed_nodes"] == ["p1"]
 
     @pytest.mark.asyncio
     async def test_success_no_gate_writes_completed(self):
-        """Happy path without gate → completed_phases + phase_outputs."""
-        phase = Phase(id="p1", name="P1", prompt_file="t.md")
-        node = _make_phase_node(phase, _config_with(phase), MockExecutor())
+        """Happy path without gate → completed_nodes + node_outputs."""
+        node = Node(id="p1", name="P1", prompt_file="t.md")
+        node = _make_execution_node(node, _config_with(node), MockExecutor())
         update = await node(make_initial_state())
-        assert update["completed_phases"] == ["p1"]
-        assert update["phase_outputs"]["p1"] == "[mock] p1 completed"
+        assert update["completed_nodes"] == ["p1"]
+        assert update["node_outputs"]["p1"] == "[mock] p1 completed"
 
     @pytest.mark.asyncio
     async def test_gated_phase_emits_output_without_completing(self, tmp_path):
-        """Gated phase: execution writes phase_outputs; Evaluation node writes
-        completed_phases / retries / failed_phases separately."""
-        phase = Phase(
+        """Gated node: execution writes node_outputs; Evaluation node writes
+        completed_nodes / retries / failed_nodes separately."""
+        node = Node(
             id="p1", name="P1", prompt_file="t.md",
-            quality_gate=Evaluation(validator="v.py", threshold=0.8),
+            evaluation=Evaluation(validator="v.py", threshold=0.8),
         )
-        node = _make_phase_node(phase, _config_with(phase), MockExecutor())
+        node = _make_execution_node(node, _config_with(node), MockExecutor())
         state = make_initial_state(workdir=str(tmp_path))
         update = await node(state)
-        assert "completed_phases" not in update
+        assert "completed_nodes" not in update
         assert "retries" not in update
-        assert "failed_phases" not in update
-        assert update["phase_outputs"]["p1"] == "[mock] p1 completed"
+        assert "failed_nodes" not in update
+        assert update["node_outputs"]["p1"] == "[mock] p1 completed"

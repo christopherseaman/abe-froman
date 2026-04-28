@@ -1,7 +1,7 @@
 """Real-ACP integration test for run_evaluation_llm positive path.
 
 The LLM gate path in runtime/gates.py::run_evaluation_llm dispatches an .md
-template through the phase's PromptBackend. Exercising it unit-style would
+template through the node's PromptBackend. Exercising it unit-style would
 require a PromptBackend double — forbidden by feedback_no_fake_backends.md.
 We run it against a real claude-code-acp process instead.
 """
@@ -30,7 +30,7 @@ class TestEvaluateGateLLMPositivePath:
 
         gate_file = tmp_path / "llm_gate.md"
         gate_file.write_text(
-            "You are a test validator. The phase ran and produced this output:\n\n"
+            "You are a test validator. The node ran and produced this output:\n\n"
             "---\n"
             "{{output}}\n"
             "---\n\n"
@@ -46,9 +46,9 @@ class TestEvaluateGateLLMPositivePath:
             async with asyncio.timeout(ACP_TIMEOUT):
                 result = await run_evaluation_llm(
                     gate=gate,
-                    phase_id="test_phase",
+                    node_id="test_phase",
                     workdir=str(tmp_path),
-                    phase_output="some phase output",
+                    phase_output="some node output",
                     backend=backend,
                     default_model="sonnet",
                 )
