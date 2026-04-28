@@ -8,6 +8,8 @@
 
 - [x] **Unify gate-eval via outcome-as-routing-signal** — _landed, Stages 3 + 3b._ Top-level phases use the data-driven model from `compile/evaluation.py` (`Criterion`, `Route`, `walk_routes`, `gate_to_routes`). `classify_gate_outcome` walks routes; `state.evaluations: {node_id: [EvaluationRecord]}` is the single source of truth for scores/feedback. Stage 3b (branch `stage-3b-evaluation-node`) completed the picture: gated top-level phases are a graph pair (`phase` execution node → `_eval_{phase}` evaluation node via `_make_evaluation_router`); gated subphase templates evaluate inline within the Send-dispatched subphase node (graph-level self-loops strip `_subphase_item` at the super-step boundary, so inline retry is the only shape that preserves per-branch identity); legacy `gate_scores`/`gate_feedback` state channels removed outright. Subphase gates honor `max_retries`, write `EvaluationRecord`s with real `invocation` counters, and log per-dimension scores.
 
+- [x] **Phase → Node terminology + Recursive subgraphs + Join nodes** — _landed, Stage 4 (branch `stage-4-node-recursive-subgraphs`)._ Hard cutover on YAML and Python: `phases:`→`nodes:`, `Phase`→`Node`, `WorkflowConfig`→`Graph`, `dynamic_subphases:`→`fan_out:`, `final_phases:`→`final_nodes:`, `quality_gate:`→`evaluation:` (alias dropped). State channels and helpers renamed to match (`phase_outputs`→`node_outputs`, `_make_phase_node`→`_make_execution_node`, etc.). Stage 4b: `execution: { type: join }` no-op topology marker. Stage 4c: `Node.config:` references another graph YAML; recursively compiled via `add_node(node.id, compiled_subgraph)`. State projection via explicit `inputs:`/`outputs:` declarations; subgraph runs in isolation. Compile-time cycle detection + `settings.max_subgraph_depth=10` cap. 488 tests passing.
+
 - [ ] **Split Evaluation from Decision** — _high priority._ Current `_eval_{id}` node runs the validator AND classifies the outcome (writes `completed_phases` / `failed_phases` / `retries`). Conflating the two forecloses non-routing consumers of an `EvaluationRecord`. Splitting unlocks:
     - **Refinement nodes** that consume an `EvaluationRecord` and produce a revised draft, without routing back to the original executor
     - **Multi-eval consensus** (two eval nodes → aggregator → decision)
@@ -114,19 +116,15 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
 
 ## Forward-looking — surfaced during 2026-04-18 architecture plan
 
-- [ ] **Implicit Join (QoL, after Evaluation-as-node refactor lands)** — when that refactor lands, JoinNode exists as an internal primitive emitted whenever a phase has >1 predecessor. Next QoL step: make it implicit for any node with multiple incoming edges, so authors never have to think about join semantics. JoinNode stays available as a primitive for power users; 99% of workflows get correct join behavior for free.
+- [x] **Implicit Join + explicit JoinNode primitive** — _landed, Stage 4b._ Implicit join was already free via LangGraph's super-step semantics (multi-pred nodes naturally synchronize). Stage 4b added `execution: { type: join }` as the explicit form for author readability at fan-in points; dispatcher routes it to a no-op handler returning `ExecutionResult(success=True, output="")`. Composes with `evaluation:` (gates run against the empty join output) and downstream consumers (build_context reads the join's empty output like any other dep).
 
-- [ ] **Multi-step subphase sequences inside fan-out** — today `dynamic_subphases.template` is a single `prompt_file`; each fan-out item traverses exactly one execution node before gather. There's no way to say "for each item, run step A → evaluate → step B → gather." Natural fit for the EvaluationNode world (step-A's eval routes into step-B, then B routes into gather), but requires DSL surface: probably `template: [phase-A, phase-B, ...]` or a new `subgraph:` key. Closely related to the subgraph-primitive item below.
+- [ ] **Multi-step fan-out children** — today the `fan_out.template` is a single `prompt_file`; each fan-out item traverses exactly one execution node before gather. With Stage 4c subgraph composition this is now achievable by pointing fan_out at a subgraph YAML (each manifest item spawns a subgraph instance), but the DSL still routes through the legacy `template:` block. Future: collapse `fan_out.template:` into `fan_out.config:` so a fan-out item naturally becomes a subgraph instantiation.
 
-- [ ] **Subgraph with defined entry/exit nodes as a first-class primitive** — related to multi-step subphase above, and to the existing "Phases as proper langgraph subgraphs" item. A subgraph declares its **entry** node (what upstream routes into) and **exit** node (what routes to downstream); the body can be any shape. Dynamic subphases become "fan out N calls into the subgraph's entry, gather at exit." Reusable subgraph libraries become a real concept. Requires: schema for declaring entry/exit, context projection rules across the boundary, and deciding whether subgraphs get their own checkpointer / state scope.
+- [x] **Subgraph with defined entry/exit nodes as a first-class primitive** — _landed, Stage 4c._ A subgraph declared via `Node.config:` is loaded as a `Graph` (identical schema), recursively compiled, and added as a node in the parent via `add_node(node.id, compiled_subgraph)`. State projection across the boundary is explicit via `inputs:` / `outputs:` declarations. Reusable subgraph libraries are a real concept now: the same YAML runs both standalone and as a subgraph reference.
 
 ## Architectural moves
 
-- [ ] **Phases as proper langgraph subgraphs**
-    - Each `Phase` compiles to a compiled `StateGraph` used as a node in the parent, replacing the flat expansion in `compile/nodes.py`
-    - Enables encapsulation, reusability, nested workflows, cleaner retry semantics, explicit parent/child state boundary
-    - Dynamic subphases collapse to "spawn N instances of the subgraph"
-    - Open questions: state projection vs. full sharing, reducer composition at boundary, how `{{dep}}` template substitution resolves across subgraph boundaries
+- [x] **Nodes as proper langgraph subgraphs** — _landed, Stage 4c._ A node with `config:` recursively compiles the referenced graph YAML and adds it as a node via LangGraph's native `add_node(name, compiled_subgraph)`. State projection is explicit (`inputs:` / `outputs:`); subgraph runs in isolation. Open questions resolved: subgraph never sees parent's full state, only what `inputs:` projects in; `{{dep}}` substitution works the same way at every level because graphs and subgraphs share one schema.
 
 - [ ] **Flexible output contracts**
     - Glob patterns: `required_files: ["docs/*.md", "reports/**/*.pdf"]`
@@ -207,7 +205,7 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
 
 - [ ] **Interrupts / human-in-the-loop** — `interrupt()` + `Command(resume=...)` from langgraph. Free on the existing checkpointer; enables author/operator approval nodes, manual quality gates, draft review. New execution type (`type: human_review`) or `evaluation.mode: human` schema option.
 
-- [ ] **Subgraphs with declared entry/exit** — a phase IS a sub-workflow. New execution type `execution: { type: workflow, config: path/to/sub.yaml }`. Dynamic subphases collapse to "spawn N subgraph instances at entry, gather at exit." Related: "Phases as proper langgraph subgraphs" (architectural moves) and "Subgraph with defined entry/exit nodes" (forward-looking).
+- [x] **Subgraphs with declared entry/exit** — _landed, Stage 4c (no separate execution type)._ User clarified during planning: graphs and subgraphs are definitionally identical, so a node references another graph YAML via `config:` rather than getting tagged as a `subgraph` type. Recursion falls out naturally. See "Nodes as proper langgraph subgraphs" above.
 
 - [ ] **`add_messages` reducer for in-phase refinement loops** — multi-turn draft → critique → revise within a single phase using LangGraph's native message-list reducer. Phase-local `messages` channel; no ACP round-trip per turn for pure model revision.
 
