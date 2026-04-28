@@ -220,6 +220,108 @@ def test_cycle_detected_at_compile_time(tmp_path):
         build_workflow_graph(config, executor, _base_dir=tmp_path)
 
 
+@pytest.mark.asyncio
+async def test_subgraph_internal_failure_surfaces_to_parent(tmp_path):
+    """Subgraph with a failing internal node → parent's failed_nodes[parent_id].
+
+    Exercises the design rule: subgraph failures are NOT flattened into
+    parent's state. The parent sees ONE failed_nodes entry (the parent
+    node id), not the subgraph's internal node ids. This is encapsulation
+    of the subgraph's internals.
+    """
+    _yaml(tmp_path / "sub.yaml", {
+        "name": "Sub", "version": "1.0",
+        "nodes": [{
+            "id": "always_fails",
+            "name": "Always Fails",
+            "execution": {"type": "command", "command": "false"},  # exit 1
+        }],
+    })
+    _yaml(tmp_path / "parent.yaml", {
+        "name": "Parent", "version": "1.0",
+        "nodes": [{
+            "id": "sub_ref",
+            "name": "Sub Ref",
+            "config": "sub.yaml",
+        }],
+    })
+
+    raw = yaml.safe_load((tmp_path / "parent.yaml").read_text())
+    parent_config = Graph(**raw)
+    executor = DispatchExecutor(workdir=str(tmp_path))
+    graph = build_workflow_graph(parent_config, executor, _base_dir=tmp_path)
+    result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
+
+    assert "sub_ref" in result["failed_nodes"]
+    # subgraph internal node id NOT flattened into parent state
+    assert "always_fails" not in result["failed_nodes"]
+    assert "sub_ref" not in result["completed_nodes"]
+    error_strs = [e["error"] for e in result["errors"] if e["node"] == "sub_ref"]
+    assert any("subgraph" in s.lower() for s in error_strs)
+
+
+@pytest.mark.asyncio
+async def test_subgraph_isolation_no_parent_state_leak(tmp_path):
+    """Subgraph never sees parent's `node_outputs` from siblings.
+
+    A subgraph node depending on a parent-only node id should NOT find
+    the parent's output (because subgraph state starts fresh). This
+    proves isolation — only `inputs:`-projected values cross the
+    boundary.
+    """
+    (tmp_path / "leaks.md").write_text(
+        "PARENT_NODE: {{parent_only}} | INPUT: {{from_parent}}"
+    )
+    _yaml(tmp_path / "sub.yaml", {
+        "name": "Sub", "version": "1.0",
+        "nodes": [{
+            "id": "prober",
+            "name": "Prober",
+            "prompt_file": "leaks.md",
+        }],
+    })
+    _yaml(tmp_path / "parent.yaml", {
+        "name": "Parent", "version": "1.0",
+        "nodes": [
+            {
+                "id": "parent_only",
+                "name": "Parent Only",
+                "execution": {"type": "command", "command": "echo", "args": ["-n", "PARENT_VALUE"]},
+            },
+            {
+                "id": "sub_ref",
+                "name": "Sub Ref",
+                "config": "sub.yaml",
+                "depends_on": ["parent_only"],
+                "inputs": {"from_parent": "explicit-input"},
+            },
+        ],
+    })
+
+    from abe_froman.runtime.executor.backends.stub import StubBackend
+    raw = yaml.safe_load((tmp_path / "parent.yaml").read_text())
+    parent_config = Graph(**raw)
+    executor = DispatchExecutor(workdir=str(tmp_path), prompt_backend=StubBackend())
+    graph = build_workflow_graph(parent_config, executor, _base_dir=tmp_path)
+    result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
+
+    # Subgraph completed
+    assert "sub_ref" in result["completed_nodes"]
+    sub_output = result["node_outputs"]["sub_ref"]
+
+    # `{{parent_only}}` is undefined in the subgraph's context (only
+    # `{{from_parent}}` was projected via `inputs:`). Jinja's default
+    # behavior renders undefined variables as empty strings.
+    # Rendered: "PARENT_NODE:  | INPUT: explicit-input" → 37 chars
+    leak_free_len = len("PARENT_NODE:  | INPUT: explicit-input")
+    leaked_len = len("PARENT_NODE: PARENT_VALUE | INPUT: explicit-input")
+    assert f"prompt_length={leak_free_len}" in sub_output, (
+        f"got {sub_output!r}; expected length {leak_free_len} (parent_only "
+        f"unresolved). If length were {leaked_len}, parent state would have "
+        f"leaked into the subgraph."
+    )
+
+
 def test_depth_limit_enforced(tmp_path):
     """Chain of 12 nested subgraphs exceeds default max_subgraph_depth=10.
 
