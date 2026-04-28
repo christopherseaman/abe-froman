@@ -7,7 +7,7 @@ clauses (AND-combined) that are tested against a context (`result`,
 `invocation`, history); first match wins; if nothing matches, `fallback`
 fires.
 
-Compile-time sugar: `gate_to_routes(gate)` turns a `QualityGate` into
+Compile-time sugar: `evaluation_to_routes(evaluation)` turns an `Evaluation` into
 routes with the equivalent semantics. The rest of the runtime keeps
 using outcome names ("pass", "retry", "fail_blocking", "warn_continue")
 as route destinations — those names are emergent labels, not a
@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from abe_froman.schema.models import QualityGate
+from abe_froman.schema.models import Evaluation
 
 
 @dataclass
@@ -118,18 +118,18 @@ def walk_routes(
     return None
 
 
-def gate_to_routes(gate: QualityGate, max_retries: int) -> list[Route]:
-    """Compile `QualityGate` sugar into the general route list.
+def evaluation_to_routes(evaluation: Evaluation, max_retries: int) -> list[Route]:
+    """Compile `Evaluation` sugar into the general route list.
 
     Produces a pass-route (all-dimensions-met, or score>=threshold) and
     a retry-route (not-met AND invocation<max_retries). Fallback is
     handled separately by the caller — `blocking: false` maps to a
     warn-continue destination, `true` to fail_blocking.
     """
-    if gate.dimensions:
+    if evaluation.dimensions:
         pass_clauses = [
             Criterion(field=f"result.scores.{d.field}", op=">=", value=d.min)
-            for d in gate.dimensions
+            for d in evaluation.dimensions
         ]
         # Any single dim below its min → retry. Routes AND their clauses,
         # so encode the OR of per-dim failures as N separate retry routes.
@@ -143,16 +143,16 @@ def gate_to_routes(gate: QualityGate, max_retries: int) -> list[Route]:
                 ],
                 to="retry",
             )
-            for d in gate.dimensions
+            for d in evaluation.dimensions
         ]
     else:
         pass_clauses = [
-            Criterion(field="result.score", op=">=", value=gate.threshold)
+            Criterion(field="result.score", op=">=", value=evaluation.threshold)
         ]
         retry_routes = [
             Route(
                 when=[
-                    Criterion(field="result.score", op="<", value=gate.threshold),
+                    Criterion(field="result.score", op="<", value=evaluation.threshold),
                     Criterion(field="invocation", op="<", value=max_retries),
                 ],
                 to="retry",
@@ -162,9 +162,11 @@ def gate_to_routes(gate: QualityGate, max_retries: int) -> list[Route]:
     return [Route(when=pass_clauses, to="pass"), *retry_routes]
 
 
-def gate_fallback(gate: QualityGate) -> str:
+def evaluation_fallback(evaluation: Evaluation) -> str:
     """Destination when no route matches (retries exhausted, pass failed)."""
-    return "warn_continue" if not gate.blocking else "fail_blocking"
+    return "warn_continue" if not evaluation.blocking else "fail_blocking"
+
+
 
 
 def build_eval_context(

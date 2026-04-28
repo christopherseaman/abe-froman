@@ -1,10 +1,10 @@
-"""Unit tests for _make_gate_router from compile/graph.py.
+"""Unit tests for _make_evaluation_router from compile/graph.py.
 
 The router is a pure state-reader: it inspects `completed_phases` /
-`failed_phases` written by the phase node and returns concrete node
-targets (END, the phase id for retry, or dependent phase ids for pass).
-Classification logic (score vs threshold, blocking, retry budget) lives
-in the phase node (`compile/nodes.py::classify_gate_outcome`), not here.
+`failed_phases` written by the Evaluation node and returns concrete
+targets (END, the execution node id for retry, or dependent phase ids
+for pass). Classification logic (score vs threshold, blocking, retry
+budget) lives in the Evaluation node body (`compile/nodes.py`), not here.
 """
 
 import asyncio
@@ -13,89 +13,84 @@ import time
 import pytest
 from langgraph.graph import END
 
-from abe_froman.compile.graph import _make_gate_router
+from abe_froman.compile.graph import _make_evaluation_router
 from abe_froman.compile.nodes import _make_phase_node
 from abe_froman.runtime.result import ExecutionResult
 from abe_froman.runtime.state import make_initial_state
 from abe_froman.schema.models import (
     OutputContract,
     Phase,
-    QualityGate,
+    Evaluation,
     Settings,
     WorkflowConfig,
 )
 from mock_executor import MockExecutor
 
 
-class TestGateRouter:
-    def _make_phase_with_gate(self, threshold=0.8, blocking=True):
-        return Phase(
-            id="p1", name="P1", prompt_file="t.md",
-            quality_gate=QualityGate(
-                validator="v.py", threshold=threshold, blocking=blocking,
-            ),
-        )
-
+class TestEvaluationRouter:
     def test_pass_single_target(self):
         """Completed with one pass target → return that target directly."""
-        phase = self._make_phase_with_gate()
-        router = _make_gate_router(phase, pass_targets=["b"])
+        router = _make_evaluation_router("p1", pass_targets=["b"])
         state = make_initial_state(completed_phases=["p1"])
         assert router(state) == "b"
 
     def test_pass_multiple_targets_fans_out(self):
         """Completed with multiple pass targets → return list for fan-out."""
-        phase = self._make_phase_with_gate()
-        router = _make_gate_router(phase, pass_targets=["b", "c"])
+        router = _make_evaluation_router("p1", pass_targets=["b", "c"])
         state = make_initial_state(completed_phases=["p1"])
         assert router(state) == ["b", "c"]
 
     def test_pass_defaults_to_end(self):
         """Terminal gated phase → pass routes to END."""
-        phase = self._make_phase_with_gate()
-        router = _make_gate_router(phase)
+        router = _make_evaluation_router("p1", pass_targets=[END])
         state = make_initial_state(completed_phases=["p1"])
         assert router(state) == END
 
     def test_fail_routes_to_end(self):
         """failed_phases contains id → router returns END."""
-        phase = self._make_phase_with_gate()
-        router = _make_gate_router(phase, pass_targets=["b"])
+        router = _make_evaluation_router("p1", pass_targets=["b"])
         state = make_initial_state(failed_phases=["p1"])
         assert router(state) == END
 
-    def test_retry_returns_phase_id(self):
-        """Phase node bumped retries (not completed, not failed) → re-enter phase."""
-        phase = self._make_phase_with_gate()
-        router = _make_gate_router(phase, pass_targets=["b"])
+    def test_retry_returns_execution_node_id(self):
+        """Eval node wrote retries (not completed, not failed) → re-enter exec node."""
+        router = _make_evaluation_router("p1", pass_targets=["b"])
         state = make_initial_state(retries={"p1": 1})
         assert router(state) == "p1"
 
     def test_failed_takes_precedence_over_completed(self):
         """Defensive: if both lists contain the id, fail wins."""
-        phase = self._make_phase_with_gate()
-        router = _make_gate_router(phase, pass_targets=["b"])
+        router = _make_evaluation_router("p1", pass_targets=["b"])
         state = make_initial_state(
             completed_phases=["p1"], failed_phases=["p1"]
         )
         assert router(state) == END
 
     def test_retry_on_empty_state(self):
-        """Fresh state with no markers → re-enter phase (hasn't executed yet)."""
-        phase = self._make_phase_with_gate()
-        router = _make_gate_router(phase, pass_targets=["b"])
+        """Fresh state with no markers → re-enter exec node (hasn't executed yet)."""
+        router = _make_evaluation_router("p1", pass_targets=["b"])
         state = make_initial_state()
         assert router(state) == "p1"
+
+    def test_resolver_switches_node_id(self):
+        """node_id_resolver lets subphase routers key off _subphase_item."""
+        def resolve(state):
+            return f"parent::{state.get('_subphase_item', {}).get('id', '?')}"
+
+        router = _make_evaluation_router(
+            "_sub_parent", pass_targets=["_final_parent_f0"], node_id_resolver=resolve,
+        )
+        state = make_initial_state(completed_phases=["parent::x"])
+        state["_subphase_item"] = {"id": "x"}
+        assert router(state) == "_final_parent_f0"
 
 
 # ---------------------------------------------------------------------------
 # Closure-level unit tests for _make_phase_node
 #
 # These call the returned closure directly with a MockExecutor and fake
-# state dict. The helpers (build_context, classify_gate_outcome, …) are
-# unit-tested separately in test_node_helpers.py — these tests pin the
-# closure's sequencing: early-exit, executor=None fallback, retry delay,
-# output contract validation, gate-outcome integration.
+# state dict. Gated phases only exercise the execution half here — the
+# Evaluation node half is tested in test_evaluation_node.py.
 # ---------------------------------------------------------------------------
 
 
@@ -134,16 +129,17 @@ class TestPhaseNodeClosure:
         assert "[no-executor]" in update["phase_outputs"]["p1"]
 
     @pytest.mark.asyncio
-    async def test_none_executor_with_gate_seeds_perfect_score(self):
-        """Without executor, gate can't evaluate; closure seeds score=1.0 so the
-        router treats it as pass."""
+    async def test_none_executor_with_gate_emits_output_only(self):
+        """Gated phase without executor: phase node emits phase_outputs but does
+        NOT write completed_phases — the downstream Evaluation node handles that."""
         phase = Phase(
             id="p1", name="P1", prompt_file="t.md",
-            quality_gate=QualityGate(validator="v.py", threshold=0.8),
+            quality_gate=Evaluation(validator="v.py", threshold=0.8),
         )
         node = _make_phase_node(phase, _config_with(phase), executor=None)
         update = await node(make_initial_state())
-        assert update["gate_scores"] == {"p1": 1.0}
+        assert "completed_phases" not in update
+        assert "[no-executor]" in update["phase_outputs"]["p1"]
 
     @pytest.mark.asyncio
     async def test_retry_delay_is_awaited(self):
@@ -233,33 +229,17 @@ class TestPhaseNodeClosure:
         assert update["phase_outputs"]["p1"] == "[mock] p1 completed"
 
     @pytest.mark.asyncio
-    async def test_gate_pass_writes_completed(self, tmp_path):
-        """Gate validator returns 1.0 → completed_phases."""
-        validator = tmp_path / "pass.py"
-        validator.write_text("import sys\nsys.stdin.read()\nprint('1.0')\n")
+    async def test_gated_phase_emits_output_without_completing(self, tmp_path):
+        """Gated phase: execution writes phase_outputs; Evaluation node writes
+        completed_phases / retries / failed_phases separately."""
         phase = Phase(
             id="p1", name="P1", prompt_file="t.md",
-            quality_gate=QualityGate(validator="pass.py", threshold=0.8),
+            quality_gate=Evaluation(validator="v.py", threshold=0.8),
         )
         node = _make_phase_node(phase, _config_with(phase), MockExecutor())
         state = make_initial_state(workdir=str(tmp_path))
         update = await node(state)
-        assert update["completed_phases"] == ["p1"]
-        assert update["gate_scores"] == {"p1": 1.0}
-
-    @pytest.mark.asyncio
-    async def test_gate_retry_bumps_retries(self, tmp_path):
-        """Gate validator returns 0.0, retries left → retries dict incremented."""
-        validator = tmp_path / "fail.py"
-        validator.write_text("import sys\nsys.stdin.read()\nprint('0.0')\n")
-        phase = Phase(
-            id="p1", name="P1", prompt_file="t.md",
-            quality_gate=QualityGate(validator="fail.py", threshold=0.8),
-        )
-        node = _make_phase_node(
-            phase, _config_with(phase, max_retries=3), MockExecutor(),
-        )
-        state = make_initial_state(workdir=str(tmp_path))
-        update = await node(state)
-        assert update["retries"] == {"p1": 1}
         assert "completed_phases" not in update
+        assert "retries" not in update
+        assert "failed_phases" not in update
+        assert update["phase_outputs"]["p1"] == "[mock] p1 completed"

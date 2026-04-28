@@ -213,6 +213,42 @@ class TestFailureHandling:
 
 class TestGateIntegration:
     @pytest.mark.asyncio
+    async def test_multi_retry_then_pass(self, tmp_path):
+        """Stage 3b: a gated phase whose validator fails twice and passes
+        on the third call produces three EvaluationRecords (invocations
+        0, 1, 2) and ends in completed_phases. Exercises the eval-node
+        retry self-loop back through the phase execution node."""
+        counter = tmp_path / "n.txt"
+        counter.write_text("0")
+        validator = tmp_path / "staged.py"
+        validator.write_text(
+            f"import sys\nsys.stdin.read()\n"
+            f"n = int(open('{counter}').read())\n"
+            f"open('{counter}', 'w').write(str(n + 1))\n"
+            "print(0.9 if n >= 2 else 0.3)\n"
+        )
+        config = make_config([
+            cmd_phase(
+                "p1", output="data",
+                quality_gate={
+                    "validator": str(validator),
+                    "threshold": 0.5,
+                    "blocking": True,
+                    "max_retries": 3,
+                },
+            ),
+        ])
+        executor = DispatchExecutor(workdir=str(tmp_path))
+        graph = build_workflow_graph(config, executor)
+        result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
+
+        assert "p1" in result["completed_phases"]
+        records = result["evaluations"]["p1"]
+        invocations = [r["invocation"] for r in records]
+        assert invocations == [0, 1, 2], f"expected [0, 1, 2], got {invocations}"
+        assert records[-1]["result"]["score"] == 0.9
+
+    @pytest.mark.asyncio
     async def test_passing_gate_completes(self, tmp_path):
         script = tmp_path / "pass.py"
         script.write_text("print(0.95)")
@@ -223,7 +259,7 @@ class TestGateIntegration:
         executor = DispatchExecutor(workdir=str(tmp_path))
         graph = build_workflow_graph(config, executor)
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
-        assert result["gate_scores"]["p1"] == 0.95
+        assert result["evaluations"]["p1"][-1]["result"]["score"] == 0.95
         assert "p1" in result["completed_phases"]
 
     @pytest.mark.asyncio
@@ -256,7 +292,7 @@ class TestGateIntegration:
         graph = build_workflow_graph(config, executor)
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
         assert "p1" in result["failed_phases"]
-        assert any("gate failed" in e["error"].lower() for e in result["errors"])
+        assert any("evaluation failed" in e["error"].lower() for e in result["errors"])
 
     @pytest.mark.asyncio
     async def test_non_blocking_gate_failure_continues(self, tmp_path):
@@ -597,9 +633,9 @@ class TestDimensionGateExecution:
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
 
         assert "p1" in result["completed_phases"]
-        fb = result["gate_feedback"]["p1"]
-        assert fb["scores"]["correctness"] == 0.9
-        assert fb["scores"]["style"] == 0.7
+        last_result = result["evaluations"]["p1"][-1]["result"]
+        assert last_result["scores"]["correctness"] == 0.9
+        assert last_result["scores"]["style"] == 0.7
 
     @pytest.mark.asyncio
     async def test_dimension_gate_fails_one_dimension(self, tmp_path):
@@ -717,7 +753,7 @@ class TestOutputContract:
         graph = build_workflow_graph(config, executor)
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
         assert "p1" in result["completed_phases"]
-        assert result["gate_scores"]["p1"] == 1.0
+        assert result["evaluations"]["p1"][-1]["result"]["score"] == 1.0
 
     @pytest.mark.asyncio
     async def test_contract_fail_blocks_phase(self, tmp_path):
@@ -733,7 +769,7 @@ class TestOutputContract:
         graph = build_workflow_graph(config, executor)
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
         assert "p1" in result["failed_phases"]
-        assert "p1" not in result.get("gate_scores", {})
+        assert "p1" not in result.get("evaluations", {})
         assert any("contract violated" in e["error"].lower() for e in result["errors"])
 
     @pytest.mark.asyncio

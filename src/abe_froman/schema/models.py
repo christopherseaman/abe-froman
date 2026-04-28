@@ -43,7 +43,14 @@ class DimensionCheck(BaseModel):
     min: float = Field(ge=0.0, le=1.0)
 
 
-class QualityGate(BaseModel):
+class Evaluation(BaseModel):
+    """Evaluation configuration for a phase.
+
+    The YAML DSL key stays `quality_gate:` for backward compatibility with
+    existing workflows; in Python code the attribute on `Phase` is
+    `evaluation`. Unified with the runtime machinery (EvaluationRecord,
+    state.evaluations, _make_evaluation_node).
+    """
     validator: str
     threshold: float = Field(ge=0.0, le=1.0, default=0.0)
     blocking: bool = False
@@ -59,7 +66,9 @@ class OutputContract(BaseModel):
 
 class SubphaseTemplate(BaseModel):
     prompt_file: str
-    quality_gate: QualityGate | None = None
+    evaluation: Evaluation | None = Field(default=None, alias="quality_gate")
+
+    model_config = {"populate_by_name": True}
 
 
 class FinalPhase(BaseModel):
@@ -68,7 +77,9 @@ class FinalPhase(BaseModel):
     description: str | None = None
     prompt_file: str | None = None
     execution: Execution | None = None
-    quality_gate: QualityGate | None = None
+    evaluation: Evaluation | None = Field(default=None, alias="quality_gate")
+
+    model_config = {"populate_by_name": True}
 
     @model_validator(mode="after")
     def normalize_prompt_file(self) -> Self:
@@ -103,10 +114,12 @@ class Phase(BaseModel):
     prompt_file: str | None = None
     execution: Execution | None = None
     depends_on: list[str] = []
-    quality_gate: QualityGate | None = None
+    evaluation: Evaluation | None = Field(default=None, alias="quality_gate")
     output_contract: OutputContract | None = None
     dynamic_subphases: DynamicPhaseConfig | None = None
     timeout: float | None = None  # seconds, None = use default
+
+    model_config = {"populate_by_name": True}
 
     @model_validator(mode="after")
     def normalize_prompt_file(self) -> Self:
@@ -119,9 +132,9 @@ class Phase(BaseModel):
         return settings.default_timeout
 
     def effective_max_retries(self, settings: Settings) -> int:
-        """Resolve max_retries: gate override > settings default."""
-        if self.quality_gate and self.quality_gate.max_retries is not None:
-            return self.quality_gate.max_retries
+        """Resolve max_retries: evaluation override > settings default."""
+        if self.evaluation and self.evaluation.max_retries is not None:
+            return self.evaluation.max_retries
         return settings.max_retries
 
 

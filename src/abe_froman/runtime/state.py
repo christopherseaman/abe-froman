@@ -29,8 +29,6 @@ class WorkflowState(TypedDict):
     failed_phases: Annotated[list[str], operator.add]
     phase_outputs: Annotated[dict[str, Any], _merge_dicts]
     phase_structured_outputs: Annotated[dict[str, Any], _merge_dicts]
-    gate_scores: Annotated[dict[str, float], _merge_dicts]
-    gate_feedback: Annotated[dict[str, dict[str, Any]], _merge_dicts]
     evaluations: Annotated[dict[str, list[dict[str, Any]]], _merge_evaluations]
     retries: Annotated[dict[str, int], _merge_dicts]
     subphase_outputs: Annotated[dict[str, Any], _merge_dicts]
@@ -58,8 +56,6 @@ def make_initial_state(
         "failed_phases": [],
         "phase_outputs": {},
         "phase_structured_outputs": {},
-        "gate_scores": {},
-        "gate_feedback": {},
         "evaluations": {},
         "retries": {},
         "subphase_outputs": {},

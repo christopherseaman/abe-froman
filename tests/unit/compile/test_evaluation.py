@@ -14,11 +14,11 @@ from abe_froman.compile.evaluation import (
     build_eval_context,
     clauses_match,
     criterion_matches,
-    gate_fallback,
-    gate_to_routes,
+    evaluation_fallback,
+    evaluation_to_routes,
     walk_routes,
 )
-from abe_froman.schema.models import DimensionCheck, QualityGate
+from abe_froman.schema.models import DimensionCheck, Evaluation
 
 
 class TestCriterionMatches:
@@ -108,8 +108,8 @@ class TestWalkRoutes:
 
 class TestGateToRoutes:
     def test_threshold_gate_pass(self):
-        gate = QualityGate(validator="g.py", threshold=0.8, blocking=False)
-        routes = gate_to_routes(gate, max_retries=2)
+        gate = Evaluation(validator="g.py", threshold=0.8, blocking=False)
+        routes = evaluation_to_routes(gate, max_retries=2)
         assert routes[0].to == "pass"
         # Pass route: score >= threshold
         assert len(routes[0].when) == 1
@@ -117,8 +117,8 @@ class TestGateToRoutes:
         assert c.field == "result.score" and c.op == ">=" and c.value == 0.8
 
     def test_threshold_gate_retry_has_invocation_clause(self):
-        gate = QualityGate(validator="g.py", threshold=0.8)
-        routes = gate_to_routes(gate, max_retries=3)
+        gate = Evaluation(validator="g.py", threshold=0.8)
+        routes = evaluation_to_routes(gate, max_retries=3)
         retry = routes[1]
         assert retry.to == "retry"
         ops = {c.field: (c.op, c.value) for c in retry.when}
@@ -126,14 +126,14 @@ class TestGateToRoutes:
         assert ops["invocation"] == ("<", 3)
 
     def test_multidim_gate_emits_per_dim_retry(self):
-        gate = QualityGate(
+        gate = Evaluation(
             validator="g.py",
             dimensions=[
                 DimensionCheck(field="rigor", min=0.7),
                 DimensionCheck(field="humor", min=0.6),
             ],
         )
-        routes = gate_to_routes(gate, max_retries=1)
+        routes = evaluation_to_routes(gate, max_retries=1)
         # pass route has N clauses (all dims must meet)
         assert routes[0].to == "pass"
         assert len(routes[0].when) == 2
@@ -144,12 +144,12 @@ class TestGateToRoutes:
 
 class TestGateFallback:
     def test_blocking_falls_to_fail(self):
-        gate = QualityGate(validator="g.py", threshold=0.5, blocking=True)
-        assert gate_fallback(gate) == "fail_blocking"
+        gate = Evaluation(validator="g.py", threshold=0.5, blocking=True)
+        assert evaluation_fallback(gate) == "fail_blocking"
 
     def test_non_blocking_falls_to_warn(self):
-        gate = QualityGate(validator="g.py", threshold=0.5, blocking=False)
-        assert gate_fallback(gate) == "warn_continue"
+        gate = Evaluation(validator="g.py", threshold=0.5, blocking=False)
+        assert evaluation_fallback(gate) == "warn_continue"
 
 
 class TestBuildEvalContext:
@@ -179,47 +179,47 @@ class TestEvaluationRecord:
 class TestEndToEndRouteWalkFromGate:
     """Walk gate-derived routes against evaluated-gate contexts.
 
-    Mirrors the real call sequence inside classify_gate_outcome.
+    Mirrors the real call sequence inside classify_evaluation_outcome.
     """
 
     def test_pass_single_threshold(self):
-        gate = QualityGate(validator="g.py", threshold=0.8, blocking=False)
-        routes = gate_to_routes(gate, max_retries=2)
+        gate = Evaluation(validator="g.py", threshold=0.8, blocking=False)
+        routes = evaluation_to_routes(gate, max_retries=2)
         ctx = build_eval_context({"score": 0.9}, invocation=0, history=[])
         assert walk_routes(routes, ctx).to == "pass"
 
     def test_retry_single_threshold(self):
-        gate = QualityGate(validator="g.py", threshold=0.8)
-        routes = gate_to_routes(gate, max_retries=2)
+        gate = Evaluation(validator="g.py", threshold=0.8)
+        routes = evaluation_to_routes(gate, max_retries=2)
         ctx = build_eval_context({"score": 0.5}, invocation=0, history=[])
         assert walk_routes(routes, ctx).to == "retry"
 
     def test_exhausted_falls_through(self):
         """Retries used up: pass fails, retry-with-invocation<2 fails → None."""
-        gate = QualityGate(validator="g.py", threshold=0.8)
-        routes = gate_to_routes(gate, max_retries=2)
+        gate = Evaluation(validator="g.py", threshold=0.8)
+        routes = evaluation_to_routes(gate, max_retries=2)
         ctx = build_eval_context({"score": 0.5}, invocation=2, history=[])
         assert walk_routes(routes, ctx) is None  # caller uses fallback
 
     def test_multidim_one_failing_dim_triggers_retry(self):
-        gate = QualityGate(
+        gate = Evaluation(
             validator="g.py",
             dimensions=[
                 DimensionCheck(field="rigor", min=0.7),
                 DimensionCheck(field="humor", min=0.6),
             ],
         )
-        routes = gate_to_routes(gate, max_retries=2)
+        routes = evaluation_to_routes(gate, max_retries=2)
         ctx = build_eval_context(
             {"scores": {"rigor": 0.9, "humor": 0.3}}, invocation=0, history=[]
         )
         assert walk_routes(routes, ctx).to == "retry"
 
     def test_multidim_all_dims_pass(self):
-        gate = QualityGate(
+        gate = Evaluation(
             validator="g.py",
             dimensions=[DimensionCheck(field="a", min=0.5)],
         )
-        routes = gate_to_routes(gate, max_retries=2)
+        routes = evaluation_to_routes(gate, max_retries=2)
         ctx = build_eval_context({"scores": {"a": 0.8}}, invocation=0, history=[])
         assert walk_routes(routes, ctx).to == "pass"

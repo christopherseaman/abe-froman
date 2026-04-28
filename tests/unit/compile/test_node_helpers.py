@@ -12,17 +12,17 @@ from abe_froman.compile.nodes import (
     _get_retry_delay,
     assemble_success_update,
     build_context,
-    build_gate_outcome_update,
+    build_evaluation_outcome_update,
     check_dep_failed,
     check_dry_run,
-    classify_gate_outcome,
+    classify_evaluation_outcome,
     execute_with_timeout,
     inject_retry_reason,
     make_failure_update,
 )
-from abe_froman.runtime.gates import GateResult
+from abe_froman.runtime.gates import EvaluationResult
 from abe_froman.runtime.result import ExecutionResult
-from abe_froman.schema.models import Phase, QualityGate
+from abe_froman.schema.models import Phase, Evaluation
 
 
 def _phase(id="p1", depends_on=None, quality_gate=None, **kw):
@@ -30,7 +30,7 @@ def _phase(id="p1", depends_on=None, quality_gate=None, **kw):
 
 
 def _gate(threshold=0.8, blocking=True, max_retries=None):
-    return QualityGate(validator="v.py", threshold=threshold, blocking=blocking, max_retries=max_retries)
+    return Evaluation(validator="v.py", threshold=threshold, blocking=blocking, max_retries=max_retries)
 
 
 class TestGetRetryDelay:
@@ -83,10 +83,13 @@ class TestCheckDryRun:
         assert "gate_scores" not in result
 
     def test_dry_run_with_gate(self):
+        """Gated phases in dry-run: phase node writes phase_outputs only; the
+        downstream Evaluation node synthesizes a pass EvaluationRecord."""
         phase = _phase(quality_gate=_gate())
         state = {"dry_run": True}
         result = check_dry_run(phase, state)
-        assert result["gate_scores"] == {"p1": 1.0}
+        assert "[dry-run]" in result["phase_outputs"]["p1"]
+        assert "completed_phases" not in result
 
     def test_not_dry_run(self):
         assert check_dry_run(_phase(), {"dry_run": False}) is None
@@ -182,7 +185,17 @@ class TestInjectRetryReason:
 
     def test_retry_injects_reason(self):
         phase = _phase(quality_gate=_gate(threshold=0.8))
-        state = {"retries": {"p1": 1}, "gate_scores": {"p1": 0.5}}
+        state = {
+            "retries": {"p1": 1},
+            "evaluations": {
+                "p1": [{
+                    "invocation": 0,
+                    "result": {"score": 0.5, "scores": {}, "feedback": None,
+                               "pass_criteria_met": [], "pass_criteria_unmet": []},
+                    "timestamp": "t",
+                }],
+            },
+        }
         ctx = inject_retry_reason({}, phase, state, 3)
         assert "score=0.50" in ctx["_retry_reason"]
         assert "threshold=0.8" in ctx["_retry_reason"]
@@ -198,13 +211,18 @@ class TestInjectRetryReason:
         phase = _phase(quality_gate=_gate())
         state = {
             "retries": {"p1": 1},
-            "gate_scores": {"p1": 0.4},
-            "gate_feedback": {
-                "p1": {
-                    "feedback": "missing docstring",
-                    "pass_criteria_met": [],
-                    "pass_criteria_unmet": ["docs", "tests"],
-                }
+            "evaluations": {
+                "p1": [{
+                    "invocation": 0,
+                    "result": {
+                        "score": 0.4,
+                        "scores": {},
+                        "feedback": "missing docstring",
+                        "pass_criteria_met": [],
+                        "pass_criteria_unmet": ["docs", "tests"],
+                    },
+                    "timestamp": "t",
+                }],
             },
         }
         ctx = inject_retry_reason({}, phase, state, 3)
@@ -216,20 +234,25 @@ class TestInjectRetryReason:
     def test_partial_feedback_produces_minimal_retry_reason(self):
         """Gate that returns only `{"score": ...}` produces feedback with
         feedback=None and empty pass_criteria lists (the shape
-        build_gate_outcome_update writes). The retry reason must still surface
+        build_evaluation_outcome_update writes). The retry reason must still surface
         the score/threshold/attempt lines without "Feedback:" or
         "Unmet criteria:" sections.
         """
         phase = _phase(quality_gate=_gate(threshold=0.8))
         state = {
             "retries": {"p1": 1},
-            "gate_scores": {"p1": 0.4},
-            "gate_feedback": {
-                "p1": {
-                    "feedback": None,
-                    "pass_criteria_met": [],
-                    "pass_criteria_unmet": [],
-                }
+            "evaluations": {
+                "p1": [{
+                    "invocation": 0,
+                    "result": {
+                        "score": 0.4,
+                        "scores": {},
+                        "feedback": None,
+                        "pass_criteria_met": [],
+                        "pass_criteria_unmet": [],
+                    },
+                    "timestamp": "t",
+                }],
             },
         }
         ctx = inject_retry_reason({}, phase, state, 3)
@@ -324,31 +347,31 @@ class TestClassifyGateOutcome:
     )
     def test_gate_outcomes(self, score, threshold, retries, max_retries, blocking, expected):
         phase = _phase(quality_gate=_gate(threshold=threshold, blocking=blocking))
-        result = GateResult(score=score)
-        assert classify_gate_outcome(phase, result, retries, max_retries) == expected
+        result = EvaluationResult(score=score)
+        assert classify_evaluation_outcome(phase, result, retries, max_retries) == expected
 
 
 class TestBuildGateOutcomeUpdate:
     def test_pass(self):
         phase = _phase(quality_gate=_gate())
-        update = build_gate_outcome_update(phase, GateResult(score=0.9), "pass", 0, 3)
-        assert update["gate_scores"] == {"p1": 0.9}
-        fb = update["gate_feedback"]["p1"]
-        assert fb["feedback"] is None
-        assert fb["scores"] == {}
+        update = build_evaluation_outcome_update(phase, EvaluationResult(score=0.9), "pass", 0, 3)
+        record = update["evaluations"]["p1"][0]
+        assert record["result"]["score"] == 0.9
+        assert record["result"]["feedback"] is None
+        assert record["result"]["scores"] == {}
         assert update["completed_phases"] == ["p1"]
         assert "failed_phases" not in update
 
     def test_retry(self):
         phase = _phase(quality_gate=_gate())
-        update = build_gate_outcome_update(phase, GateResult(score=0.5), "retry", 1, 3)
+        update = build_evaluation_outcome_update(phase, EvaluationResult(score=0.5), "retry", 1, 3)
         assert update["retries"] == {"p1": 2}
         assert "completed_phases" not in update
 
     def test_fail_blocking(self):
         phase = _phase(quality_gate=_gate(threshold=0.8))
-        update = build_gate_outcome_update(
-            phase, GateResult(score=0.3), "fail_blocking", 3, 3
+        update = build_evaluation_outcome_update(
+            phase, EvaluationResult(score=0.3), "fail_blocking", 3, 3
         )
         assert update["failed_phases"] == ["p1"]
         assert "score=0.30" in update["errors"][0]["error"]
@@ -356,36 +379,36 @@ class TestBuildGateOutcomeUpdate:
 
     def test_warn_continue(self):
         phase = _phase(quality_gate=_gate(threshold=0.8, blocking=False))
-        update = build_gate_outcome_update(
-            phase, GateResult(score=0.3), "warn_continue", 3, 3
+        update = build_evaluation_outcome_update(
+            phase, EvaluationResult(score=0.3), "warn_continue", 3, 3
         )
         assert update["completed_phases"] == ["p1"]
         assert "non-blocking" in update["errors"][0]["error"]
 
     def test_feedback_populated_from_gate_result(self):
         phase = _phase(quality_gate=_gate())
-        gr = GateResult(
+        gr = EvaluationResult(
             score=0.5,
             feedback="missing docstring",
             pass_criteria_met=["tests pass"],
             pass_criteria_unmet=["docs"],
         )
-        update = build_gate_outcome_update(phase, gr, "retry", 0, 3)
-        fb = update["gate_feedback"]["p1"]
-        assert fb["feedback"] == "missing docstring"
-        assert fb["pass_criteria_met"] == ["tests pass"]
-        assert fb["pass_criteria_unmet"] == ["docs"]
-        assert fb["scores"] == {}
+        update = build_evaluation_outcome_update(phase, gr, "retry", 0, 3)
+        record = update["evaluations"]["p1"][0]
+        assert record["result"]["feedback"] == "missing docstring"
+        assert record["result"]["pass_criteria_met"] == ["tests pass"]
+        assert record["result"]["pass_criteria_unmet"] == ["docs"]
+        assert record["result"]["scores"] == {}
 
     def test_evaluation_record_written_to_state(self):
         """Each gate call appends an EvaluationRecord to state.evaluations."""
         phase = _phase(quality_gate=_gate(threshold=0.8))
-        gr = GateResult(
+        gr = EvaluationResult(
             score=0.6,
             feedback="too thin",
             pass_criteria_unmet=["detail"],
         )
-        update = build_gate_outcome_update(phase, gr, "retry", 1, 3)
+        update = build_evaluation_outcome_update(phase, gr, "retry", 1, 3)
         records = update["evaluations"]["p1"]
         assert len(records) == 1
         rec = records[0]
@@ -405,7 +428,7 @@ from abe_froman.schema.models import DimensionCheck
 
 class TestDimensionGateClassification:
     def _dim_gate(self, dims, blocking=True):
-        return QualityGate(
+        return Evaluation(
             validator="v.py",
             blocking=blocking,
             dimensions=[DimensionCheck(**d) for d in dims],
@@ -414,56 +437,56 @@ class TestDimensionGateClassification:
     def test_all_dimensions_pass(self):
         gate = self._dim_gate([{"field": "correctness", "min": 0.7}, {"field": "style", "min": 0.5}])
         phase = _phase(quality_gate=gate)
-        result = GateResult(score=0.0, scores={"correctness": 0.8, "style": 0.6})
-        assert classify_gate_outcome(phase, result, 0, 3) == "pass"
+        result = EvaluationResult(score=0.0, scores={"correctness": 0.8, "style": 0.6})
+        assert classify_evaluation_outcome(phase, result, 0, 3) == "pass"
 
     def test_one_dimension_fails(self):
         gate = self._dim_gate([{"field": "correctness", "min": 0.7}, {"field": "style", "min": 0.5}])
         phase = _phase(quality_gate=gate)
-        result = GateResult(score=0.0, scores={"correctness": 0.8, "style": 0.3})
-        assert classify_gate_outcome(phase, result, 0, 3) == "retry"
+        result = EvaluationResult(score=0.0, scores={"correctness": 0.8, "style": 0.3})
+        assert classify_evaluation_outcome(phase, result, 0, 3) == "retry"
 
     def test_missing_dimension_treated_as_zero(self):
         gate = self._dim_gate([{"field": "correctness", "min": 0.7}])
         phase = _phase(quality_gate=gate)
-        result = GateResult(score=0.0, scores={})
-        assert classify_gate_outcome(phase, result, 0, 3) == "retry"
+        result = EvaluationResult(score=0.0, scores={})
+        assert classify_evaluation_outcome(phase, result, 0, 3) == "retry"
 
     def test_dimension_gate_exhausted_blocking(self):
         gate = self._dim_gate([{"field": "x", "min": 0.8}], blocking=True)
         phase = _phase(quality_gate=gate)
-        result = GateResult(score=0.0, scores={"x": 0.5})
-        assert classify_gate_outcome(phase, result, 3, 3) == "fail_blocking"
+        result = EvaluationResult(score=0.0, scores={"x": 0.5})
+        assert classify_evaluation_outcome(phase, result, 3, 3) == "fail_blocking"
 
     def test_dimension_gate_exhausted_non_blocking(self):
         gate = self._dim_gate([{"field": "x", "min": 0.8}], blocking=False)
         phase = _phase(quality_gate=gate)
-        result = GateResult(score=0.0, scores={"x": 0.5})
-        assert classify_gate_outcome(phase, result, 3, 3) == "warn_continue"
+        result = EvaluationResult(score=0.0, scores={"x": 0.5})
+        assert classify_evaluation_outcome(phase, result, 3, 3) == "warn_continue"
 
     def test_dimension_scores_stored_in_feedback(self):
         gate = self._dim_gate([{"field": "correctness", "min": 0.7}])
         phase = _phase(quality_gate=gate)
-        gr = GateResult(score=0.0, scores={"correctness": 0.9})
-        update = build_gate_outcome_update(phase, gr, "pass", 0, 3)
-        assert update["gate_feedback"]["p1"]["scores"] == {"correctness": 0.9}
+        gr = EvaluationResult(score=0.0, scores={"correctness": 0.9})
+        update = build_evaluation_outcome_update(phase, gr, "pass", 0, 3)
+        assert update["evaluations"]["p1"][0]["result"]["scores"] == {"correctness": 0.9}
 
     def test_dimension_gate_ignore_threshold(self):
         """When dimensions are set, the single-score threshold is irrelevant."""
-        gate = QualityGate(
+        gate = Evaluation(
             validator="v.py", threshold=0.99,
             dimensions=[DimensionCheck(field="x", min=0.5)],
         )
         phase = _phase(quality_gate=gate)
-        result = GateResult(score=0.0, scores={"x": 0.6})
-        assert classify_gate_outcome(phase, result, 0, 3) == "pass"
+        result = EvaluationResult(score=0.0, scores={"x": 0.6})
+        assert classify_evaluation_outcome(phase, result, 0, 3) == "pass"
 
 
 # ---------------------------------------------------------------------------
-# evaluate_gate_and_outcome — end-to-end gate+classifier+update integration
+# run_evaluation_and_outcome — end-to-end gate+classifier+update integration
 # ---------------------------------------------------------------------------
 
-from abe_froman.compile.nodes import evaluate_gate_and_outcome
+from abe_froman.compile.nodes import run_evaluation_and_outcome
 from abe_froman.schema.models import Settings, WorkflowConfig
 
 
@@ -486,26 +509,26 @@ class TestEvaluateGateAndOutcome:
     async def test_pass_path(self, tmp_path):
         validator = _write_validator(tmp_path, "pass.py", "1.0")
         phase = _phase(quality_gate=_gate(threshold=0.8))
-        phase.quality_gate.validator = validator
+        phase.evaluation.validator = validator
         config = _config_with_phase(phase)
         state = {
             "workdir": str(tmp_path),
             "retries": {},
         }
-        update = await evaluate_gate_and_outcome(
+        update = await run_evaluation_and_outcome(
             phase, config, state, ExecutionResult(output="x"), timeout=None,
         )
         assert update["completed_phases"] == ["p1"]
-        assert update["gate_scores"] == {"p1": 1.0}
+        assert update["evaluations"]["p1"][0]["result"]["score"] == 1.0
 
     @pytest.mark.asyncio
     async def test_retry_path_bumps_retries(self, tmp_path):
         validator = _write_validator(tmp_path, "fail.py", "0.0")
         phase = _phase(quality_gate=_gate(threshold=0.8))
-        phase.quality_gate.validator = validator
+        phase.evaluation.validator = validator
         config = _config_with_phase(phase, max_retries=3)
         state = {"workdir": str(tmp_path), "retries": {"p1": 1}}
-        update = await evaluate_gate_and_outcome(
+        update = await run_evaluation_and_outcome(
             phase, config, state, ExecutionResult(output="x"), timeout=None,
         )
         assert update["retries"] == {"p1": 2}
@@ -515,10 +538,10 @@ class TestEvaluateGateAndOutcome:
     async def test_fail_blocking_path(self, tmp_path):
         validator = _write_validator(tmp_path, "fail.py", "0.0")
         phase = _phase(quality_gate=_gate(threshold=0.8, blocking=True))
-        phase.quality_gate.validator = validator
+        phase.evaluation.validator = validator
         config = _config_with_phase(phase, max_retries=0)
         state = {"workdir": str(tmp_path), "retries": {}}
-        update = await evaluate_gate_and_outcome(
+        update = await run_evaluation_and_outcome(
             phase, config, state, ExecutionResult(output="x"), timeout=None,
         )
         assert update["failed_phases"] == ["p1"]
@@ -527,10 +550,10 @@ class TestEvaluateGateAndOutcome:
     async def test_warn_continue_path(self, tmp_path):
         validator = _write_validator(tmp_path, "fail.py", "0.0")
         phase = _phase(quality_gate=_gate(threshold=0.8, blocking=False))
-        phase.quality_gate.validator = validator
+        phase.evaluation.validator = validator
         config = _config_with_phase(phase, max_retries=0)
         state = {"workdir": str(tmp_path), "retries": {}}
-        update = await evaluate_gate_and_outcome(
+        update = await run_evaluation_and_outcome(
             phase, config, state, ExecutionResult(output="x"), timeout=None,
         )
         assert update["completed_phases"] == ["p1"]
@@ -542,10 +565,10 @@ class TestEvaluateGateAndOutcome:
         slow = tmp_path / "slow.py"
         slow.write_text("import time, sys\nsys.stdin.read()\ntime.sleep(10)\nprint('1.0')\n")
         phase = _phase(quality_gate=_gate(threshold=0.8))
-        phase.quality_gate.validator = "slow.py"
+        phase.evaluation.validator = "slow.py"
         config = _config_with_phase(phase)
         state = {"workdir": str(tmp_path), "retries": {}}
-        update = await evaluate_gate_and_outcome(
+        update = await run_evaluation_and_outcome(
             phase, config, state, ExecutionResult(output="x"), timeout=0.1,
         )
         assert update["failed_phases"] == ["p1"]

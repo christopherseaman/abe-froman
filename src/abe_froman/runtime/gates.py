@@ -7,11 +7,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from abe_froman.schema.models import OutputContract, QualityGate
+from abe_froman.schema.models import Evaluation, OutputContract
 
 
 @dataclass
-class GateResult:
+class EvaluationResult:
     score: float
     scores: dict[str, float] = field(default_factory=dict)
     feedback: str | None = None
@@ -24,10 +24,10 @@ _NON_SCORE_KEYS = frozenset(
 )
 
 
-def _parse_gate_output(
+def _parse_evaluation_output(
     raw: str, *, allow_bare_float: bool = False, require_score: bool = True,
-) -> GateResult:
-    """Parse gate output into a GateResult.
+) -> EvaluationResult:
+    """Parse evaluation output into an EvaluationResult.
 
     Accepts: bare float (script gates only), JSON with "score", full
     feedback JSON, or multi-dimension JSON (numeric fields extracted as
@@ -36,20 +36,20 @@ def _parse_gate_output(
     stripped = raw.strip()
     if allow_bare_float:
         try:
-            return GateResult(score=float(stripped))
+            return EvaluationResult(score=float(stripped))
         except ValueError:
             pass
 
     try:
         data = json.loads(stripped)
     except (json.JSONDecodeError, TypeError):
-        return GateResult(
+        return EvaluationResult(
             score=0.0,
             feedback=f"gate returned unparseable response: {stripped[:200]!r}",
         )
 
     if not isinstance(data, dict):
-        return GateResult(
+        return EvaluationResult(
             score=0.0,
             feedback="gate response missing or non-numeric 'score' field",
         )
@@ -63,12 +63,12 @@ def _parse_gate_output(
         try:
             score = float(data["score"])
         except (TypeError, ValueError):
-            return GateResult(
+            return EvaluationResult(
                 score=0.0,
                 feedback="gate response missing or non-numeric 'score' field",
             )
     elif require_score and not dim_scores:
-        return GateResult(
+        return EvaluationResult(
             score=0.0,
             feedback="gate response missing or non-numeric 'score' field",
         )
@@ -77,7 +77,7 @@ def _parse_gate_output(
 
     met = data.get("pass_criteria_met", []) or []
     unmet = data.get("pass_criteria_unmet", []) or []
-    return GateResult(
+    return EvaluationResult(
         score=score,
         scores=dim_scores,
         feedback=data.get("feedback"),
@@ -86,7 +86,7 @@ def _parse_gate_output(
     )
 
 
-async def evaluate_gate_script(
+async def run_evaluation_script(
     validator_path: str,
     phase_id: str,
     workdir: str,
@@ -94,11 +94,11 @@ async def evaluate_gate_script(
     workflow_name: str = "",
     attempt_number: int = 1,
     require_score: bool = True,
-) -> GateResult:
+) -> EvaluationResult:
     """Run a .py or .js validator script and parse its response.
 
     The phase output is passed via stdin so validators can inspect it.
-    Returns a GateResult; bare-float output is wrapped with feedback=None.
+    Returns an EvaluationResult; bare-float output is wrapped with feedback=None.
     """
     path = Path(validator_path)
     suffix = path.suffix.lower()
@@ -131,25 +131,25 @@ async def evaluate_gate_script(
         )
         stdout, stderr = await proc.communicate(input=phase_output.encode())
     except (FileNotFoundError, OSError) as e:
-        return GateResult(
+        return EvaluationResult(
             score=0.0,
             feedback=f"validator script not found or unexecutable: {validator_path} ({e})",
         )
 
     if proc.returncode != 0:
         snippet = stderr.decode(errors="replace").strip()[:200]
-        return GateResult(
+        return EvaluationResult(
             score=0.0,
             feedback=f"validator exited with code {proc.returncode}: {snippet}",
         )
 
-    return _parse_gate_output(
+    return _parse_evaluation_output(
         stdout.decode(), allow_bare_float=True, require_score=require_score,
     )
 
 
-async def evaluate_gate_llm(
-    gate: QualityGate,
+async def run_evaluation_llm(
+    evaluation: Evaluation,
     phase_id: str,
     workdir: str,
     phase_output: str,
@@ -157,22 +157,22 @@ async def evaluate_gate_llm(
     default_model: str,
     attempt_number: int = 1,
     require_score: bool = True,
-) -> GateResult:
-    """Evaluate a .md prompt-based quality gate via an LLM backend.
+) -> EvaluationResult:
+    """Evaluate a .md prompt-based evaluation via an LLM backend.
 
-    The gate's .md file is rendered as a Jinja2 template with the phase
-    output, phase id, and attempt number available as context. The backend's
-    response must be JSON matching the feedback schema.
+    The evaluation's .md file is rendered as a Jinja2 template with the
+    phase output, phase id, and attempt number available as context. The
+    backend's response must be JSON matching the feedback schema.
     """
     from abe_froman.runtime.executor.prompt import render_template
 
-    template_path = Path(workdir) / gate.validator
+    template_path = Path(workdir) / evaluation.validator
     try:
         template_text = template_path.read_text()
     except FileNotFoundError:
-        return GateResult(
+        return EvaluationResult(
             score=0.0,
-            feedback=f"gate template not found: {template_path}",
+            feedback=f"evaluation template not found: {template_path}",
         )
     rendered = render_template(
         template_text,
@@ -183,19 +183,19 @@ async def evaluate_gate_llm(
         },
     )
 
-    model = gate.model or default_model
+    model = evaluation.model or default_model
     result = await backend.send_prompt(rendered, model, workdir)
     if not result.success:
-        return GateResult(
+        return EvaluationResult(
             score=0.0,
-            feedback=f"gate backend error: {result.error}",
+            feedback=f"evaluation backend error: {result.error}",
         )
 
-    return _parse_gate_output(result.output, require_score=require_score)
+    return _parse_evaluation_output(result.output, require_score=require_score)
 
 
-async def evaluate_gate(
-    gate: QualityGate,
+async def run_evaluation(
+    evaluation: Evaluation,
     phase_id: str,
     workdir: str = ".",
     phase_output: str = "",
@@ -203,35 +203,37 @@ async def evaluate_gate(
     attempt_number: int = 1,
     backend: Any = None,
     default_model: str = "sonnet",
-) -> GateResult:
-    """Evaluate a quality gate and return a GateResult.
+) -> EvaluationResult:
+    """Run an evaluation and return an EvaluationResult.
 
     Script-based validators (.py/.js) are dispatched to subprocess.
     Prompt-based validators (.md) are dispatched to the provided backend.
     """
-    path = Path(gate.validator)
+    path = Path(evaluation.validator)
     suffix = path.suffix.lower()
-    require_score = not gate.dimensions
+    require_score = not evaluation.dimensions
 
     if suffix in (".py", ".js"):
-        return await evaluate_gate_script(
-            gate.validator, phase_id, workdir, phase_output,
+        return await run_evaluation_script(
+            evaluation.validator, phase_id, workdir, phase_output,
             workflow_name=workflow_name, attempt_number=attempt_number,
             require_score=require_score,
         )
     elif suffix == ".md":
         if backend is None:
             raise ValueError(
-                f"LLM gate validator '{gate.validator}' requires a PromptBackend "
-                f"but none was provided"
+                f"LLM evaluation validator '{evaluation.validator}' requires a "
+                f"PromptBackend but none was provided"
             )
-        return await evaluate_gate_llm(
-            gate, phase_id, workdir, phase_output,
+        return await run_evaluation_llm(
+            evaluation, phase_id, workdir, phase_output,
             backend=backend, default_model=default_model,
             attempt_number=attempt_number, require_score=require_score,
         )
     else:
         raise ValueError(f"Unsupported validator type: {suffix}")
+
+
 
 
 def scaffold_output_directory(contract: OutputContract, workdir: str) -> None:

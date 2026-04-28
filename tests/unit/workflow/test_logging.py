@@ -53,7 +53,7 @@ class TestLogSnapshot:
     def test_detects_completed(self):
         buf = StringIO()
         logger = JsonlLogger(buf)
-        prev = {"completed_phases": [], "failed_phases": [], "gate_scores": {}, "retries": {}, "errors": []}
+        prev = {"completed_phases": [], "failed_phases": [], "retries": {}, "errors": []}
         curr = {**prev, "completed_phases": ["research"]}
         logger.log_snapshot(prev, curr)
         events = [json.loads(l) for l in buf.getvalue().strip().split("\n")]
@@ -64,7 +64,7 @@ class TestLogSnapshot:
     def test_detects_failed(self):
         buf = StringIO()
         logger = JsonlLogger(buf)
-        prev = {"completed_phases": [], "failed_phases": [], "gate_scores": {}, "retries": {}, "errors": []}
+        prev = {"completed_phases": [], "failed_phases": [], "retries": {}, "errors": []}
         curr = {
             **prev,
             "failed_phases": ["build"],
@@ -119,7 +119,7 @@ class TestLogSnapshot:
     def test_detects_retry(self):
         buf = StringIO()
         logger = JsonlLogger(buf)
-        prev = {"completed_phases": [], "failed_phases": [], "gate_scores": {}, "retries": {}, "errors": []}
+        prev = {"completed_phases": [], "failed_phases": [], "retries": {}, "errors": []}
         curr = {**prev, "retries": {"research": 2}}
         logger.log_snapshot(prev, curr)
         events = [json.loads(l) for l in buf.getvalue().strip().split("\n")]
@@ -131,7 +131,7 @@ class TestLogSnapshot:
     def test_completed_phase_includes_tokens(self):
         buf = StringIO()
         logger = JsonlLogger(buf)
-        prev = {"completed_phases": [], "failed_phases": [], "gate_scores": {}, "retries": {}, "errors": [], "token_usage": {}}
+        prev = {"completed_phases": [], "failed_phases": [], "retries": {}, "errors": [], "token_usage": {}}
         curr = {**prev, "completed_phases": ["research"], "token_usage": {"research": {"input": 500, "output": 120}}}
         logger.log_snapshot(prev, curr)
         events = [json.loads(l) for l in buf.getvalue().strip().split("\n")]
@@ -142,7 +142,7 @@ class TestLogSnapshot:
     def test_completed_phase_without_tokens_has_no_tokens_key(self):
         buf = StringIO()
         logger = JsonlLogger(buf)
-        prev = {"completed_phases": [], "failed_phases": [], "gate_scores": {}, "retries": {}, "errors": [], "token_usage": {}}
+        prev = {"completed_phases": [], "failed_phases": [], "retries": {}, "errors": [], "token_usage": {}}
         curr = {**prev, "completed_phases": ["research"]}
         logger.log_snapshot(prev, curr)
         events = [json.loads(l) for l in buf.getvalue().strip().split("\n")]
@@ -152,7 +152,7 @@ class TestLogSnapshot:
     def test_no_events_on_identical_snapshots(self):
         buf = StringIO()
         logger = JsonlLogger(buf)
-        state = {"completed_phases": ["a"], "failed_phases": [], "gate_scores": {"a": 1.0}, "retries": {}, "errors": []}
+        state = {"completed_phases": ["a"], "failed_phases": [], "retries": {}, "errors": []}
         logger.log_snapshot(state, state)
         # Parse rather than string-compare so stray whitespace can't silently pass.
         events = [json.loads(l) for l in buf.getvalue().splitlines() if l.strip()]

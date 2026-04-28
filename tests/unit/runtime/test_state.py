@@ -23,8 +23,7 @@ class TestMakeInitialState:
         expected_keys = {
             "workflow_name", "completed_phases",
             "failed_phases", "phase_outputs", "phase_structured_outputs",
-            "gate_scores", "gate_feedback", "evaluations",
-            "retries", "subphase_outputs",
+            "evaluations", "retries", "subphase_outputs",
             "token_usage", "phase_worktrees", "errors", "workdir", "dry_run",
         }
         assert set(state.keys()) == expected_keys

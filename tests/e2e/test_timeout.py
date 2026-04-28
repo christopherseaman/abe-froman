@@ -108,7 +108,7 @@ class TestTimeoutGateValidator:
         elapsed = time.monotonic() - t0
 
         assert "gated" in result["failed_phases"]
-        assert any("gate timed out" in e["error"].lower() for e in result["errors"])
+        assert any("evaluation timed out" in e["error"].lower() for e in result["errors"])
         assert elapsed < 5.0, f"gate timeout should fire at 0.5s, not wait {elapsed:.1f}s"
 
 

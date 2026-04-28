@@ -1,6 +1,6 @@
-"""Real-ACP integration test for evaluate_gate_llm positive path.
+"""Real-ACP integration test for run_evaluation_llm positive path.
 
-The LLM gate path in runtime/gates.py::evaluate_gate_llm dispatches an .md
+The LLM gate path in runtime/gates.py::run_evaluation_llm dispatches an .md
 template through the phase's PromptBackend. Exercising it unit-style would
 require a PromptBackend double — forbidden by feedback_no_fake_backends.md.
 We run it against a real claude-code-acp process instead.
@@ -20,13 +20,13 @@ class TestEvaluateGateLLMPositivePath:
         """A clear instruction to return {"score": 1.0, ...} yields a passing score.
 
         This pins the happy path: .md template rendering → backend dispatch →
-        JSON parsing → GateResult population. Absent this test, the only
-        coverage of evaluate_gate_llm is via the joke-workflow E2E, which
+        JSON parsing → EvaluationResult population. Absent this test, the only
+        coverage of run_evaluation_llm is via the joke-workflow E2E, which
         exercises it implicitly as one piece of a larger flow.
         """
         from abe_froman.runtime.executor.backends.acp import ACPBackend
-        from abe_froman.runtime.gates import evaluate_gate_llm
-        from abe_froman.schema.models import QualityGate
+        from abe_froman.runtime.gates import run_evaluation_llm
+        from abe_froman.schema.models import Evaluation
 
         gate_file = tmp_path / "llm_gate.md"
         gate_file.write_text(
@@ -40,11 +40,11 @@ class TestEvaluateGateLLMPositivePath:
             '"pass_criteria_unmet": []}\n'
         )
 
-        gate = QualityGate(validator="llm_gate.md", threshold=0.8)
+        gate = Evaluation(validator="llm_gate.md", threshold=0.8)
         backend = ACPBackend()
         try:
             async with asyncio.timeout(ACP_TIMEOUT):
-                result = await evaluate_gate_llm(
+                result = await run_evaluation_llm(
                     gate=gate,
                     phase_id="test_phase",
                     workdir=str(tmp_path),

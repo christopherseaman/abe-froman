@@ -6,7 +6,15 @@
 
 ## Simplification candidates (surfaced by 2026-04-17 refactor-done review)
 
-- [ ] **Unify gate-eval via outcome-as-routing-signal** — _partially landed, Stage 3._ Top-level phases now use the data-driven model: `compile/evaluation.py` introduces `Criterion {field, op, value}`, `Route {when, to, params}`, `walk_routes` (first-match-wins), and `gate_to_routes(QualityGate, max_retries)` compiles the DSL sugar. `classify_gate_outcome` walks routes instead of running if/elif, and `state.evaluations: {node_id: [EvaluationRecord]}` records full history. 36 new unit tests in `tests/unit/compile/test_evaluation.py`. **Still open:** the subphase gate block in `compile/dynamic.py:100` still calls `evaluate_gate` directly, writes to `gate_scores`/`gate_feedback` (not `state.evaluations`), and hardcodes `attempt_number=1`. Stage 3b (the two-LangGraph-node split — Execution + Evaluation pair — applied to subphases as well) is what actually closes this item.
+- [x] **Unify gate-eval via outcome-as-routing-signal** — _landed, Stages 3 + 3b._ Top-level phases use the data-driven model from `compile/evaluation.py` (`Criterion`, `Route`, `walk_routes`, `gate_to_routes`). `classify_gate_outcome` walks routes; `state.evaluations: {node_id: [EvaluationRecord]}` is the single source of truth for scores/feedback. Stage 3b (branch `stage-3b-evaluation-node`) completed the picture: gated top-level phases are a graph pair (`phase` execution node → `_eval_{phase}` evaluation node via `_make_evaluation_router`); gated subphase templates evaluate inline within the Send-dispatched subphase node (graph-level self-loops strip `_subphase_item` at the super-step boundary, so inline retry is the only shape that preserves per-branch identity); legacy `gate_scores`/`gate_feedback` state channels removed outright. Subphase gates honor `max_retries`, write `EvaluationRecord`s with real `invocation` counters, and log per-dimension scores.
+
+- [ ] **Split Evaluation from Decision** — _high priority._ Current `_eval_{id}` node runs the validator AND classifies the outcome (writes `completed_phases` / `failed_phases` / `retries`). Conflating the two forecloses non-routing consumers of an `EvaluationRecord`. Splitting unlocks:
+    - **Refinement nodes** that consume an `EvaluationRecord` and produce a revised draft, without routing back to the original executor
+    - **Multi-eval consensus** (two eval nodes → aggregator → decision)
+    - **Human-in-the-loop review** slotted between eval and decision
+    - **Cross-phase evaluation** (eval phase A's output, make a decision about phase B)
+
+    Implementation: use LangGraph's `Command(update=..., goto=...)` to collapse the current "write state in node, read state in conditional-edge router" pattern into a single Decision node return. Removes `_make_evaluation_router`, `_subphase_id_resolver`, and most conditional-edge scaffolding in `compile/graph.py`. Pairs naturally with the `stream_mode="updates"` logging swap below — both unwind reimplementation of native LangGraph patterns.
 
 - [ ] **Collapse `runtime/executor/backends/` → `runtime/backends/`** — 4-level nesting (`runtime/executor/backends/acp.py`) for 4 small files. Semantic loss: current nesting signals that only `PromptExecutor` uses backends. If we land the anthropic/openai backends (below), the signal still holds but less strongly — multiple executor types might route through one backends/ module. Low value, low risk; defer until a second executor family justifies the flattening.
 
@@ -97,7 +105,7 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
 
 - [ ] **Composite / weighted score expressions** — today dimensions are compared independently via per-field `min`. Next: support `{overall: weighted_sum(dims, weights)}` or a tiny expression language for cross-dim predicates (AND/OR, arithmetic). Low urgency — per-field mins cover the current demo needs.
 
-- [ ] **Multi-tier retry escalation for fan-out + synthesis** — _infrastructure landed, Stage 3, 2026-04-17._ Routes now accept any destination + params and can use `{field: "invocation", op: ">=", value: N}` clauses, so tiered escalation is just a longer route list (no new enum, no new retry-counter channel). Still needed: (1) expose an `evaluation:` YAML block that lets authors write custom routes directly; (2) let route destinations name ancestor nodes (requires the Stage 3b graph-node split to properly re-enter upstream phases). Trunk/merge branch for synthesis merges (`settings.trunk_ref: main`) remains unbuilt.
+- [ ] **Multi-tier retry escalation for fan-out + synthesis** — _infrastructure landed, Stages 3 + 3b._ Routes now accept any destination + params and can use `{field: "invocation", op: ">=", value: N}` clauses, so tiered escalation is just a longer route list (no new enum, no new retry-counter channel). Stage 3b confirmed that graph-level retry routing works for top-level gated phases; subphase retries go through inline loops within the Send-dispatched node body. Still needed: (1) expose an `evaluation:` YAML block that lets authors write custom routes directly; (2) let route destinations name ancestor nodes (cross-node re-entry via graph edges for top-level, via nested inline-loops for subphases). Trunk/merge branch for synthesis merges (`settings.trunk_ref: main`) remains unbuilt.
 
 - [ ] **Synthesis as first-class concept**
     - Today: `final_phases` is the implicit synthesis site for dynamic subphases; regular phases chain worktrees via `{{dep_worktree}}` context
@@ -131,10 +139,7 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
 
 ## Correctness
 
-- [ ] **Subphase quality gates with retries**
-    - Subphase gates currently use the Stage 3 record-only route (`when: []` → continue). Retries aren't wired because `_make_subphase_node` doesn't yet emit the execution+evaluation node pair (that's Stage 3b).
-    - Unblocked by: splitting subphase compilation to match the top-level Execution + Evaluation pattern, at which point routes with `invocation` clauses give retries for free.
-    - CLAUDE.md known limitation #3.
+- [x] **Subphase quality gates with retries** — _landed, Stage 3b (branch `stage-3b-evaluation-node`)._ Subphase gates honor `max_retries` via an inline retry loop inside `_make_subphase_node`. Graph-level self-loops can't work for Send-dispatched branches (LangGraph merges branches at super-step boundaries, stripping `_subphase_item`), so the retry loop lives inside the node body. Evaluation records accumulate per-branch with real `invocation` counters; e2e test `tests/e2e/test_dynamic.py::TestDynamicGates::test_subphase_gate_triggers_retry` proves both `p::x` and `p::y` retry independently.
 
 ## Features
 
@@ -196,6 +201,35 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
 
 ## Langgraph adoption wins
 
-- [ ] **Interrupts / human-in-the-loop**
-    - `interrupt()` + `Command(resume=...)` from langgraph
-    - Free once on a checkpointer (which now exists); enables "pause for operator approval, resume"
+- [ ] **`Command` objects for node-level routing** — paired with the Evaluation/Decision split (top of file). A node returns `Command(update=..., goto=...)` instead of writing state and being routed by a downstream conditional edge. Removes router closures across `compile/graph.py` and makes the topology self-describing — the destination lives in the node return, not in a separate function reading state we just wrote.
+
+- [ ] **`stream_mode="updates"` in runner + logging** — `runtime/logging.py` currently re-derives per-node events by diffing successive state snapshots from `astream`. LangGraph natively emits `{node_name: partial_update}` per super-step under `stream_mode="updates"`. Swapping modes lets us drop the diffing code and key events on node identity directly instead of guessing from state shape. Lowest-risk reimplementation removal we have.
+
+- [ ] **Interrupts / human-in-the-loop** — `interrupt()` + `Command(resume=...)` from langgraph. Free on the existing checkpointer; enables author/operator approval nodes, manual quality gates, draft review. New execution type (`type: human_review`) or `evaluation.mode: human` schema option.
+
+- [ ] **Subgraphs with declared entry/exit** — a phase IS a sub-workflow. New execution type `execution: { type: workflow, config: path/to/sub.yaml }`. Dynamic subphases collapse to "spawn N subgraph instances at entry, gather at exit." Related: "Phases as proper langgraph subgraphs" (architectural moves) and "Subgraph with defined entry/exit nodes" (forward-looking).
+
+- [ ] **`add_messages` reducer for in-phase refinement loops** — multi-turn draft → critique → revise within a single phase using LangGraph's native message-list reducer. Phase-local `messages` channel; no ACP round-trip per turn for pure model revision.
+
+- [ ] **Time-travel replay in CLI** — `abe-froman replay <thread-id> --from <checkpoint>`. Checkpointer already persists every super-step; we just don't expose it. Enables A/B of executor changes against the same past state, bisecting regressions, reproducing flakes.
+
+- [ ] **Static breakpoints** — `compile(interrupt_before=[...], interrupt_after=[...])`. Pairs with `--break-before <node>` / `--break-after <node>` CLI flags for step-through debugging of production workflows.
+
+- [ ] **`ToolNode` as a new execution type** — when a phase should hand the model a tool list and have LangGraph route tool calls natively, rather than running a single prompt through ACP. New `execution: { type: tool, tools: [...] }`.
+
+- [ ] **`BaseStore` for cross-run memory** — distinct from checkpointer (per-thread). Shared memory across workflow runs — e.g., "last week's gate was lenient, tighten this week." Optional store wired alongside `AsyncSqliteSaver`.
+
+- [ ] **`RetryPolicy` for transport-level retries** — layer `RetryPolicy(max_attempts=N, retry_on=OverloadError)` on executor-invoking nodes. Complements our eval-score-driven semantic retries; separates infrastructure flakes (rate limits, ACP drops) from content judgment. Closely related to "LLM gates inherit PromptBackend flakiness" above — fixes the same class of bug from a different angle.
+
+## Reimplementation debt (drop in favor of native LangGraph)
+
+Audit of where we shadow LangGraph functionality. Most of our code is genuinely complementary (timeouts, semantic retries, concurrency caps, custom reducers) — these two items are not.
+
+- [ ] **Stop diffing state in `runtime/logging.py`** — pairs with `stream_mode="updates"` above. Delete the snapshot-compare path; key events directly on the `node_name → update` pairs the stream already emits. Removes ~40 LOC of diff inference and removes a class of bugs where new state channels confuse the diffing logic.
+- [ ] **Stop hand-writing router closures** — pairs with `Command` objects above. Delete `_make_evaluation_router`, `_subphase_id_resolver`, the dynamic-router closure, and the conditional-edge scaffolding they feed in `compile/graph.py`. Decision nodes return `Command(goto=...)` directly.
+
+**Not reimplementation** (clarified during audit, kept for reference):
+- Eval-score-driven retries (ours) vs `RetryPolicy` (exception-driven) — complementary, not duplicative.
+- `_merge_dicts` / `_merge_evaluations` reducers — LangGraph offers no dict-merge or per-key list-append natively.
+- Timeouts (`asyncio.wait_for`), concurrency caps (`asyncio.Semaphore`), worktree pool — outside LangGraph's scope.
+- Thread ID derivation from `(workflow_name, workdir)` — policy choice, not a feature we shadow.

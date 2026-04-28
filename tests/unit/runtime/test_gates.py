@@ -3,11 +3,11 @@ import json
 import pytest
 
 from abe_froman.compile.graph import build_workflow_graph
-from abe_froman.runtime.gates import GateResult, evaluate_gate
+from abe_froman.runtime.gates import EvaluationResult, run_evaluation
 from abe_froman.runtime.state import make_initial_state
 from abe_froman.runtime.executor.backends.acp import ACPBackend
 from abe_froman.runtime.executor.dispatch import DispatchExecutor
-from abe_froman.schema.models import QualityGate
+from abe_froman.schema.models import Evaluation
 
 from helpers import make_config
 
@@ -31,7 +31,7 @@ except Exception:
 
 
 # ---------------------------------------------------------------------------
-# Unit tests: evaluate_gate receives phase_output via stdin
+# Unit tests: run_evaluation receives phase_output via stdin
 # ---------------------------------------------------------------------------
 
 
@@ -40,39 +40,39 @@ class TestGateStdinPassing:
     async def test_valid_output_passes_validator(self, tmp_path):
         script = tmp_path / "validator.py"
         script.write_text(JSON_VALIDATOR)
-        gate = QualityGate(validator=str(script), threshold=1.0)
+        gate = Evaluation(validator=str(script), threshold=1.0)
         phase_output = json.dumps({"items": ["a", "b", "c"]})
-        result = await evaluate_gate(gate, "p1", workdir=str(tmp_path), phase_output=phase_output)
+        result = await run_evaluation(gate, "p1", workdir=str(tmp_path), phase_output=phase_output)
         assert result.score == 1.0
 
     @pytest.mark.asyncio
     async def test_invalid_output_fails_validator(self, tmp_path):
         script = tmp_path / "validator.py"
         script.write_text(JSON_VALIDATOR)
-        gate = QualityGate(validator=str(script), threshold=1.0)
-        result = await evaluate_gate(gate, "p1", workdir=str(tmp_path), phase_output="not json")
+        gate = Evaluation(validator=str(script), threshold=1.0)
+        result = await run_evaluation(gate, "p1", workdir=str(tmp_path), phase_output="not json")
         assert result.score == 0.0
 
     @pytest.mark.asyncio
     async def test_wrong_count_fails_validator(self, tmp_path):
         script = tmp_path / "validator.py"
         script.write_text(JSON_VALIDATOR)
-        gate = QualityGate(validator=str(script), threshold=1.0)
+        gate = Evaluation(validator=str(script), threshold=1.0)
         phase_output = json.dumps({"items": ["a"]})
-        result = await evaluate_gate(gate, "p1", workdir=str(tmp_path), phase_output=phase_output)
+        result = await run_evaluation(gate, "p1", workdir=str(tmp_path), phase_output=phase_output)
         assert result.score == 0.0
 
     @pytest.mark.asyncio
     async def test_empty_stdin_fails_validator(self, tmp_path):
         script = tmp_path / "validator.py"
         script.write_text(JSON_VALIDATOR)
-        gate = QualityGate(validator=str(script), threshold=1.0)
-        result = await evaluate_gate(gate, "p1", workdir=str(tmp_path), phase_output="")
+        gate = Evaluation(validator=str(script), threshold=1.0)
+        result = await run_evaluation(gate, "p1", workdir=str(tmp_path), phase_output="")
         assert result.score == 0.0
 
 
 # ---------------------------------------------------------------------------
-# Unit tests: evaluate_gate basics (no stdin inspection)
+# Unit tests: run_evaluation basics (no stdin inspection)
 # ---------------------------------------------------------------------------
 
 
@@ -80,52 +80,52 @@ class TestGateEvaluation:
     @pytest.mark.asyncio
     async def test_md_validator_requires_backend(self):
         """`.md` gates must be dispatched with a backend; without one, raise."""
-        gate = QualityGate(validator="gates/v.md", threshold=0.8)
+        gate = Evaluation(validator="gates/v.md", threshold=0.8)
         with pytest.raises(ValueError, match="requires a PromptBackend"):
-            await evaluate_gate(gate, "p1")
+            await run_evaluation(gate, "p1")
 
     @pytest.mark.asyncio
     async def test_unsupported_extension_raises(self):
-        gate = QualityGate(validator="gates/v.txt", threshold=0.8)
+        gate = Evaluation(validator="gates/v.txt", threshold=0.8)
         with pytest.raises(ValueError, match="Unsupported"):
-            await evaluate_gate(gate, "p1")
+            await run_evaluation(gate, "p1")
 
     @pytest.mark.asyncio
     async def test_py_validator_returns_float_score(self, tmp_path):
         script = tmp_path / "validator.py"
         script.write_text("print(0.95)")
-        gate = QualityGate(validator=str(script), threshold=0.8)
-        result = await evaluate_gate(gate, "p1", workdir=str(tmp_path))
+        gate = Evaluation(validator=str(script), threshold=0.8)
+        result = await run_evaluation(gate, "p1", workdir=str(tmp_path))
         assert result.score == 0.95
 
     @pytest.mark.asyncio
     async def test_py_validator_returns_json_score(self, tmp_path):
         script = tmp_path / "validator.py"
         script.write_text('import json; print(json.dumps({"score": 0.75}))')
-        gate = QualityGate(validator=str(script), threshold=0.8)
-        result = await evaluate_gate(gate, "p1", workdir=str(tmp_path))
+        gate = Evaluation(validator=str(script), threshold=0.8)
+        result = await run_evaluation(gate, "p1", workdir=str(tmp_path))
         assert result.score == 0.75
 
     @pytest.mark.asyncio
     async def test_py_validator_exception_returns_zero(self, tmp_path):
         script = tmp_path / "validator.py"
         script.write_text("raise Exception('fail')")
-        gate = QualityGate(validator=str(script), threshold=0.8)
-        result = await evaluate_gate(gate, "p1", workdir=str(tmp_path))
+        gate = Evaluation(validator=str(script), threshold=0.8)
+        result = await run_evaluation(gate, "p1", workdir=str(tmp_path))
         assert result.score == 0.0
 
     @pytest.mark.asyncio
     async def test_py_validator_garbage_output_returns_zero(self, tmp_path):
         script = tmp_path / "validator.py"
         script.write_text("print('not a number')")
-        gate = QualityGate(validator=str(script), threshold=0.8)
-        result = await evaluate_gate(gate, "p1", workdir=str(tmp_path))
+        gate = Evaluation(validator=str(script), threshold=0.8)
+        result = await run_evaluation(gate, "p1", workdir=str(tmp_path))
         assert result.score == 0.0
 
     @pytest.mark.asyncio
     async def test_nonexistent_py_validator_returns_zero(self):
-        gate = QualityGate(validator="/tmp/does_not_exist_12345.py", threshold=0.8)
-        result = await evaluate_gate(gate, "p1")
+        gate = Evaluation(validator="/tmp/does_not_exist_12345.py", threshold=0.8)
+        result = await run_evaluation(gate, "p1")
         assert result.score == 0.0
 
 # ---------------------------------------------------------------------------
@@ -171,7 +171,7 @@ class TestGateNodePassFail:
 
         assert "a" in result["completed_phases"]
         assert "b" in result["completed_phases"]
-        assert result["gate_scores"]["a"] == 1.0
+        assert result["evaluations"]["a"][-1]["result"]["score"] == 1.0
 
     @pytest.mark.asyncio
     async def test_failing_gate_blocks_dependent(self, tmp_path):
@@ -206,7 +206,7 @@ class TestGateNodePassFail:
 
         assert "a" in result["failed_phases"]
         assert "b" not in result["completed_phases"]
-        assert result["gate_scores"]["a"] == 0.0
+        assert result["evaluations"]["a"][-1]["result"]["score"] == 0.0
 
     @pytest.mark.asyncio
     async def test_non_blocking_gate_failure_continues(self, tmp_path):
@@ -259,14 +259,14 @@ class TestGateJSValidator:
     async def test_js_validator_returns_score(self, tmp_path):
         script = tmp_path / "validator.js"
         script.write_text('process.stdout.write("0.85")')
-        gate = QualityGate(validator=str(script), threshold=0.8)
-        result = await evaluate_gate(gate, "p1", workdir=str(tmp_path))
+        gate = Evaluation(validator=str(script), threshold=0.8)
+        result = await run_evaluation(gate, "p1", workdir=str(tmp_path))
         assert result.score == 0.85
 
     @pytest.mark.asyncio
     async def test_js_validator_not_found(self):
-        gate = QualityGate(validator="/tmp/does_not_exist_99999.js", threshold=0.8)
-        result = await evaluate_gate(gate, "p1")
+        gate = Evaluation(validator="/tmp/does_not_exist_99999.js", threshold=0.8)
+        result = await run_evaluation(gate, "p1")
         assert result.score == 0.0
 
 
@@ -278,8 +278,8 @@ class TestGateEnvironment:
             "import os\n"
             "print('1.0' if os.environ.get('PHASE_ID') == 'my-phase' else '0.0')\n"
         )
-        gate = QualityGate(validator=str(script), threshold=0.8)
-        result = await evaluate_gate(gate, "my-phase", workdir=str(tmp_path))
+        gate = Evaluation(validator=str(script), threshold=0.8)
+        result = await run_evaluation(gate, "my-phase", workdir=str(tmp_path))
         assert result.score == 1.0
 
     @pytest.mark.asyncio
@@ -289,8 +289,8 @@ class TestGateEnvironment:
             "import os\n"
             "print('1.0' if os.environ.get('WORKFLOW_NAME') == 'test-wf' else '0.0')\n"
         )
-        gate = QualityGate(validator=str(script), threshold=0.8)
-        result = await evaluate_gate(
+        gate = Evaluation(validator=str(script), threshold=0.8)
+        result = await run_evaluation(
             gate, "p1", workdir=str(tmp_path), workflow_name="test-wf",
         )
         assert result.score == 1.0
@@ -302,8 +302,8 @@ class TestGateEnvironment:
             "import os\n"
             "print('1.0' if os.environ.get('ATTEMPT_NUMBER') == '1' else '0.0')\n"
         )
-        gate = QualityGate(validator=str(script), threshold=0.8)
-        result = await evaluate_gate(
+        gate = Evaluation(validator=str(script), threshold=0.8)
+        result = await run_evaluation(
             gate, "p1", workdir=str(tmp_path), attempt_number=1,
         )
         assert result.score == 1.0
@@ -315,8 +315,8 @@ class TestGateEnvironment:
             "import os\n"
             f"print('1.0' if os.environ.get('WORKDIR') == '{tmp_path}' else '0.0')\n"
         )
-        gate = QualityGate(validator=str(script), threshold=0.8)
-        result = await evaluate_gate(gate, "p1", workdir=str(tmp_path))
+        gate = Evaluation(validator=str(script), threshold=0.8)
+        result = await run_evaluation(gate, "p1", workdir=str(tmp_path))
         assert result.score == 1.0
 
     @pytest.mark.asyncio
@@ -361,14 +361,14 @@ class TestGateEnvironment:
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
 
         assert "a" in result["completed_phases"]
-        assert result["gate_scores"]["a"] == 1.0
+        assert result["evaluations"]["a"][-1]["result"]["score"] == 1.0
 
     @pytest.mark.asyncio
     async def test_explicit_nonzero_exit(self, tmp_path):
         script = tmp_path / "exit1.py"
         script.write_text("import sys; sys.exit(1)")
-        gate = QualityGate(validator=str(script), threshold=0.8)
-        result = await evaluate_gate(gate, "p1", workdir=str(tmp_path))
+        gate = Evaluation(validator=str(script), threshold=0.8)
+        result = await run_evaluation(gate, "p1", workdir=str(tmp_path))
         assert result.score == 0.0
 
 
@@ -507,7 +507,7 @@ class TestJokeWorkflowIntegration:
 
             assert "generate" in result["completed_phases"]
             assert "select" in result["completed_phases"]
-            assert result["gate_scores"]["generate"] == 1.0
+            assert result["evaluations"]["generate"][-1]["result"]["score"] == 1.0
 
             gen_output = result["phase_outputs"]["generate"]
             data = json.loads(gen_output)
@@ -526,7 +526,7 @@ class TestJokeWorkflowIntegration:
 class TestScriptGateStructuredFeedback:
     @pytest.mark.asyncio
     async def test_script_gate_with_expanded_json_populates_feedback(self, tmp_path):
-        """Script gate returning full feedback schema populates all GateResult fields."""
+        """Script gate returning full feedback schema populates all EvaluationResult fields."""
         script = tmp_path / "validator.py"
         script.write_text(
             'import json\n'
@@ -537,8 +537,8 @@ class TestScriptGateStructuredFeedback:
             '    "pass_criteria_unmet": ["docs"],\n'
             '}))\n'
         )
-        gate = QualityGate(validator=str(script), threshold=0.8)
-        result = await evaluate_gate(gate, "p1", workdir=str(tmp_path))
+        gate = Evaluation(validator=str(script), threshold=0.8)
+        result = await run_evaluation(gate, "p1", workdir=str(tmp_path))
         assert result.score == 0.6
         assert result.feedback == "missing docstring"
         assert result.pass_criteria_met == ["tests pass"]
@@ -549,8 +549,8 @@ class TestScriptGateStructuredFeedback:
         """Backward compat: bare-float scripts still work, feedback stays empty."""
         script = tmp_path / "validator.py"
         script.write_text("print(0.9)")
-        gate = QualityGate(validator=str(script), threshold=0.8)
-        result = await evaluate_gate(gate, "p1", workdir=str(tmp_path))
+        gate = Evaluation(validator=str(script), threshold=0.8)
+        result = await run_evaluation(gate, "p1", workdir=str(tmp_path))
         assert result.score == 0.9
         assert result.feedback is None
         assert result.pass_criteria_met == []
@@ -561,8 +561,8 @@ class TestScriptGateStructuredFeedback:
         """Loud failure on unparseable validator output — feedback explains why."""
         script = tmp_path / "validator.py"
         script.write_text("print('not a number')")
-        gate = QualityGate(validator=str(script), threshold=0.8)
-        result = await evaluate_gate(gate, "p1", workdir=str(tmp_path))
+        gate = Evaluation(validator=str(script), threshold=0.8)
+        result = await run_evaluation(gate, "p1", workdir=str(tmp_path))
         assert result.score == 0.0
         assert result.feedback is not None
         assert "unparseable" in result.feedback
@@ -575,18 +575,18 @@ class TestScriptGateStructuredFeedback:
         script.write_text(
             'import json; print(json.dumps({"feedback": "ok"}))'
         )
-        gate = QualityGate(validator=str(script), threshold=0.8)
-        result = await evaluate_gate(gate, "p1", workdir=str(tmp_path))
+        gate = Evaluation(validator=str(script), threshold=0.8)
+        result = await run_evaluation(gate, "p1", workdir=str(tmp_path))
         assert result.score == 0.0
         assert "score" in result.feedback
 
     @pytest.mark.asyncio
     async def test_nonexistent_validator_populates_feedback(self):
         """Missing validator script surfaces a clear path in feedback."""
-        gate = QualityGate(
+        gate = Evaluation(
             validator="/tmp/abe_froman_does_not_exist_99999.py", threshold=0.8
         )
-        result = await evaluate_gate(gate, "p1")
+        result = await run_evaluation(gate, "p1")
         assert result.score == 0.0
         assert result.feedback is not None
         assert "/tmp/abe_froman_does_not_exist_99999.py" in result.feedback
@@ -600,8 +600,8 @@ class TestScriptGateStructuredFeedback:
             'sys.stderr.write("validator went boom\\n")\n'
             'sys.exit(2)\n'
         )
-        gate = QualityGate(validator=str(script), threshold=0.8)
-        result = await evaluate_gate(gate, "p1", workdir=str(tmp_path))
+        gate = Evaluation(validator=str(script), threshold=0.8)
+        result = await run_evaluation(gate, "p1", workdir=str(tmp_path))
         assert result.score == 0.0
         assert "code 2" in result.feedback
         assert "validator went boom" in result.feedback
@@ -613,14 +613,14 @@ class TestScriptGateStructuredFeedback:
 
 
 class TestGateOutputParser:
-    """_parse_gate_output is pure: string in, GateResult out.
+    """_parse_evaluation_output is pure: string in, EvaluationResult out.
 
     No backend needed. Integration with a real backend (ACP) is covered
     separately in tests/acp/.
     """
 
     def test_full_schema_parsed(self):
-        from abe_froman.runtime.gates import _parse_gate_output
+        from abe_froman.runtime.gates import _parse_evaluation_output
 
         raw = json.dumps({
             "score": 0.85,
@@ -628,105 +628,105 @@ class TestGateOutputParser:
             "pass_criteria_met": ["clarity", "concision"],
             "pass_criteria_unmet": [],
         })
-        result = _parse_gate_output(raw)
+        result = _parse_evaluation_output(raw)
         assert result.score == 0.85
         assert result.feedback == "solid work"
         assert result.pass_criteria_met == ["clarity", "concision"]
         assert result.pass_criteria_unmet == []
 
     def test_score_only_parsed(self):
-        from abe_froman.runtime.gates import _parse_gate_output
+        from abe_froman.runtime.gates import _parse_evaluation_output
 
-        result = _parse_gate_output(json.dumps({"score": 0.5}))
+        result = _parse_evaluation_output(json.dumps({"score": 0.5}))
         assert result.score == 0.5
         assert result.feedback is None
 
     def test_bare_float_accepted_for_scripts(self):
-        from abe_froman.runtime.gates import _parse_gate_output
+        from abe_froman.runtime.gates import _parse_evaluation_output
 
-        result = _parse_gate_output("0.85", allow_bare_float=True)
+        result = _parse_evaluation_output("0.85", allow_bare_float=True)
         assert result.score == 0.85
         assert result.feedback is None
 
     def test_bare_float_rejected_for_llm(self):
-        from abe_froman.runtime.gates import _parse_gate_output
+        from abe_froman.runtime.gates import _parse_evaluation_output
 
-        result = _parse_gate_output("0.85")
+        result = _parse_evaluation_output("0.85")
         assert result.score == 0.0
         assert "score" in result.feedback
 
     def test_malformed_json_loud_failure(self):
-        from abe_froman.runtime.gates import _parse_gate_output
+        from abe_froman.runtime.gates import _parse_evaluation_output
 
-        result = _parse_gate_output("this is not json at all")
+        result = _parse_evaluation_output("this is not json at all")
         assert result.score == 0.0
         assert result.feedback is not None
         assert "unparseable" in result.feedback
 
     def test_missing_score_loud_failure(self):
-        from abe_froman.runtime.gates import _parse_gate_output
+        from abe_froman.runtime.gates import _parse_evaluation_output
 
-        result = _parse_gate_output(json.dumps({"feedback": "ok"}))
+        result = _parse_evaluation_output(json.dumps({"feedback": "ok"}))
         assert result.score == 0.0
         assert "missing" in result.feedback and "score" in result.feedback
 
     def test_non_numeric_score_loud_failure(self):
-        from abe_froman.runtime.gates import _parse_gate_output
+        from abe_froman.runtime.gates import _parse_evaluation_output
 
-        result = _parse_gate_output(json.dumps({"score": "high"}))
+        result = _parse_evaluation_output(json.dumps({"score": "high"}))
         assert result.score == 0.0
         assert "score" in result.feedback
 
     def test_non_dict_top_level_loud_failure(self):
-        from abe_froman.runtime.gates import _parse_gate_output
+        from abe_froman.runtime.gates import _parse_evaluation_output
 
-        result = _parse_gate_output(json.dumps([1, 2, 3]))
+        result = _parse_evaluation_output(json.dumps([1, 2, 3]))
         assert result.score == 0.0
         assert "score" in result.feedback
 
 
 class TestMultiDimensionParser:
-    """_parse_gate_output extracts numeric fields as dimension scores."""
+    """_parse_evaluation_output extracts numeric fields as dimension scores."""
 
     def test_dimension_scores_extracted(self):
-        from abe_froman.runtime.gates import _parse_gate_output
+        from abe_froman.runtime.gates import _parse_evaluation_output
 
         raw = json.dumps({"correctness": 0.8, "style": 0.6, "score": 0.7})
-        result = _parse_gate_output(raw)
+        result = _parse_evaluation_output(raw)
         assert result.score == 0.7
         assert result.scores == {"correctness": 0.8, "style": 0.6}
 
     def test_no_score_with_dimensions_when_not_required(self):
-        from abe_froman.runtime.gates import _parse_gate_output
+        from abe_froman.runtime.gates import _parse_evaluation_output
 
         raw = json.dumps({"correctness": 0.8, "style": 0.6})
-        result = _parse_gate_output(raw, require_score=False)
+        result = _parse_evaluation_output(raw, require_score=False)
         assert result.score == 0.0
         assert result.scores == {"correctness": 0.8, "style": 0.6}
         assert result.feedback is None
 
     def test_no_score_no_dimensions_fails_by_default(self):
-        from abe_froman.runtime.gates import _parse_gate_output
+        from abe_froman.runtime.gates import _parse_evaluation_output
 
         raw = json.dumps({"correctness": 0.8})
-        result = _parse_gate_output(raw)
+        result = _parse_evaluation_output(raw)
         assert result.score == 0.0
         assert result.feedback is None
         assert result.scores == {"correctness": 0.8}
 
     def test_non_numeric_fields_ignored(self):
-        from abe_froman.runtime.gates import _parse_gate_output
+        from abe_froman.runtime.gates import _parse_evaluation_output
 
         raw = json.dumps({"score": 0.5, "label": "good", "count": 3})
-        result = _parse_gate_output(raw)
+        result = _parse_evaluation_output(raw)
         assert result.scores == {"count": 3.0}
         assert "label" not in result.scores
 
     def test_feedback_field_not_treated_as_dimension(self):
-        from abe_froman.runtime.gates import _parse_gate_output
+        from abe_froman.runtime.gates import _parse_evaluation_output
 
         raw = json.dumps({"score": 0.5, "feedback": "ok", "quality": 0.9})
-        result = _parse_gate_output(raw)
+        result = _parse_evaluation_output(raw)
         assert result.scores == {"quality": 0.9}
         assert result.feedback == "ok"
 
@@ -738,20 +738,20 @@ class TestMDGateDispatchGuard:
     async def test_md_gate_no_backend_raises(self, tmp_path):
         gate_md = tmp_path / "g.md"
         gate_md.write_text("{{ output }}")
-        gate = QualityGate(validator=str(gate_md), threshold=0.8)
+        gate = Evaluation(validator=str(gate_md), threshold=0.8)
         with pytest.raises(ValueError, match="requires a PromptBackend"):
-            await evaluate_gate(gate, "p1", workdir=str(tmp_path))
+            await run_evaluation(gate, "p1", workdir=str(tmp_path))
 
     @pytest.mark.asyncio
     async def test_llm_gate_missing_template_returns_loud_failure(self, tmp_path):
-        """A typo'd or deleted `.md` template must yield a structured GateResult,
+        """A typo'd or deleted `.md` template must yield a structured EvaluationResult,
         not raise FileNotFoundError up through the phase node."""
         from abe_froman.runtime.executor.backends.stub import StubBackend
 
-        gate = QualityGate(validator="gates/nonexistent.md", threshold=0.8)
+        gate = Evaluation(validator="gates/nonexistent.md", threshold=0.8)
         backend = StubBackend()
         try:
-            result = await evaluate_gate(
+            result = await run_evaluation(
                 gate, "p1", workdir=str(tmp_path),
                 phase_output="anything", backend=backend,
             )
@@ -759,12 +759,12 @@ class TestMDGateDispatchGuard:
             await backend.close()
         assert result.score == 0.0
         assert result.feedback is not None
-        assert "gate template not found" in result.feedback
+        assert "evaluation template not found" in result.feedback
         assert "gates/nonexistent.md" in result.feedback
 
 
 # ---------------------------------------------------------------------------
-# Integration: gate_feedback reaches state; retry sees it via _retry_reason
+# Integration: evaluation records reach state; retry sees them via _retry_reason
 # ---------------------------------------------------------------------------
 
 
@@ -798,12 +798,11 @@ class TestRetryWithFeedback:
         graph = build_workflow_graph(config, executor)
         state = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
 
-        assert state["gate_feedback"]["p"] == {
-            "feedback": "all good",
-            "pass_criteria_met": ["a", "b"],
-            "pass_criteria_unmet": [],
-            "scores": {},
-        }
+        last_result = state["evaluations"]["p"][-1]["result"]
+        assert last_result["feedback"] == "all good"
+        assert last_result["pass_criteria_met"] == ["a", "b"]
+        assert last_result["pass_criteria_unmet"] == []
+        assert last_result["scores"] == {}
 
     @pytest.mark.asyncio
     async def test_retry_reason_flows_to_second_attempt(self, tmp_path):
@@ -854,8 +853,9 @@ class TestRetryWithFeedback:
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
 
         assert "p" in result["completed_phases"]
-        assert result["gate_feedback"]["p"]["feedback"] == "good"
-        assert result["gate_scores"]["p"] == 1.0
+        last_result = result["evaluations"]["p"][-1]["result"]
+        assert last_result["feedback"] == "good"
+        assert last_result["score"] == 1.0
 
     @pytest.mark.asyncio
     async def test_retry_reason_visible_to_prompt_phase_via_preamble(self, tmp_path):
@@ -865,22 +865,27 @@ class TestRetryWithFeedback:
         """
         from abe_froman.compile.nodes import inject_retry_reason
         from abe_froman.runtime.executor.prompt import render_template
-        from abe_froman.schema.models import Phase, QualityGate
+        from abe_froman.schema.models import Phase, Evaluation
 
         phase = Phase(
             id="p",
             name="P",
-            quality_gate=QualityGate(validator="v.py", threshold=0.8),
+            quality_gate=Evaluation(validator="v.py", threshold=0.8),
         )
         state = {
             "retries": {"p": 1},
-            "gate_scores": {"p": 0.4},
-            "gate_feedback": {
-                "p": {
-                    "feedback": "more depth please",
-                    "pass_criteria_met": [],
-                    "pass_criteria_unmet": ["depth"],
-                }
+            "evaluations": {
+                "p": [{
+                    "invocation": 0,
+                    "result": {
+                        "score": 0.4,
+                        "scores": {},
+                        "feedback": "more depth please",
+                        "pass_criteria_met": [],
+                        "pass_criteria_unmet": ["depth"],
+                    },
+                    "timestamp": "t",
+                }],
             },
         }
         ctx = inject_retry_reason({}, phase, state, 3)
@@ -899,36 +904,56 @@ class TestRetryWithFeedback:
 class TestInjectRetryReasonFeedback:
     def test_retry_reason_without_feedback_is_score_only(self):
         from abe_froman.compile.nodes import inject_retry_reason
-        from abe_froman.schema.models import Phase, QualityGate
+        from abe_froman.schema.models import Phase, Evaluation
 
         phase = Phase(
             id="p",
             name="P",
-            quality_gate=QualityGate(validator="v.py", threshold=0.8),
+            quality_gate=Evaluation(validator="v.py", threshold=0.8),
         )
-        state = {"retries": {"p": 1}, "gate_scores": {"p": 0.5}, "gate_feedback": {}}
+        state = {
+            "retries": {"p": 1},
+            "evaluations": {
+                "p": [{
+                    "invocation": 0,
+                    "result": {
+                        "score": 0.5,
+                        "scores": {},
+                        "feedback": None,
+                        "pass_criteria_met": [],
+                        "pass_criteria_unmet": [],
+                    },
+                    "timestamp": "t",
+                }],
+            },
+        }
         ctx = inject_retry_reason({}, phase, state, 3)
         assert "Attempt 1 failed" in ctx["_retry_reason"]
         assert "Feedback:" not in ctx["_retry_reason"]
 
     def test_retry_reason_with_feedback_includes_it(self):
         from abe_froman.compile.nodes import inject_retry_reason
-        from abe_froman.schema.models import Phase, QualityGate
+        from abe_froman.schema.models import Phase, Evaluation
 
         phase = Phase(
             id="p",
             name="P",
-            quality_gate=QualityGate(validator="v.py", threshold=0.8),
+            quality_gate=Evaluation(validator="v.py", threshold=0.8),
         )
         state = {
             "retries": {"p": 1},
-            "gate_scores": {"p": 0.5},
-            "gate_feedback": {
-                "p": {
-                    "feedback": "add more depth",
-                    "pass_criteria_met": ["clarity"],
-                    "pass_criteria_unmet": ["depth", "nuance"],
-                }
+            "evaluations": {
+                "p": [{
+                    "invocation": 0,
+                    "result": {
+                        "score": 0.5,
+                        "scores": {},
+                        "feedback": "add more depth",
+                        "pass_criteria_met": ["clarity"],
+                        "pass_criteria_unmet": ["depth", "nuance"],
+                    },
+                    "timestamp": "t",
+                }],
             },
         }
         ctx = inject_retry_reason({}, phase, state, 3)
@@ -939,14 +964,14 @@ class TestInjectRetryReasonFeedback:
 
     def test_retry_reason_no_retry_returns_context_unchanged(self):
         from abe_froman.compile.nodes import inject_retry_reason
-        from abe_froman.schema.models import Phase, QualityGate
+        from abe_froman.schema.models import Phase, Evaluation
 
         phase = Phase(
             id="p",
             name="P",
-            quality_gate=QualityGate(validator="v.py", threshold=0.8),
+            quality_gate=Evaluation(validator="v.py", threshold=0.8),
         )
-        state = {"retries": {"p": 0}, "gate_scores": {}, "gate_feedback": {}}
+        state = {"retries": {"p": 0}, "evaluations": {}}
         ctx = inject_retry_reason({"x": 1}, phase, state, 3)
         assert ctx == {"x": 1}
         assert "_retry_reason" not in ctx

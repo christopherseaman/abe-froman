@@ -253,7 +253,7 @@ class TestDynamicGates:
         graph = build_workflow_graph(config, executor)
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
 
-        assert result["gate_scores"]["p"] == 1.0
+        assert result["evaluations"]["p"][-1]["result"]["score"] == 1.0
         assert "p::a" in result["completed_phases"]
         assert "p::b" in result["completed_phases"]
 
@@ -307,8 +307,68 @@ class TestDynamicGates:
         graph = build_workflow_graph(config, executor)
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
 
-        assert result["gate_scores"]["p::x"] == 0.9
-        assert result["gate_scores"]["p::y"] == 0.9
+        assert result["evaluations"]["p::x"][-1]["result"]["score"] == 0.9
+        assert result["evaluations"]["p::y"][-1]["result"]["score"] == 0.9
+        # Stage 3b: subphase gates also flow through EvaluationRecord writes.
+        assert len(result["evaluations"]["p::x"]) >= 1
+        assert len(result["evaluations"]["p::y"]) >= 1
+
+    @pytest.mark.asyncio
+    async def test_subphase_gate_triggers_retry(self, tmp_path):
+        """Subphase template gate with max_retries=2: validator fails
+        first call, passes on retry. Proves each subphase branch keeps
+        its own invocation counter via `_subphase_item`-keyed state.
+        """
+        (tmp_path / "template.md").write_text("Sub {{id}}")
+        # Per-item counter files so each item retries independently.
+        (tmp_path / "cnt-x.txt").write_text("0")
+        (tmp_path / "cnt-y.txt").write_text("0")
+        validator = tmp_path / "validator.py"
+        validator.write_text(
+            'import os, sys, re\n'
+            'output = sys.stdin.read()\n'
+            '# Derive the item id from the phase output; stub prints it verbatim.\n'
+            'm = re.search(r"p::([a-z])", output)\n'
+            'item = m.group(1) if m else "x"\n'
+            f'path = os.path.join({str(tmp_path)!r}, f"cnt-{{item}}.txt")\n'
+            'n = int(open(path).read())\n'
+            'open(path, "w").write(str(n+1))\n'
+            'print(0.9 if n >= 1 else 0.3)\n'
+        )
+
+        items = [{"id": "x"}, {"id": "y"}]
+        config = make_config([{
+            "id": "p",
+            "name": "p",
+            "execution": {"type": "command", "command": "echo",
+                          "args": ["-n", json.dumps({"items": items})]},
+            "dynamic_subphases": {
+                "enabled": True,
+                "template": {
+                    "prompt_file": "template.md",
+                    "quality_gate": {
+                        "validator": str(validator),
+                        "threshold": 0.5,
+                        "blocking": True,
+                        "max_retries": 2,
+                    },
+                },
+            },
+        }])
+        executor = DispatchExecutor(workdir=str(tmp_path))
+        graph = build_workflow_graph(config, executor)
+        result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
+
+        # Each subphase should have TWO evaluation records (fail then pass).
+        assert "p::x" in result["completed_phases"]
+        assert "p::y" in result["completed_phases"]
+        invs_x = [r["invocation"] for r in result["evaluations"]["p::x"]]
+        invs_y = [r["invocation"] for r in result["evaluations"]["p::y"]]
+        assert invs_x == [0, 1], f"expected invocations [0, 1], got {invs_x}"
+        assert invs_y == [0, 1], f"expected invocations [0, 1], got {invs_y}"
+        # Final record is the pass.
+        assert result["evaluations"]["p::x"][-1]["result"]["score"] == 0.9
+        assert result["evaluations"]["p::y"][-1]["result"]["score"] == 0.9
 
 
 # ---------------------------------------------------------------------------

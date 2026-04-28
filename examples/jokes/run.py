@@ -26,7 +26,12 @@ async def main():
     for err in result.get("errors", []):
         print(f"  Error: {err}")
 
-    print(f"\nGate scores: {result.get('gate_scores', {})}")
+    scores = {
+        phase: records[-1].get("result", {}).get("score")
+        for phase, records in result.get("evaluations", {}).items()
+        if records
+    }
+    print(f"\nGate scores: {scores}")
     print(f"Retries: {result.get('retries', {})}")
 
     for phase_id, output in result.get("phase_outputs", {}).items():

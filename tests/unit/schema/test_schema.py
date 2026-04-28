@@ -10,7 +10,7 @@ from abe_froman.schema.models import (
     OutputContract,
     Phase,
     PromptExecution,
-    QualityGate,
+    Evaluation,
     Settings,
     WorkflowConfig,
 )
@@ -113,7 +113,7 @@ class TestExecutionTypes:
 
 class TestQualityGate:
     def test_basic_gate(self):
-        gate = QualityGate(validator="gates/v.py", threshold=0.85)
+        gate = Evaluation(validator="gates/v.py", threshold=0.85)
         assert gate.validator == "gates/v.py"
         assert gate.threshold == 0.85
         assert gate.blocking is False
@@ -121,21 +121,21 @@ class TestQualityGate:
         assert gate.max_retries is None
 
     def test_blocking_gate(self):
-        gate = QualityGate(validator="v.md", threshold=0.9, blocking=True)
+        gate = Evaluation(validator="v.md", threshold=0.9, blocking=True)
         assert gate.blocking is True
 
     def test_threshold_bounds(self):
         with pytest.raises(ValidationError):
-            QualityGate(validator="v.md", threshold=1.5)
+            Evaluation(validator="v.md", threshold=1.5)
         with pytest.raises(ValidationError):
-            QualityGate(validator="v.md", threshold=-0.1)
+            Evaluation(validator="v.md", threshold=-0.1)
 
     def test_custom_max_retries(self):
-        gate = QualityGate(validator="v.md", threshold=0.8, max_retries=5)
+        gate = Evaluation(validator="v.md", threshold=0.8, max_retries=5)
         assert gate.max_retries == 5
 
     def test_dimension_gate(self):
-        gate = QualityGate(
+        gate = Evaluation(
             validator="v.py",
             dimensions=[
                 DimensionCheck(field="correctness", min=0.7),
@@ -154,7 +154,7 @@ class TestQualityGate:
                 {"field": "style", "min": 0.5},
             ],
         }
-        gate = QualityGate(**raw)
+        gate = Evaluation(**raw)
         assert gate.dimensions[1].field == "style"
 
     def test_dimension_check_bounds(self):
@@ -178,7 +178,7 @@ class TestEffectiveMaxRetries:
             id="p1",
             name="P1",
             prompt_file="t.md",
-            quality_gate=QualityGate(validator="v.md", threshold=0.8, max_retries=2),
+            quality_gate=Evaluation(validator="v.md", threshold=0.8, max_retries=2),
         )
         assert phase.effective_max_retries(settings) == 2
 
@@ -188,7 +188,7 @@ class TestEffectiveMaxRetries:
             id="p1",
             name="P1",
             prompt_file="t.md",
-            quality_gate=QualityGate(validator="v.md", threshold=0.8),
+            quality_gate=Evaluation(validator="v.md", threshold=0.8),
         )
         assert phase.effective_max_retries(settings) == 7
 
@@ -295,7 +295,7 @@ class TestDynamicSubphases:
                 "quality_gate": {"validator": "v.md", "threshold": 0.8},
             },
         )
-        assert config.template.quality_gate.threshold == 0.8
+        assert config.template.evaluation.threshold == 0.8
 
     def test_final_phases(self):
         config = DynamicPhaseConfig(
