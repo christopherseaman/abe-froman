@@ -168,13 +168,36 @@ def build_workflow_graph(
     config: Graph,
     executor: PhaseExecutor | None = None,
     checkpointer: Any = None,
+    *,
+    _depth: int = 0,
+    _base_dir: Any = None,
 ) -> Any:
     """Build a compiled LangGraph StateGraph from workflow config.
 
     If `checkpointer` is provided, the compiled graph will persist state
     after each node via LangGraph's checkpointer protocol.
+
+    `_depth` and `_base_dir` are internal: subgraph wrappers pass
+    `_depth+1` to enforce `settings.max_subgraph_depth` and propagate
+    the base directory so nested config: paths resolve correctly.
     """
+    from pathlib import Path
+    from abe_froman.compile.subgraph import (
+        SubgraphDepthError,
+        detect_config_cycle,
+        load_graph,
+        make_subgraph_node,
+    )
+
     _detect_cycles(config)
+
+    if _depth > config.settings.max_subgraph_depth:
+        raise SubgraphDepthError(
+            f"Subgraph nesting exceeded max_subgraph_depth="
+            f"{config.settings.max_subgraph_depth}"
+        )
+
+    base_dir = Path(_base_dir) if _base_dir is not None else Path(".")
 
     builder = StateGraph(WorkflowState)
     terminal_ids = _find_terminal_phases(config)
@@ -183,6 +206,7 @@ def build_workflow_graph(
     gated_phase_ids: set[str] = set()
     dynamic_phase_ids: set[str] = set()
     gated_dynamic_template_ids: set[str] = set()
+    subgraph_node_ids: set[str] = set()
 
     for node in config.nodes:
         if node.evaluation:
@@ -191,12 +215,30 @@ def build_workflow_graph(
             dynamic_phase_ids.add(node.id)
             if node.fan_out.template.evaluation:
                 gated_dynamic_template_ids.add(node.id)
+        if node.config:
+            subgraph_node_ids.add(node.id)
+            # Cycle detection happens once at top-level — nested calls
+            # see _depth>0 so they skip this and rely on the depth cap.
+            if _depth == 0:
+                detect_config_cycle(node.config, base_dir=base_dir)
 
     # ----- Node registration -----
 
     # Execution nodes for every configured node.
     for node in config.nodes:
-        builder.add_node(node.id, _make_execution_node(node, config, executor))
+        if node.id in subgraph_node_ids:
+            sub_config = load_graph(node.config, base_dir=base_dir)
+            wrapper = make_subgraph_node(
+                node, sub_config,
+                compile_fn=lambda c, executor=None, _depth=0: build_workflow_graph(
+                    c, executor=executor, _depth=_depth, _base_dir=base_dir,
+                ),
+                executor=executor,
+                depth=_depth,
+            )
+            builder.add_node(node.id, wrapper)
+        else:
+            builder.add_node(node.id, _make_execution_node(node, config, executor))
 
     # Evaluation nodes for every gated node (top-level, dynamic parents,
     # and gated final nodes). Dynamic parents' eval runs before the fan-

@@ -38,6 +38,10 @@ class WorkflowState(TypedDict):
     workdir: str
     dry_run: bool
     _fan_out_item: NotRequired[dict[str, Any]]
+    # Subgraph context: rendered inputs visible as template vars to subgraph
+    # nodes. Set by the subgraph wrapper before subgraph invocation; not
+    # populated at the top level. Merged into build_context output.
+    node_inputs: NotRequired[dict[str, str]]
 
 
 def make_initial_state(

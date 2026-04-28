@@ -94,6 +94,12 @@ def build_context(node: Node, state: WorkflowState) -> dict[str, Any]:
     structured = state.get("phase_structured_outputs", {})
     worktrees = state.get("node_worktrees", {})
     sub_outputs = state.get("child_outputs", {})
+    # Subgraph inputs (Stage 4c): inputs declared on a parent's subgraph-
+    # reference node are projected into the subgraph's state.node_inputs
+    # before invocation. Subgraph nodes see them as plain template vars,
+    # alongside their own dep outputs. Top-level graphs have no inputs.
+    inputs = state.get("node_inputs", {}) or {}
+    context.update(inputs)
     for dep in node.depends_on:
         if dep in outputs:
             context[dep] = outputs[dep]
