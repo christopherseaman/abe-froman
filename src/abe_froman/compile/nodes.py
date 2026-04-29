@@ -117,6 +117,20 @@ def build_context(node: Node, state: WorkflowState) -> dict[str, Any]:
             context[f"{dep}_subphases"] = _json.dumps(dep_subs)
             dep_wts = [v for k, v in worktrees.items() if k.startswith(prefix)]
             context[f"{dep}_subphase_worktrees"] = _json.dumps(dep_wts)
+
+    # When a node has multiple deps, provide aggregate collections so
+    # templates can iterate inputs generically without hardcoding names.
+    if len(node.depends_on) > 1:
+        dep_outputs_map = {}
+        dep_worktrees_map = {}
+        for dep in node.depends_on:
+            if dep in outputs:
+                dep_outputs_map[dep] = outputs[dep]
+            if dep in worktrees:
+                dep_worktrees_map[dep] = worktrees[dep]
+        context["_deps"] = _json.dumps(dep_outputs_map)
+        if dep_worktrees_map:
+            context["_dep_worktrees"] = _json.dumps(dep_worktrees_map)
     return context
 
 

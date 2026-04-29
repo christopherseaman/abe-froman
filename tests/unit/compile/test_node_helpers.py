@@ -177,6 +177,61 @@ class TestBuildContext:
         assert "normal_subphases" not in ctx
         assert "normal_subphase_worktrees" not in ctx
 
+    # -- aggregate _deps / _dep_worktrees ---------------------------------
+
+    def test_single_dep_no_aggregate(self):
+        """Node with exactly one dep does NOT get _deps — it's unnecessary."""
+        node = _phase(depends_on=["a"])
+        state = {"node_outputs": {"a": "out-a"}}
+        ctx = build_context(node, state)
+        assert "_deps" not in ctx
+        assert "_dep_worktrees" not in ctx
+
+    def test_multi_dep_aggregate_outputs(self):
+        """Node with 2+ deps gets _deps mapping dep_id → output."""
+        import json as _json
+        node = _phase(depends_on=["a", "b"])
+        state = {"node_outputs": {"a": "out-a", "b": "out-b"}}
+        ctx = build_context(node, state)
+        assert "_deps" in ctx
+        assert _json.loads(ctx["_deps"]) == {"a": "out-a", "b": "out-b"}
+
+    def test_multi_dep_aggregate_worktrees(self):
+        """_dep_worktrees is present when some deps have worktrees."""
+        import json as _json
+        node = _phase(depends_on=["a", "b"])
+        state = {
+            "node_outputs": {"a": "out-a", "b": "out-b"},
+            "node_worktrees": {"a": "/tmp/wt-a", "b": "/tmp/wt-b"},
+        }
+        ctx = build_context(node, state)
+        assert "_dep_worktrees" in ctx
+        assert _json.loads(ctx["_dep_worktrees"]) == {
+            "a": "/tmp/wt-a",
+            "b": "/tmp/wt-b",
+        }
+
+    def test_multi_dep_no_worktrees_omits_key(self):
+        """_dep_worktrees is absent when no deps have worktrees."""
+        node = _phase(depends_on=["a", "b"])
+        state = {
+            "node_outputs": {"a": "out-a", "b": "out-b"},
+            "node_worktrees": {},
+        }
+        ctx = build_context(node, state)
+        assert "_deps" in ctx
+        assert "_dep_worktrees" not in ctx
+
+    def test_multi_dep_json_roundtrip(self):
+        """_deps value is valid JSON."""
+        import json as _json
+        node = _phase(depends_on=["a", "b"])
+        state = {"node_outputs": {"a": "hello", "b": "world"}}
+        ctx = build_context(node, state)
+        parsed = _json.loads(ctx["_deps"])
+        assert isinstance(parsed, dict)
+        assert parsed["a"] == "hello"
+
 
 class TestInjectRetryReason:
     def test_first_attempt_no_injection(self):
