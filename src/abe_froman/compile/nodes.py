@@ -502,7 +502,17 @@ def _make_evaluation_node(
             }
 
         history = list(state.get("evaluations", {}).get(node_id, []))
-        output = state.get("node_outputs", {}).get(node_id, "")
+        outputs = state.get("node_outputs", {})
+        # Defer if the upstream Execution node hasn't run yet. LangGraph
+        # evaluates fan-out conditional edges pre-emptively (firing on
+        # an upstream-of-parent's completion, before the parent's prompt
+        # runs), which routes to `_final_*` via "no_items" and triggers
+        # this eval. We detect "didn't run" by KEY ABSENCE rather than
+        # empty value — JoinExecution legitimately writes "" and must
+        # still be evaluated.
+        if node_id not in outputs:
+            return {}
+        output = outputs[node_id]
         structured = state.get("node_structured_outputs", {}).get(node_id)
         synthetic_result = ExecutionResult(
             success=True, output=output, structured_output=structured
