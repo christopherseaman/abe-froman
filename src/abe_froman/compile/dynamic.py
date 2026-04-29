@@ -273,15 +273,25 @@ def _make_final_fan_out_node(
     async def barrier(state: WorkflowState) -> dict[str, Any]:
         if node_id in state.get("completed_nodes", []):
             return {}
+        completed = state.get("completed_nodes", [])
+        failed = state.get("failed_nodes", [])
+        parent_settled = parent_id in completed or parent_id in failed
         items = _read_manifest(state, parent_node)
         if items:
-            settled = set(state.get("completed_nodes", [])) | set(state.get("failed_nodes", []))
+            settled = set(completed) | set(failed)
             done = sum(1 for it in items if f"{parent_id}::{it.get('id', 'unknown')}" in settled)
             if done < len(items):
                 # Wait for more children to settle. LangGraph re-fires this
                 # node on every super-step until all sibling Send branches
                 # have completed.
                 return {}
+        elif not parent_settled:
+            # Parent hasn't even produced its manifest yet — defer. Without
+            # this guard, an isolated `_sub_<parent>` (Send-dispatched) that
+            # transitions via static edge can fire `_final_*` before the
+            # parent's prompt has run, so manifest reads empty and `inner`
+            # runs against undefined `{{<parent>_subphases}}`.
+            return {}
         return await inner(state)
 
     barrier.__name__ = f"final_{parent_node.id}_{final_node.id}"

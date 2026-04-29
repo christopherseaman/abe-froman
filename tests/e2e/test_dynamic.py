@@ -212,6 +212,45 @@ class TestFinalNodes:
         }, f"final ran with incomplete aggregate: {aggregate}"
 
     @pytest.mark.asyncio
+    async def test_first_final_barrier_when_no_manifest(self, tmp_path):
+        """Direct unit-style call: barrier returns no-op when parent
+        hasn't produced manifest yet (state.node_outputs[parent] empty)
+        AND parent isn't in completed_nodes.
+
+        Bug observed in absurd-paper: `_final_*` fires before parent's
+        prompt produces a manifest. Without the parent-settled check,
+        barrier reads empty items, falls through to inner, and the final
+        runs against an empty `{{parent_subphases}}` template var.
+        """
+        from abe_froman.compile.dynamic import _make_final_fan_out_node
+        from abe_froman.runtime.state import make_initial_state
+        from abe_froman.schema.models import Node, FanOut
+
+        parent = Node(
+            id="p", name="P",
+            execution={"type": "command", "command": "echo", "args": ["x"]},
+            fan_out=FanOut(enabled=True, manifest_path=None,
+                           template={"prompt_file": "t.md"}),
+        )
+        final = type("F", (), dict(
+            id="summary", name="Summary",
+            description=None, prompt_file="s.md",
+            execution=None, evaluation=None,
+        ))()
+
+        from helpers import make_config
+        config = make_config([{"id": "p", "name": "P",
+                               "execution": {"type": "command", "command": "echo", "args": ["x"]}}])
+
+        node_fn = _make_final_fan_out_node(parent, final, config, executor=None, is_first=True)
+        # Parent not completed AND no manifest output → barrier should defer.
+        state = make_initial_state(workdir=str(tmp_path))
+        result = await node_fn(state)
+        assert result == {}, (
+            f"barrier should defer when parent hasn't settled; got {result}"
+        )
+
+    @pytest.mark.asyncio
     async def test_chained_final_nodes(self, tmp_path):
         """Multiple final nodes execute sequentially."""
         (tmp_path / "template.md").write_text("Sub {{id}}")
