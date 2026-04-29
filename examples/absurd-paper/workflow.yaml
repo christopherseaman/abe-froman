@@ -73,45 +73,22 @@ nodes:
     prompt_file: "examples/absurd-paper/prompts/discussion.md"
     depends_on: [abstract, outline]
 
-  - id: reconcile
-    name: "Compose Paper"
-    prompt_file: "examples/absurd-paper/prompts/reconcile.md"
+  # Stage 4c recursive subgraph carve: reconcile + persist + structural
+  # check are now a multi-step subgraph runnable standalone. Inputs:
+  # project the five body-section outputs into the subgraph's
+  # `node_inputs` channel so the subgraph never sees the parent's full
+  # state. The subgraph's terminal output (submission_check) surfaces
+  # at `node_outputs["paper"]` here.
+  - id: paper
+    name: "Compose & Validate Paper"
+    config: "examples/absurd-paper/subgraphs/compose_and_validate.yaml"
     depends_on: [abstract, intro, methods, results, discussion]
-    timeout: 240.0
-
-  # Persist reconcile's text output to `<workdir>/output/paper.md`. This uses
-  # Stage 2c's Jinja-templated command args to feed the upstream reconcile
-  # output through argv to a helper script — sidesteps the ACP Write tool
-  # path-traversal hang documented in WISHLIST. output_contract validates
-  # the file landed on disk.
-  - id: persist_paper
-    name: "Persist Paper to Disk"
-    depends_on: [reconcile]
-    execution:
-      type: command
-      command: python3
-      args:
-        - "examples/absurd-paper/scripts/persist_paper.py"
-        - "{{reconcile}}"
-        - "../../output/paper.md"
-    output_contract:
-      base_directory: "output"
-      required_files: ["paper.md"]
-
-  # Structural integrity checkpoint — a `gate_only` node with no
-  # execution, only a script gate. The validator reads the persisted
-  # paper from disk (via WORKDIR env var) and fails hard if reconcile
-  # produced malformed markdown. Blocks both PDF rendering and reviewer
-  # work on failure, so we don't waste LLM calls on a broken submission.
-  - id: submission_check
-    name: "Submission Structural Check"
-    depends_on: [persist_paper]
-    execution:
-      type: gate_only
-    evaluation:
-      validator: "examples/absurd-paper/gates/submission_check.py"
-      threshold: 1.0
-      blocking: true
+    inputs:
+      abstract: "{{abstract}}"
+      intro: "{{intro}}"
+      methods: "{{methods}}"
+      results: "{{results}}"
+      discussion: "{{discussion}}"
 
   # Deterministic PDF render via `uv run --script` + PEP 723 inline
   # dependencies (markdown + weasyprint). No project-wide install — uv
@@ -119,7 +96,7 @@ nodes:
   # (2-column serif, small-caps section headers, page numbers).
   - id: render_pdf
     name: "Render Paper to PDF"
-    depends_on: [submission_check]
+    depends_on: [paper]
     execution:
       type: command
       command: uv
@@ -136,7 +113,7 @@ nodes:
   - id: reviewer_pool
     name: "Reviewer Pool Manifest"
     prompt_file: "examples/absurd-paper/prompts/reviewer_pool.md"
-    depends_on: [reconcile, submission_check, render_pdf]
+    depends_on: [paper, render_pdf]
     fan_out:
       enabled: true
       template:

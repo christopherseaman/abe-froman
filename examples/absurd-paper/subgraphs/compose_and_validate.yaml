@@ -1,0 +1,44 @@
+name: "Compose and Validate Paper"
+version: "1.0.0"
+
+# Standalone-runnable subgraph used by examples/absurd-paper/workflow.yaml
+# via `config: subgraphs/compose_and_validate.yaml`. The parent projects
+# the five body-section outputs (abstract / intro / methods / results /
+# discussion) as `inputs:`; the subgraph composes the paper, persists it
+# to disk, and runs a structural-integrity check.
+#
+# Demonstrates Stage 4c recursive subgraph composition:
+#  - Multi-step subgraph (reconcile → persist → submission_check).
+#  - Standalone-runnable: `abe-froman run subgraphs/compose_and_validate.yaml`
+#    works if you provide the five inputs as state overrides.
+#  - Inputs declared via parent's `inputs:` projection.
+
+nodes:
+  - id: reconcile
+    name: "Compose Paper"
+    prompt_file: "examples/absurd-paper/prompts/reconcile.md"
+    timeout: 240.0
+
+  - id: persist
+    name: "Persist Paper to Disk"
+    depends_on: [reconcile]
+    execution:
+      type: command
+      command: python3
+      args:
+        - "examples/absurd-paper/scripts/persist_paper.py"
+        - "{{reconcile}}"
+        - "../../output/paper.md"
+    output_contract:
+      base_directory: "output"
+      required_files: ["paper.md"]
+
+  - id: submission_check
+    name: "Submission Structural Check"
+    depends_on: [persist]
+    execution:
+      type: gate_only
+    evaluation:
+      validator: "examples/absurd-paper/gates/submission_check.py"
+      threshold: 1.0
+      blocking: true

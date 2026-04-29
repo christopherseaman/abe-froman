@@ -350,3 +350,37 @@ def test_depth_limit_enforced(tmp_path):
     # compile time, not at invocation.
     with pytest.raises(SubgraphDepthError):
         build_workflow_graph(config, executor, _base_dir=tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_absurd_paper_carve_compiles_with_subgraph(tmp_path):
+    """examples/absurd-paper/workflow.yaml uses config: + inputs: for the
+    `paper` node. Asserts the carved workflow compiles, the `paper` node
+    is present, and its config: reference resolves to the subgraph file.
+    """
+    repo_root = Path(__file__).resolve().parents[2]
+    raw = yaml.safe_load(
+        (repo_root / "examples" / "absurd-paper" / "workflow.yaml").read_text()
+    )
+    config = Graph(**raw)
+
+    # The carved `paper` node uses config: with inputs: projection.
+    paper = next(n for n in config.nodes if n.id == "paper")
+    assert paper.config == "examples/absurd-paper/subgraphs/compose_and_validate.yaml"
+    # Five upstream sections project into the subgraph context.
+    assert set(paper.inputs.keys()) == {
+        "abstract", "intro", "methods", "results", "discussion"
+    }
+    # publish_verdict was lifted (still a final_node under reviewer_pool).
+    # Downstream nodes wire to the new `paper` parent, not the old chain.
+    render_pdf = next(n for n in config.nodes if n.id == "render_pdf")
+    reviewer_pool = next(n for n in config.nodes if n.id == "reviewer_pool")
+    assert render_pdf.depends_on == ["paper"]
+    assert reviewer_pool.depends_on == ["paper", "render_pdf"]
+
+    # Compile against the example dir as base (so config-ref resolves).
+    executor = DispatchExecutor(workdir=str(repo_root))
+    graph = build_workflow_graph(
+        config, executor, _base_dir=repo_root,
+    )
+    assert graph is not None
