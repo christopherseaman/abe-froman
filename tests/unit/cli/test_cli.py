@@ -137,7 +137,7 @@ class TestTokenSummary:
         # Stub backend returns None for tokens_used, so no token line
         assert "Tokens:" not in result.output
 
-    def test_no_token_summary_for_command_phases(self, runner, tmp_path):
+    def test_no_token_summary_for_command_nodes(self, runner, tmp_path):
         config = tmp_path / "workflow.yaml"
         config.write_text(
             "name: Test\nversion: '1.0'\nnodes:\n"

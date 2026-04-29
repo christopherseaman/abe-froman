@@ -31,7 +31,7 @@ class TestMinimalWorkflow:
         with pytest.raises(ValidationError):
             Graph(name="Test", nodes=[])
 
-    def test_empty_phases_allowed(self):
+    def test_empty_nodes_allowed(self):
         config = Graph(name="Test", version="1.0.0", nodes=[])
         assert config.nodes == []
 
@@ -89,26 +89,26 @@ class TestExecutionTypes:
 
     def test_execution_discriminated_union_from_dict(self):
         """Execution types parse correctly from raw dicts (YAML deserialization)."""
-        phase_prompt = Node(
+        node_prompt = Node(
             id="p1",
             name="P1",
             execution={"type": "prompt", "prompt_file": "test.md"},
         )
-        assert isinstance(phase_prompt.execution, PromptExecution)
+        assert isinstance(node_prompt.execution, PromptExecution)
 
-        phase_cmd = Node(
+        node_cmd = Node(
             id="p2",
             name="P2",
             execution={"type": "command", "command": "node", "args": ["x.js"]},
         )
-        assert isinstance(phase_cmd.execution, CommandExecution)
+        assert isinstance(node_cmd.execution, CommandExecution)
 
-        phase_gate = Node(
+        node_gate = Node(
             id="p3",
             name="P3",
             execution={"type": "gate_only"},
         )
-        assert isinstance(phase_gate.execution, GateOnlyExecution)
+        assert isinstance(node_gate.execution, GateOnlyExecution)
 
 
 class TestQualityGate:
@@ -276,7 +276,7 @@ class TestDependencyValidation:
         assert node.depends_on == []
 
 
-class TestDynamicSubphases:
+class TestFanOut:
     def test_dynamic_config(self):
         config = FanOut(
             enabled=True,
@@ -341,26 +341,26 @@ class TestFullExampleParse:
             raw = yaml.safe_load(f)
         config = Graph(**raw)
 
-        phase_map = {p.id: p for p in config.nodes}
+        node_map = {p.id: p for p in config.nodes}
 
         # node-0 is a command execution
-        assert isinstance(phase_map["node-0"].execution, CommandExecution)
-        assert phase_map["node-0"].execution.command == "node"
+        assert isinstance(node_map["node-0"].execution, CommandExecution)
+        assert node_map["node-0"].execution.command == "node"
 
         # node-1 is a prompt execution (via shorthand) with model override
-        assert isinstance(phase_map["node-1"].execution, PromptExecution)
-        assert phase_map["node-1"].model == "sonnet"
+        assert isinstance(node_map["node-1"].execution, PromptExecution)
+        assert node_map["node-1"].model == "sonnet"
 
     def test_example_dynamic_subphases(self, example_workflow_path):
         with open(example_workflow_path) as f:
             raw = yaml.safe_load(f)
         config = Graph(**raw)
 
-        phase_map = {p.id: p for p in config.nodes}
-        phase2 = phase_map["node-2"]
-        assert phase2.fan_out is not None
-        assert phase2.fan_out.enabled is True
-        assert len(phase2.fan_out.final_nodes) > 0
+        node_map = {p.id: p for p in config.nodes}
+        node2 = node_map["node-2"]
+        assert node2.fan_out is not None
+        assert node2.fan_out.enabled is True
+        assert len(node2.fan_out.final_nodes) > 0
 
     def test_example_fan_in_dependency(self, example_workflow_path):
         """node-4 depends on all node-3-* nodes (fan-in)."""
@@ -368,11 +368,11 @@ class TestFullExampleParse:
             raw = yaml.safe_load(f)
         config = Graph(**raw)
 
-        phase_map = {p.id: p for p in config.nodes}
-        phase4 = phase_map["node-4"]
+        node_map = {p.id: p for p in config.nodes}
+        node4 = node_map["node-4"]
         # All node-3-* nodes should be in depends_on
-        phase3_ids = {p.id for p in config.nodes if p.id.startswith("node-3")}
-        assert phase3_ids == set(phase4.depends_on)
+        node3_ids = {p.id for p in config.nodes if p.id.startswith("node-3")}
+        assert node3_ids == set(node4.depends_on)
 
 
 # ---------------------------------------------------------------------------
@@ -380,7 +380,7 @@ class TestFullExampleParse:
 # ---------------------------------------------------------------------------
 
 
-class TestPhaseTimeout:
+class TestNodeTimeout:
     def test_phase_timeout_field(self):
         p = Node(id="a", name="A", timeout=30.0)
         assert p.timeout == 30.0

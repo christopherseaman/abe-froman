@@ -166,7 +166,7 @@ class TestBuildContext:
         ]
 
     def test_no_subphase_aggregations_when_absent(self):
-        """Phases with no dynamic parent in deps get no aggregate keys."""
+        """Nodes with no fan-out parent in deps get no aggregate keys."""
         node = _phase(depends_on=["normal"])
         state = {
             "node_outputs": {"normal": "out"},

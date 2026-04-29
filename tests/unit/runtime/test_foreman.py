@@ -80,7 +80,7 @@ class TestWorktreePool:
             await foreman.close()
 
     @pytest.mark.asyncio
-    async def test_different_phases_get_different_worktrees(self, tmp_path):
+    async def test_different_nodes_get_different_worktrees(self, tmp_path):
         _init_git_repo(tmp_path)
         inner = DispatchExecutor(workdir=str(tmp_path))
         foreman = ForemanExecutor(inner=inner, base_workdir=str(tmp_path))
