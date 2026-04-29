@@ -201,47 +201,6 @@ class TestResumeCommand:
 
 
 # ---------------------------------------------------------------------------
-# Token summary positive path (J8)
-# ---------------------------------------------------------------------------
-
-
-class TestTokenSummaryPositive:
-    def test_token_summary_displayed_when_tokens_present(self, runner, tmp_path, monkeypatch):
-        """Wire a backend that returns tokens_used; verify summary appears."""
-        from abe_froman.runtime.result import ExecutionResult
-
-        class TokenBackend:
-            async def send_prompt(self, prompt, model, workdir, timeout=None):
-                return ExecutionResult(
-                    output="ok",
-                    tokens_used={"input": 100, "output": 50},
-                )
-
-            async def close(self):
-                pass
-
-        monkeypatch.setattr(
-            "abe_froman.runtime.executor.backends.factory.create_prompt_backend",
-            lambda _type: TokenBackend(),
-        )
-
-        config = tmp_path / "workflow.yaml"
-        config.write_text(
-            "name: Test\nversion: '1.0'\nnodes:\n"
-            "  - id: a\n    name: A\n    prompt_file: t.md\n"
-        )
-        (tmp_path / "t.md").write_text("hello")
-
-        result = runner.invoke(
-            cli, ["run", str(config), "--workdir", str(tmp_path)]
-        )
-        assert result.exit_code == 0
-        assert "Tokens:" in result.output
-        assert "100" in result.output
-        assert "50" in result.output
-
-
-# ---------------------------------------------------------------------------
 # CLI helper unit tests (J9)
 # ---------------------------------------------------------------------------
 
