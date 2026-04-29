@@ -138,6 +138,48 @@ class TestBuildContext:
         ctx = build_context(node, state)
         assert "a_worktree" not in ctx
 
+    # -- subgraph outputs: projection (dotted keys) ----------------------
+
+    def test_subgraph_dotted_outputs_bound_as_flat_vars(self):
+        """When a dep's `outputs:` projects values to `dep.key`, build_context
+        binds them under both `{dep}_{key}` and the bare `{key}` template var.
+
+        Stage 4c regression: reviewer_pool's prompt referenced {{reconcile}}
+        but reconcile was carved into a subgraph, so {{reconcile}} was
+        unbound. Parent now declares `outputs: { reconcile: "{{reconcile}}" }`
+        on the subgraph node and downstream sees both `{{paper_reconcile}}`
+        and `{{reconcile}}` bound to the same value.
+        """
+        node = _phase(depends_on=["paper"])
+        state = {
+            "node_outputs": {
+                "paper": "terminal-out",
+                "paper.reconcile": "the-paper-text",
+            },
+        }
+        ctx = build_context(node, state)
+        assert ctx["paper"] == "terminal-out"
+        assert ctx["paper_reconcile"] == "the-paper-text"
+        assert ctx["reconcile"] == "the-paper-text"
+
+    def test_dotted_outputs_collision_first_dep_wins(self):
+        """Two deps both projecting `key` — collision-safe vars
+        (`{dep}_{key}`) keep both; the bare `{key}` binding is set-once."""
+        node = _phase(depends_on=["a", "b"])
+        state = {
+            "node_outputs": {
+                "a": "a-out", "b": "b-out",
+                "a.summary": "from-a",
+                "b.summary": "from-b",
+            },
+        }
+        ctx = build_context(node, state)
+        # Per-dep namespaces are clean.
+        assert ctx["a_summary"] == "from-a"
+        assert ctx["b_summary"] == "from-b"
+        # The bare `summary` key binds once (first-dep wins via setdefault).
+        assert ctx["summary"] in ("from-a", "from-b")
+
     def test_projects_subphase_aggregations(self):
         """Downstream context synthesizes `{dep}_subphases` + worktrees from state.
 

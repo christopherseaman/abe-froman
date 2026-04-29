@@ -107,6 +107,17 @@ def build_context(node: Node, state: WorkflowState) -> dict[str, Any]:
             context[f"{dep}_structured"] = structured[dep]
         if dep in worktrees:
             context[f"{dep}_worktree"] = worktrees[dep]
+        # Subgraph `outputs:` projects values to `node_outputs[dep.key]`.
+        # Surface those as flat template vars so downstream prompts can
+        # reference the projected value without dotted-attribute syntax.
+        # Bind under both `{dep}_{key}` (collision-safe) and `{key}`
+        # (convenient when there's only one such projection in scope).
+        dotted_prefix = f"{dep}."
+        for k, v in outputs.items():
+            if k.startswith(dotted_prefix):
+                suffix = k[len(dotted_prefix):]
+                context[f"{dep}_{suffix}"] = v
+                context.setdefault(suffix, v)
         # Synthesize fan-out aggregates from state. Any node depending on
         # a dynamic parent sees `{{dep_subphases}}` (JSON id→output map) and
         # `{{dep_subphase_worktrees}}` (JSON list of worktree paths) — not
