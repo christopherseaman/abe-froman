@@ -110,7 +110,7 @@ def _config_with(node: Node, **settings_kwargs) -> Graph:
     )
 
 
-class TestPhaseNodeClosure:
+class TestExecutionNodeClosure:
     @pytest.mark.asyncio
     async def test_already_completed_returns_empty(self):
         """Re-entering a completed node is a no-op (idempotent)."""

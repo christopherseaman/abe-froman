@@ -20,7 +20,7 @@ from helpers import cmd_phase, fail_phase, make_config
 # ---------------------------------------------------------------------------
 
 
-class TestSinglePhaseExecution:
+class TestSingleNodeExecution:
     @pytest.mark.asyncio
     async def test_single_phase_completes(self):
         config = make_config([cmd_phase("p1", output="hello")])
@@ -50,7 +50,7 @@ class TestSinglePhaseExecution:
 
 class TestLinearExecution:
     @pytest.mark.asyncio
-    async def test_two_phases_execute_in_order(self):
+    async def test_two_nodes_execute_in_order(self):
         config = make_config([
             cmd_phase("a", output="a-out"),
             cmd_phase("b", output="b-out", depends_on=["a"]),
@@ -143,7 +143,7 @@ class TestParallelExecution:
         assert ctx.get("fast_gated") == "[mock] fast_gated completed"
 
     @pytest.mark.asyncio
-    async def test_independent_phases_both_complete(self):
+    async def test_independent_nodes_both_complete(self):
         """Two nodes with no dependencies both run."""
         config = make_config([
             cmd_phase("x", output="x-out"),
@@ -705,7 +705,7 @@ class TestTokenUsageAccumulation:
         }
 
     @pytest.mark.asyncio
-    async def test_token_usage_empty_for_command_phases(self):
+    async def test_token_usage_empty_for_command_nodes(self):
         config = make_config([cmd_phase("p1", output="ok")])
         executor = DispatchExecutor()
         graph = build_workflow_graph(config, executor)

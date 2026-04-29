@@ -139,9 +139,9 @@ class TestDynamicFanOut:
 # ---------------------------------------------------------------------------
 
 
-class TestFinalPhases:
+class TestFinalNodes:
     @pytest.mark.asyncio
-    async def test_final_phase_runs_after_subphases(self, tmp_path):
+    async def test_final_node_runs_after_subphases(self, tmp_path):
         """Final node executes after all children complete."""
         (tmp_path / "template.md").write_text("Sub {{id}}")
 
@@ -160,7 +160,7 @@ class TestFinalPhases:
         assert "_final_p_summary" in result["completed_nodes"]
 
     @pytest.mark.asyncio
-    async def test_chained_final_phases(self, tmp_path):
+    async def test_chained_final_nodes(self, tmp_path):
         """Multiple final nodes execute sequentially."""
         (tmp_path / "template.md").write_text("Sub {{id}}")
 

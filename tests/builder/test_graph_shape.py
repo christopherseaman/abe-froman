@@ -92,7 +92,7 @@ class TestLinearChain:
         }
 
 
-class TestParallelPhases:
+class TestParallelNodes:
     def test_diamond_dependency(self, parallel_config_dict):
         """A → (B, C) → D — both forks must be wired, and D must fan in from both."""
         config = Graph(**parallel_config_dict)

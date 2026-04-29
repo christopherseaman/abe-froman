@@ -34,7 +34,7 @@ class TestMakeInitialState:
         assert state["token_usage"] == {}
         assert state["dry_run"] is False
 
-    def test_token_usage_merges_across_phases(self):
+    def test_token_usage_merges_across_nodes(self):
         left = {"p1": {"input": 100, "output": 50}}
         right = {"p2": {"input": 200, "output": 75}}
         merged = _merge_dicts(left, right)

@@ -16,7 +16,7 @@ from helpers import cmd_phase, make_config
 # ---------------------------------------------------------------------------
 
 
-class TestTimeoutCommandPhase:
+class TestTimeoutCommandNode:
     @pytest.mark.asyncio
     async def test_timeout_kills_hung_phase(self, tmp_path):
         config = make_config(
@@ -128,7 +128,7 @@ class SlowMockExecutor:
         return ExecutionResult(success=True, output=f"[slow-mock] {node.id}")
 
 
-class TestTimeoutPromptPhase:
+class TestTimeoutPromptNode:
     @pytest.mark.asyncio
     async def test_timeout_on_slow_executor(self, tmp_path):
         config = make_config(
