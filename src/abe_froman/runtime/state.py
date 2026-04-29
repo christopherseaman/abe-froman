@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import operator
-from typing import Annotated, Any, NotRequired
+from typing import Annotated, Any, Callable, NotRequired
 
 from typing_extensions import TypedDict
 
@@ -23,18 +23,36 @@ def _merge_evaluations(
     return merged
 
 
+# Reducer table — single source of truth for how state fields combine.
+# Mirrors WorkflowState's Annotated metadata; consumed by both LangGraph
+# (via the TypedDict annotations) and `dynamic._merge_updates` (when the
+# fan-out node accumulates state inline across its retry loop).
+REDUCERS: dict[str, Callable[[Any, Any], Any]] = {
+    "completed_nodes": operator.add,
+    "failed_nodes": operator.add,
+    "errors": operator.add,
+    "node_outputs": _merge_dicts,
+    "node_structured_outputs": _merge_dicts,
+    "retries": _merge_dicts,
+    "child_outputs": _merge_dicts,
+    "token_usage": _merge_dicts,
+    "node_worktrees": _merge_dicts,
+    "evaluations": _merge_evaluations,
+}
+
+
 class WorkflowState(TypedDict):
     workflow_name: str
-    completed_nodes: Annotated[list[str], operator.add]
-    failed_nodes: Annotated[list[str], operator.add]
-    node_outputs: Annotated[dict[str, Any], _merge_dicts]
-    node_structured_outputs: Annotated[dict[str, Any], _merge_dicts]
-    evaluations: Annotated[dict[str, list[dict[str, Any]]], _merge_evaluations]
-    retries: Annotated[dict[str, int], _merge_dicts]
-    child_outputs: Annotated[dict[str, Any], _merge_dicts]
-    token_usage: Annotated[dict[str, dict[str, int]], _merge_dicts]
-    node_worktrees: Annotated[dict[str, str], _merge_dicts]
-    errors: Annotated[list[dict], operator.add]
+    completed_nodes: Annotated[list[str], REDUCERS["completed_nodes"]]
+    failed_nodes: Annotated[list[str], REDUCERS["failed_nodes"]]
+    node_outputs: Annotated[dict[str, Any], REDUCERS["node_outputs"]]
+    node_structured_outputs: Annotated[dict[str, Any], REDUCERS["node_structured_outputs"]]
+    evaluations: Annotated[dict[str, list[dict[str, Any]]], REDUCERS["evaluations"]]
+    retries: Annotated[dict[str, int], REDUCERS["retries"]]
+    child_outputs: Annotated[dict[str, Any], REDUCERS["child_outputs"]]
+    token_usage: Annotated[dict[str, dict[str, int]], REDUCERS["token_usage"]]
+    node_worktrees: Annotated[dict[str, str], REDUCERS["node_worktrees"]]
+    errors: Annotated[list[dict], REDUCERS["errors"]]
     workdir: str
     dry_run: bool
     _fan_out_item: NotRequired[dict[str, Any]]

@@ -15,7 +15,7 @@ from abe_froman.compile.nodes import (
     make_failure_update,
 )
 from abe_froman.runtime.result import ExecutionResult
-from abe_froman.runtime.state import WorkflowState
+from abe_froman.runtime.state import REDUCERS, WorkflowState
 from abe_froman.schema.models import Node, Graph
 
 if TYPE_CHECKING:
@@ -23,29 +23,18 @@ if TYPE_CHECKING:
 
 
 def _merge_updates(base: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
-    """Merge `extra` into `base`, mirroring the top-level state reducers.
+    """Merge `extra` into `base` using the same reducers LangGraph uses.
 
-    The child closure builds up its own update dict across execute +
-    evaluate calls within a single node body. Once we return, the graph's
-    reducers will reduce this aggregate against the prior state. Within
-    the node body we replicate their semantics:
-      - lists (completed_nodes, failed_nodes, errors) → concat
-      - dict-of-list (evaluations) → per-key append
-      - plain dicts (retries, node_outputs, …) → update-overwrite
+    The fan-out node accumulates state inline across its retry loop; once
+    it returns, LangGraph's super-step reducers fold the aggregate into
+    prior state. Using `state.REDUCERS` here keeps the inline merge
+    semantically identical to the boundary merge — single source of truth.
+    Keys not in REDUCERS (e.g. `_fan_out_item`) overwrite by assignment.
     """
     out = dict(base)
     for key, value in extra.items():
-        if key == "evaluations" and isinstance(value, dict):
-            existing = dict(out.get(key, {}))
-            for sub_key, new_records in value.items():
-                existing[sub_key] = list(existing.get(sub_key, [])) + list(new_records)
-            out[key] = existing
-        elif key in out and isinstance(out[key], list) and isinstance(value, list):
-            out[key] = out[key] + value
-        elif key in out and isinstance(out[key], dict) and isinstance(value, dict):
-            merged = dict(out[key])
-            merged.update(value)
-            out[key] = merged
+        if key in out and key in REDUCERS:
+            out[key] = REDUCERS[key](out[key], value)
         else:
             out[key] = value
     return out
