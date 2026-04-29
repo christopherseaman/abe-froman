@@ -26,13 +26,14 @@ YAML Config → Pydantic Schema → LangGraph StateGraph (+ SqliteSaver checkpoi
 
 ```bash
 uv sync                                    # install deps
-uv run pytest tests/ -v                    # run all tests (~335 tests)
+uv run pytest tests/ -v                    # run all tests (~515 tests)
 uv run abe-froman validate config.yaml     # validate a workflow config
 uv run abe-froman run config.yaml --dry-run # dry run
 uv run abe-froman run config.yaml -e acp   # run with Claude via ACP
 uv run abe-froman run config.yaml --resume        # resume from last checkpoint
 uv run abe-froman run config.yaml --log out.jsonl  # run with JSONL event log
 uv run abe-froman graph config.yaml        # emit Mermaid graph (LangGraph draw_mermaid)
+uv run abe-froman migrate old.yaml --in-place  # rewrite pre-Stage-4 YAML to current schema
 ```
 
 ## Workflow Schema

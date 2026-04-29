@@ -141,6 +141,13 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
 
 ## Features
 
+- [ ] **Fan-out + recursive-subgraph composition (`FanOutTemplate.config:`)**
+    - Today: `fan_out:` requires `template.prompt_file:`. Each item runs a synthetic per-item prompt phase.
+    - Wanted: `template.config:` to dispatch each manifest item to a recursively-compiled subgraph instance, with `_fan_out_item` projected via parent's `inputs:`.
+    - Would let `examples/absurd-paper/reviewer_pool` use `subgraphs/single_review.yaml` for each reviewer in the manifest, instead of the inline `template.prompt_file:` shape it uses today.
+    - Implementation: extend `FanOutTemplate` schema (`prompt_file | config`), add a `_make_fan_out_subgraph_node` factory that compiles the subgraph once and dispatches per-item Send.
+    - Captured during Stage 4 closeout (the absurd-paper carve was implemented for the multi-step `paper` node only; per-reviewer subgraph fan-out deferred to here).
+
 - [ ] **Output caching / skip-if-unchanged**
     - Make-style incrementality (not provided by langgraph checkpointers)
     - Skip when `required_files` still exist and input fingerprint (dep outputs + prompt hash + vars) matches
