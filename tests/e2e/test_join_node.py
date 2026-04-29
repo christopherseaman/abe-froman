@@ -92,6 +92,47 @@ class TestExplicitJoin:
         assert result["node_outputs"]["after"] == "post-sync"
 
     @pytest.mark.asyncio
+    async def test_join_downstream_sees_all_preds_in_context(self, tmp_path):
+        """Downstream of a join must see outputs from ALL predecessors,
+        not just one. Topology-only tests cover 'downstream waits' but
+        the whole point of a join is multi-pred fan-in: the consumer's
+        Jinja context has both upstream outputs available for templating.
+        """
+        config = make_config([
+            cmd_phase("a", output="OUT-A"),
+            cmd_phase("b", output="OUT-B"),
+            {
+                "id": "sync",
+                "name": "Sync",
+                "execution": {"type": "join"},
+                "depends_on": ["a", "b"],
+            },
+            {
+                "id": "consumer",
+                "name": "Consumer",
+                "execution": {
+                    "type": "command",
+                    "command": "echo",
+                    # Templated args — each placeholder must resolve from
+                    # the upstream's node_output. If join doesn't synthesize
+                    # both predecessors into context, one or both renders empty.
+                    "args": ["-n", "{{a}}|{{b}}"],
+                },
+                "depends_on": ["sync", "a", "b"],
+            },
+        ])
+        executor = DispatchExecutor(workdir=str(tmp_path))
+        graph = build_workflow_graph(config, executor)
+        result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
+
+        assert "consumer" in result["completed_nodes"]
+        consumer_out = result["node_outputs"]["consumer"]
+        assert consumer_out == "OUT-A|OUT-B", (
+            f"consumer should see both predecessors merged in context; "
+            f"got {consumer_out!r}"
+        )
+
+    @pytest.mark.asyncio
     async def test_join_with_evaluation_is_gated(self, tmp_path):
         """A join node with evaluation runs the gate against its empty output.
 

@@ -217,6 +217,54 @@ class TestEvaluationNodeSkips:
         state["failed_nodes"] = ["p1"]
         assert await node(state) == {}
 
+    @pytest.mark.asyncio
+    async def test_defers_when_upstream_output_absent(self, tmp_path):
+        """The eval node defers (returns {}) when its upstream Execution
+        node hasn't written node_outputs[node_id] yet.
+
+        LangGraph evaluates fan-out conditional edges pre-emptively: the
+        router from a fan-out parent fires when an UPSTREAM-of-parent
+        completes (not when the parent itself runs), routes to _final_*
+        via 'no_items', and the static edge _final_* → _eval__final_*
+        triggers this eval against an empty state. Without this guard,
+        the gate scores empty content as 0.0/0.0 and burns the retry
+        budget before the real fan-out children settle.
+
+        Key-absence (not empty-value) is the signal — JoinExecution
+        legitimately writes "" and must still be evaluated.
+        """
+        node = Node(
+            id="p1", name="P1", prompt_file="t.md",
+            evaluation=Evaluation(validator="v.py", threshold=0.8),
+        )
+        node_fn = _make_evaluation_node(node, _config_with(node))
+        state = make_initial_state(workdir=str(tmp_path))
+        # node_outputs is empty — upstream hasn't run.
+        result = await node_fn(state)
+        assert result == {}, (
+            f"eval should defer when upstream output absent; got {result}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_evaluates_when_upstream_writes_empty_string(self, tmp_path):
+        """Companion to defers_when_upstream_output_absent: when the
+        upstream wrote "" (e.g. JoinExecution's no-op output), eval MUST
+        proceed — empty value is distinct from absent key.
+        """
+        node = Node(
+            id="p1", name="P1", prompt_file="t.md",
+            evaluation=Evaluation(
+                validator=_validator(tmp_path, "v.py", "0.9"), threshold=0.8,
+            ),
+        )
+        node_fn = _make_evaluation_node(node, _config_with(node))
+        state = make_initial_state(workdir=str(tmp_path))
+        state["node_outputs"] = {"p1": ""}  # legitimate empty output (e.g. join)
+        result = await node_fn(state)
+        # eval ran: an evaluation record was written and node completed.
+        assert result.get("completed_nodes") == ["p1"]
+        assert "p1" in result.get("evaluations", {})
+
 
 class TestEvaluationNodeSubphaseResolver:
     @pytest.mark.asyncio
