@@ -353,6 +353,152 @@ def test_depth_limit_enforced(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_fan_out_per_child_subgraph_dispatch(tmp_path):
+    """Stage 4c: each Send branch invokes a per-child subgraph.
+
+    Parent emits a 2-item manifest; template.config refs a 2-node
+    subgraph (step1 → step2). Each Send branch runs the subgraph in
+    isolation; each child's terminal output lands in child_outputs
+    keyed by `{parent_id}::{item_id}`.
+    """
+    _yaml(tmp_path / "review_sub.yaml", {
+        "name": "ReviewSub", "version": "1.0",
+        "nodes": [
+            {
+                "id": "step1",
+                "name": "Step 1",
+                "execution": {
+                    "type": "command", "command": "echo",
+                    "args": ["-n", "draft-{{item_id}}"],
+                },
+            },
+            {
+                "id": "step2",
+                "name": "Step 2",
+                "depends_on": ["step1"],
+                "execution": {
+                    "type": "command", "command": "echo",
+                    "args": ["-n", "polish[{{step1}}]"],
+                },
+            },
+        ],
+    })
+    _yaml(tmp_path / "parent.yaml", {
+        "name": "Parent", "version": "1.0",
+        "nodes": [
+            {
+                "id": "manifest",
+                "name": "Manifest",
+                "execution": {
+                    "type": "command", "command": "echo",
+                    "args": ["-n", '{"items":[{"id":"a"},{"id":"b"}]}'],
+                },
+                "fan_out": {
+                    "enabled": True,
+                    "template": {
+                        "config": "review_sub.yaml",
+                        "inputs": {"item_id": "{{id}}"},
+                    },
+                },
+            },
+        ],
+    })
+
+    raw = yaml.safe_load((tmp_path / "parent.yaml").read_text())
+    config = Graph(**raw)
+    executor = DispatchExecutor(workdir=str(tmp_path))
+    graph = build_workflow_graph(config, executor, _base_dir=tmp_path)
+    result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
+
+    child_outputs = result.get("child_outputs", {})
+    assert child_outputs.get("manifest::a") == "polish[draft-a]", (
+        f"per-child subgraph terminal should land in child_outputs; "
+        f"got {child_outputs!r}"
+    )
+    assert child_outputs.get("manifest::b") == "polish[draft-b]"
+
+
+@pytest.mark.asyncio
+async def test_fan_out_subgraph_failure_surfaces_to_parent(tmp_path):
+    """Subgraph internal failure surfaces as failed_nodes[child_id]
+    in the parent (mirrors top-level config: failure semantics)."""
+    _yaml(tmp_path / "failing_sub.yaml", {
+        "name": "FailingSub", "version": "1.0",
+        "nodes": [
+            {
+                "id": "boom",
+                "name": "Boom",
+                "execution": {"type": "command", "command": "false"},
+            },
+        ],
+    })
+    _yaml(tmp_path / "parent.yaml", {
+        "name": "Parent", "version": "1.0",
+        "nodes": [
+            {
+                "id": "manifest",
+                "name": "Manifest",
+                "execution": {
+                    "type": "command", "command": "echo",
+                    "args": ["-n", '{"items":[{"id":"x"}]}'],
+                },
+                "fan_out": {
+                    "enabled": True,
+                    "template": {"config": "failing_sub.yaml"},
+                },
+            },
+        ],
+    })
+
+    raw = yaml.safe_load((tmp_path / "parent.yaml").read_text())
+    config = Graph(**raw)
+    executor = DispatchExecutor(workdir=str(tmp_path))
+    graph = build_workflow_graph(config, executor, _base_dir=tmp_path)
+    result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
+
+    assert "manifest::x" in result.get("failed_nodes", []), (
+        f"per-child subgraph failure should surface as failed child; "
+        f"got failed_nodes={result.get('failed_nodes')}"
+    )
+
+
+def test_fan_out_subgraph_cycle_detected_at_compile_time(tmp_path):
+    """A cycle through a fan-out template's config is caught at compile."""
+    # A's manifest fan-out template references B; B has a node whose
+    # config references A. Cycle: A.template -> B -> A.
+    _yaml(tmp_path / "a.yaml", {
+        "name": "A", "version": "1.0",
+        "nodes": [
+            {
+                "id": "manifest_a",
+                "name": "Manifest A",
+                "execution": {"type": "command", "command": "echo", "args": ["-n", '[]']},
+                "fan_out": {
+                    "enabled": True,
+                    "template": {"config": "b.yaml"},
+                },
+            },
+        ],
+    })
+    _yaml(tmp_path / "b.yaml", {
+        "name": "B", "version": "1.0",
+        "nodes": [
+            {
+                "id": "back_to_a",
+                "name": "Back to A",
+                "config": "a.yaml",
+            },
+        ],
+    })
+
+    raw = yaml.safe_load((tmp_path / "a.yaml").read_text())
+    config = Graph(**raw)
+    executor = DispatchExecutor(workdir=str(tmp_path))
+    with pytest.raises(SubgraphCycleError):
+        build_workflow_graph(config, executor, _base_dir=tmp_path)
+
+
+@pytest.mark.asyncio
 async def test_absurd_paper_carve_compiles_with_subgraph(tmp_path):
     """examples/absurd-paper/workflow.yaml uses config: + inputs: for the
     `paper` node. Asserts the carved workflow compiles, the `paper` node

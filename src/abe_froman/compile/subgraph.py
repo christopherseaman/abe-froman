@@ -164,9 +164,11 @@ def detect_config_cycle(
 ) -> None:
     """Walk the config-reference DAG; raise on cycle.
 
-    Called at compile time when a Node has `config:`. Visited paths are
-    accumulated as the walker descends; revisiting a path means the
-    chain refers back to an ancestor.
+    Called at compile time for any subgraph reference: top-level
+    `Node.config:` AND fan-out `template.config:`. Both kinds of
+    reference belong to the same DAG — a cycle through either form is
+    still a cycle. Visited paths accumulate as the walker descends;
+    revisiting a path means the chain refers back to an ancestor.
     """
     visited = list(visited or [])
     abs_path = str(Path(base_dir) / config_path)
@@ -178,3 +180,7 @@ def detect_config_cycle(
     for n in sub.nodes:
         if n.config:
             detect_config_cycle(n.config, visited=visited, base_dir=base_dir)
+        if n.fan_out and n.fan_out.template and n.fan_out.template.config:
+            detect_config_cycle(
+                n.fan_out.template.config, visited=visited, base_dir=base_dir,
+            )

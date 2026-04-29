@@ -44,6 +44,10 @@ def _make_fan_out_node(
     parent_node: Node,
     config: Graph,
     executor: NodeExecutor | None = None,
+    *,
+    compile_fn: Any = None,
+    base_dir: Any = None,
+    depth: int = 0,
 ):
     """Create a template node function for dynamic children.
 
@@ -53,11 +57,38 @@ def _make_fan_out_node(
     conditional-edge boundary, which would strip per-branch
     ``_fan_out_item`` state and break graph-level retry self-loops.
     Inline retry preserves per-item state trivially.
+
+    Two template kinds are supported:
+      - ``template.prompt_file``: each Send branch executes a synthetic
+        Node carrying that prompt against parent context + manifest item.
+      - ``template.config``: each Send branch invokes a recursive
+        subgraph in isolation, with ``template.inputs`` rendered against
+        parent context + manifest item and projected into the subgraph's
+        ``node_inputs`` channel. The subgraph's terminal output becomes
+        the child's output. ``compile_fn``, ``base_dir``, and ``depth``
+        are required for this path so the subgraph can be pre-compiled
+        once at factory time.
     """
     template = parent_node.fan_out.template
     timeout = parent_node.effective_timeout(config.settings)
     max_retries = parent_node.effective_max_retries(config.settings)
     retry_backoff = config.settings.retry_backoff
+
+    # Pre-compile the per-child subgraph if the template uses config:
+    sub_compiled = None
+    sub_config = None
+    if template.config:
+        if compile_fn is None or base_dir is None:
+            raise ValueError(
+                f"Fan-out template on '{parent_node.id}' uses config: "
+                "but factory wasn't given compile_fn/base_dir"
+            )
+        from abe_froman.compile.subgraph import load_graph
+        sub_config = load_graph(template.config, base_dir=base_dir)
+        sub_compiled = compile_fn(
+            sub_config, executor=executor, _depth=depth + 1,
+        )
+    inputs_decl = dict(template.inputs)
 
     async def node_fn(state: WorkflowState) -> dict[str, Any]:
         item = state.get("_fan_out_item", {})
@@ -76,7 +107,7 @@ def _make_fan_out_node(
                 "completed_nodes": [child_id],
             }
 
-        if executor is None:
+        if executor is None and sub_compiled is None:
             return {
                 "node_outputs": {
                     child_id: f"[no-executor] child {item_id}"
@@ -133,9 +164,15 @@ def _make_fan_out_node(
                     max_retries, node_id=child_id,
                 )
 
-            exec_result = await execute_with_timeout(
-                executor, synthetic_node, context, timeout
-            )
+            if sub_compiled is not None:
+                exec_result = await _invoke_fan_out_subgraph(
+                    sub_compiled, sub_config, inputs_decl, context, state,
+                    timeout=timeout,
+                )
+            else:
+                exec_result = await execute_with_timeout(
+                    executor, synthetic_node, context, timeout
+                )
             if exec_result == "timeout":
                 return _merge_updates(update, make_failure_update(
                     child_id, f"Node timed out after {timeout}s"
@@ -206,6 +243,63 @@ def _synth_evaluations(
     out = {k: list(v) for k, v in existing.items()}
     out[key] = list(history)
     return out
+
+
+async def _invoke_fan_out_subgraph(
+    sub_compiled: Any,
+    sub_config: Graph,
+    inputs_decl: dict[str, str],
+    context: dict[str, Any],
+    parent_state: WorkflowState,
+    *,
+    timeout: float | None,
+) -> ExecutionResult | str:
+    """Invoke a per-child subgraph and project its terminal output as an
+    ExecutionResult. Mirrors the project's existing subgraph wrapper
+    semantics (see compile/subgraph.py::make_subgraph_node) but adapted
+    to the fan-out inline-retry flow.
+
+    Inputs are rendered against the per-Send context (parent deps +
+    parent output + manifest item fields) so each branch projects its
+    own item into the subgraph. Returns an ExecutionResult with the
+    subgraph's terminal-node output, or "timeout" / a failure result.
+    """
+    from abe_froman.compile.subgraph import _terminal_node_output
+    from abe_froman.runtime.executor.prompt import render_template
+    from abe_froman.runtime.state import make_initial_state
+
+    rendered_inputs = {
+        k: render_template(v, context) for k, v in inputs_decl.items()
+    }
+    sub_state = make_initial_state(
+        workflow_name=sub_config.name,
+        workdir=parent_state.get("workdir", "."),
+        dry_run=parent_state.get("dry_run", False),
+    )
+    sub_state["node_inputs"] = rendered_inputs
+
+    try:
+        if timeout is not None:
+            sub_result = await asyncio.wait_for(
+                sub_compiled.ainvoke(sub_state), timeout=timeout,
+            )
+        else:
+            sub_result = await sub_compiled.ainvoke(sub_state)
+    except asyncio.TimeoutError:
+        return "timeout"
+
+    if sub_result.get("failed_nodes"):
+        errors = sub_result.get("errors", [])
+        msg = (
+            f"subgraph '{sub_config.name}' failed: "
+            f"{sub_result['failed_nodes']}"
+        )
+        if errors:
+            msg += f" ({errors[0].get('error', '')})"
+        return ExecutionResult(success=False, output="", error=msg)
+
+    terminal_output = _terminal_node_output(sub_result, sub_config)
+    return ExecutionResult(success=True, output=terminal_output)
 
 
 def _make_final_fan_out_node(
