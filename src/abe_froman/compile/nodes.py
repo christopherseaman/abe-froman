@@ -339,7 +339,7 @@ async def run_evaluation_and_outcome(
         node.evaluation,
         key,
         workdir=state.get("workdir", "."),
-        phase_output=result.output,
+        node_output=result.output,
         workflow_name=config.name,
         attempt_number=retries + 1,
         backend=backend,

@@ -31,7 +31,7 @@ except Exception:
 
 
 # ---------------------------------------------------------------------------
-# Unit tests: run_evaluation receives phase_output via stdin
+# Unit tests: run_evaluation receives node_output via stdin
 # ---------------------------------------------------------------------------
 
 
@@ -41,8 +41,8 @@ class TestGateStdinPassing:
         script = tmp_path / "validator.py"
         script.write_text(JSON_VALIDATOR)
         gate = Evaluation(validator=str(script), threshold=1.0)
-        phase_output = json.dumps({"items": ["a", "b", "c"]})
-        result = await run_evaluation(gate, "p1", workdir=str(tmp_path), phase_output=phase_output)
+        node_output = json.dumps({"items": ["a", "b", "c"]})
+        result = await run_evaluation(gate, "p1", workdir=str(tmp_path), node_output=node_output)
         assert result.score == 1.0
 
     @pytest.mark.asyncio
@@ -50,7 +50,7 @@ class TestGateStdinPassing:
         script = tmp_path / "validator.py"
         script.write_text(JSON_VALIDATOR)
         gate = Evaluation(validator=str(script), threshold=1.0)
-        result = await run_evaluation(gate, "p1", workdir=str(tmp_path), phase_output="not json")
+        result = await run_evaluation(gate, "p1", workdir=str(tmp_path), node_output="not json")
         assert result.score == 0.0
 
     @pytest.mark.asyncio
@@ -58,8 +58,8 @@ class TestGateStdinPassing:
         script = tmp_path / "validator.py"
         script.write_text(JSON_VALIDATOR)
         gate = Evaluation(validator=str(script), threshold=1.0)
-        phase_output = json.dumps({"items": ["a"]})
-        result = await run_evaluation(gate, "p1", workdir=str(tmp_path), phase_output=phase_output)
+        node_output = json.dumps({"items": ["a"]})
+        result = await run_evaluation(gate, "p1", workdir=str(tmp_path), node_output=node_output)
         assert result.score == 0.0
 
     @pytest.mark.asyncio
@@ -67,7 +67,7 @@ class TestGateStdinPassing:
         script = tmp_path / "validator.py"
         script.write_text(JSON_VALIDATOR)
         gate = Evaluation(validator=str(script), threshold=1.0)
-        result = await run_evaluation(gate, "p1", workdir=str(tmp_path), phase_output="")
+        result = await run_evaluation(gate, "p1", workdir=str(tmp_path), node_output="")
         assert result.score == 0.0
 
 
@@ -753,7 +753,7 @@ class TestMDGateDispatchGuard:
         try:
             result = await run_evaluation(
                 gate, "p1", workdir=str(tmp_path),
-                phase_output="anything", backend=backend,
+                node_output="anything", backend=backend,
             )
         finally:
             await backend.close()

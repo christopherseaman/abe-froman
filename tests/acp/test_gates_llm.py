@@ -48,7 +48,7 @@ class TestEvaluateGateLLMPositivePath:
                     gate=gate,
                     node_id="test_phase",
                     workdir=str(tmp_path),
-                    phase_output="some node output",
+                    node_output="some node output",
                     backend=backend,
                     default_model="sonnet",
                 )

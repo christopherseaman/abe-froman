@@ -52,7 +52,7 @@ def _merge_updates(base: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any
 
 
 def _make_fan_out_node(
-    parent_phase: Node,
+    parent_node: Node,
     config: Graph,
     executor: NodeExecutor | None = None,
 ):
@@ -65,15 +65,15 @@ def _make_fan_out_node(
     ``_fan_out_item`` state and break graph-level retry self-loops.
     Inline retry preserves per-item state trivially.
     """
-    template = parent_phase.fan_out.template
-    timeout = parent_phase.effective_timeout(config.settings)
-    max_retries = parent_phase.effective_max_retries(config.settings)
+    template = parent_node.fan_out.template
+    timeout = parent_node.effective_timeout(config.settings)
+    max_retries = parent_node.effective_max_retries(config.settings)
     retry_backoff = config.settings.retry_backoff
 
     async def node_fn(state: WorkflowState) -> dict[str, Any]:
         item = state.get("_fan_out_item", {})
         item_id = item.get("id", "unknown")
-        child_id = f"{parent_phase.id}::{item_id}"
+        child_id = f"{parent_node.id}::{item_id}"
 
         if child_id in state.get("completed_nodes", []):
             return {}
@@ -98,19 +98,19 @@ def _make_fan_out_node(
                 "completed_nodes": [child_id],
             }
 
-        synthetic_phase = Node(
+        synthetic_node = Node(
             id=child_id,
-            name=f"{parent_phase.name} - {item.get('name', item_id)}",
+            name=f"{parent_node.name} - {item.get('name', item_id)}",
             prompt_file=template.prompt_file,
             evaluation=template.evaluation,
-            model=parent_phase.model,
+            model=parent_node.model,
         )
 
         # Build context up front — dep outputs + per-item manifest fields
         # do not change across retries within this node invocation.
-        base_context = build_context(parent_phase, state)
-        parent_output = state.get("node_outputs", {}).get(parent_phase.id, "")
-        base_context[parent_phase.id] = parent_output
+        base_context = build_context(parent_node, state)
+        parent_output = state.get("node_outputs", {}).get(parent_node.id, "")
+        base_context[parent_node.id] = parent_output
         for key, value in item.items():
             base_context[key] = str(value)
 
@@ -140,12 +140,12 @@ def _make_fan_out_node(
                     },
                 }
                 context = inject_retry_reason(
-                    context, synthetic_phase, synthetic_state,
+                    context, synthetic_node, synthetic_state,
                     max_retries, node_id=child_id,
                 )
 
             exec_result = await execute_with_timeout(
-                executor, synthetic_phase, context, timeout
+                executor, synthetic_node, context, timeout
             )
             if exec_result == "timeout":
                 return _merge_updates(update, make_failure_update(
@@ -182,7 +182,7 @@ def _make_fan_out_node(
                 },
             }
             eval_update = await run_evaluation_and_outcome(
-                synthetic_phase, config, eval_state, exec_result, timeout,
+                synthetic_node, config, eval_state, exec_result, timeout,
                 backend=backend, node_id=child_id, history=history,
             )
             update = _merge_updates(update, eval_update)
@@ -202,7 +202,7 @@ def _make_fan_out_node(
                 return update
             retries_local = bumped
 
-    node_fn.__name__ = f"subphase_{parent_phase.id}"
+    node_fn.__name__ = f"subphase_{parent_node.id}"
     return node_fn
 
 
@@ -220,8 +220,8 @@ def _synth_evaluations(
 
 
 def _make_final_fan_out_node(
-    parent_phase: Node,
-    final_phase,
+    parent_node: Node,
+    final_node,
     config: Graph,
     executor: NodeExecutor | None = None,
 ):
@@ -232,19 +232,19 @@ def _make_final_fan_out_node(
     this factory is a thin wrapper that just renames the synthetic node
     to stay out of the parent-id namespace.
     """
-    node_id = f"_final_{parent_phase.id}_{final_phase.id}"
+    node_id = f"_final_{parent_node.id}_{final_node.id}"
 
     synthetic = Node(
         id=node_id,
-        name=final_phase.name,
-        description=final_phase.description,
-        prompt_file=final_phase.prompt_file,
-        execution=final_phase.execution,
-        evaluation=final_phase.evaluation,
-        model=parent_phase.model,
-        depends_on=[parent_phase.id],
+        name=final_node.name,
+        description=final_node.description,
+        prompt_file=final_node.prompt_file,
+        execution=final_node.execution,
+        evaluation=final_node.evaluation,
+        model=parent_node.model,
+        depends_on=[parent_node.id],
     )
 
     inner = _make_execution_node(synthetic, config, executor)
-    inner.__name__ = f"final_{parent_phase.id}_{final_phase.id}"
+    inner.__name__ = f"final_{parent_node.id}_{final_node.id}"
     return inner

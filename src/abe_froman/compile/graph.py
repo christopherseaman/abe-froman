@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from abe_froman.runtime.result import NodeExecutor
 
 
-def _find_terminal_phases(config: Graph) -> set[str]:
+def _find_terminal_nodes(config: Graph) -> set[str]:
     depended_on: set[str] = set()
     for node in config.nodes:
         depended_on.update(node.depends_on)
@@ -200,21 +200,21 @@ def build_workflow_graph(
     base_dir = Path(_base_dir) if _base_dir is not None else Path(".")
 
     builder = StateGraph(WorkflowState)
-    terminal_ids = _find_terminal_phases(config)
-    phase_map = {p.id: p for p in config.nodes}
+    terminal_ids = _find_terminal_nodes(config)
+    node_map = {p.id: p for p in config.nodes}
 
-    gated_phase_ids: set[str] = set()
-    dynamic_phase_ids: set[str] = set()
-    gated_dynamic_template_ids: set[str] = set()
+    gated_node_ids: set[str] = set()
+    dynamic_fan_out_ids: set[str] = set()
+    gated_fan_out_template_ids: set[str] = set()
     subgraph_node_ids: set[str] = set()
 
     for node in config.nodes:
         if node.evaluation:
-            gated_phase_ids.add(node.id)
+            gated_node_ids.add(node.id)
         if node.fan_out and node.fan_out.enabled:
-            dynamic_phase_ids.add(node.id)
+            dynamic_fan_out_ids.add(node.id)
             if node.fan_out.template.evaluation:
-                gated_dynamic_template_ids.add(node.id)
+                gated_fan_out_template_ids.add(node.id)
         if node.config:
             subgraph_node_ids.add(node.id)
             # Cycle detection happens once at top-level — nested calls
@@ -250,20 +250,20 @@ def build_workflow_graph(
     # Dynamic node child template + final nodes.
     final_node_ids: dict[tuple[str, str], str] = {}
     gated_final_ids: set[str] = set()
-    for node_id in dynamic_phase_ids:
-        node = phase_map[node_id]
+    for node_id in dynamic_fan_out_ids:
+        node = node_map[node_id]
         builder.add_node(f"_sub_{node.id}", _make_fan_out_node(node, config, executor))
 
-        for final_phase in node.fan_out.final_nodes:
-            fid = f"_final_{node.id}_{final_phase.id}"
-            final_node_ids[(node.id, final_phase.id)] = fid
+        for final_node in node.fan_out.final_nodes:
+            fid = f"_final_{node.id}_{final_node.id}"
+            final_node_ids[(node.id, final_node.id)] = fid
             builder.add_node(
-                fid, _make_final_fan_out_node(node, final_phase, config, executor),
+                fid, _make_final_fan_out_node(node, final_node, config, executor),
             )
-            if final_phase.evaluation:
+            if final_node.evaluation:
                 gated_final_ids.add(fid)
                 synthetic = Node(
-                    id=fid, name=final_phase.name, evaluation=final_phase.evaluation,
+                    id=fid, name=final_node.name, evaluation=final_node.evaluation,
                     model=node.model,
                 )
                 _register_evaluation_node(builder, synthetic, config, executor, exec_node_id=fid)
@@ -275,7 +275,7 @@ def build_workflow_graph(
     needs_conditional: set[str] = set()
 
     for node in config.nodes:
-        if node.id in dynamic_phase_ids:
+        if node.id in dynamic_fan_out_ids:
             dsc = node.fan_out
             if dsc.final_nodes:
                 last_final_id = final_node_ids[(node.id, dsc.final_nodes[-1].id)]
@@ -287,7 +287,7 @@ def build_workflow_graph(
             else:
                 exit_node[node.id] = f"_sub_{node.id}"
             needs_conditional.add(node.id)
-        elif node.id in gated_phase_ids:
+        elif node.id in gated_node_ids:
             exit_node[node.id] = f"_eval_{node.id}"
             needs_conditional.add(node.id)
         else:
@@ -316,21 +316,21 @@ def build_workflow_graph(
     # ----- Top-level gated node wiring (non-dynamic) -----
 
     for node in config.nodes:
-        if node.id not in gated_phase_ids or node.id in dynamic_phase_ids:
+        if node.id not in gated_node_ids or node.id in dynamic_fan_out_ids:
             continue
         deps_of = [p.id for p in config.nodes if node.id in p.depends_on]
         _wire_evaluation_pair(builder, node.id, deps_of or [END])
 
     # ----- Dynamic node wiring -----
 
-    for node_id in dynamic_phase_ids:
-        node = phase_map[node_id]
+    for node_id in dynamic_fan_out_ids:
+        node = node_map[node_id]
         dsc = node.fan_out
         template_id = f"_sub_{node.id}"
 
-        # Gated parent: plain edge node → _eval_phase so the dynamic router
+        # Gated parent: plain edge node → _eval_node so the dynamic router
         # attaches to the eval node (and sees completed/retries/failed).
-        if node.id in gated_phase_ids:
+        if node.id in gated_node_ids:
             builder.add_edge(node.id, f"_eval_{node.id}")
             dynamic_source = f"_eval_{node.id}"
         else:
@@ -374,8 +374,8 @@ def build_workflow_graph(
     for node in config.nodes:
         if (
             node.id in terminal_ids
-            and node.id not in gated_phase_ids
-            and node.id not in dynamic_phase_ids
+            and node.id not in gated_node_ids
+            and node.id not in dynamic_fan_out_ids
         ):
             builder.add_edge(node.id, END)
 

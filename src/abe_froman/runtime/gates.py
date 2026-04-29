@@ -90,7 +90,7 @@ async def run_evaluation_script(
     validator_path: str,
     node_id: str,
     workdir: str,
-    phase_output: str = "",
+    node_output: str = "",
     workflow_name: str = "",
     attempt_number: int = 1,
     require_score: bool = True,
@@ -129,7 +129,7 @@ async def run_evaluation_script(
             cwd=workdir,
             env=env,
         )
-        stdout, stderr = await proc.communicate(input=phase_output.encode())
+        stdout, stderr = await proc.communicate(input=node_output.encode())
     except (FileNotFoundError, OSError) as e:
         return EvaluationResult(
             score=0.0,
@@ -152,7 +152,7 @@ async def run_evaluation_llm(
     evaluation: Evaluation,
     node_id: str,
     workdir: str,
-    phase_output: str,
+    node_output: str,
     backend: Any,
     default_model: str,
     attempt_number: int = 1,
@@ -177,7 +177,7 @@ async def run_evaluation_llm(
     rendered = render_template(
         template_text,
         {
-            "output": phase_output,
+            "output": node_output,
             "node_id": node_id,
             "attempt": attempt_number,
         },
@@ -198,7 +198,7 @@ async def run_evaluation(
     evaluation: Evaluation,
     node_id: str,
     workdir: str = ".",
-    phase_output: str = "",
+    node_output: str = "",
     workflow_name: str = "",
     attempt_number: int = 1,
     backend: Any = None,
@@ -215,7 +215,7 @@ async def run_evaluation(
 
     if suffix in (".py", ".js"):
         return await run_evaluation_script(
-            evaluation.validator, node_id, workdir, phase_output,
+            evaluation.validator, node_id, workdir, node_output,
             workflow_name=workflow_name, attempt_number=attempt_number,
             require_score=require_score,
         )
@@ -226,7 +226,7 @@ async def run_evaluation(
                 f"PromptBackend but none was provided"
             )
         return await run_evaluation_llm(
-            evaluation, node_id, workdir, phase_output,
+            evaluation, node_id, workdir, node_output,
             backend=backend, default_model=default_model,
             attempt_number=attempt_number, require_score=require_score,
         )
