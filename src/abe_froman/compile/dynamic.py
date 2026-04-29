@@ -224,13 +224,25 @@ def _make_final_fan_out_node(
     final_node,
     config: Graph,
     executor: NodeExecutor | None = None,
+    *,
+    is_first: bool = False,
 ):
     """Create a node function for a final node in a dynamic child group.
 
     Subphase aggregates reach the final node through `build_context`'s
-    suffix synthesis (same mechanism any non-final downstream uses), so
-    this factory is a thin wrapper that just renames the synthetic node
-    to stay out of the parent-id namespace.
+    suffix synthesis (same mechanism any non-final downstream uses).
+
+    The FIRST final node in the chain has an incoming static edge from
+    `_sub_<parent>`. With LangGraph's Send-dispatch semantics, that edge
+    fires once per Send branch — i.e. once per fan-out child. Without a
+    barrier, the first final would dispatch on the FIRST child's
+    completion, before sibling children land in `child_outputs`, so its
+    `{{<parent>_subphases}}` template var would render against an
+    incomplete state. The wrapper below short-circuits with `{}` until
+    all expected manifest items have completed.
+
+    Subsequent finals chain through the prior final and don't need the
+    barrier (their predecessor already ran with full state).
     """
     node_id = f"_final_{parent_node.id}_{final_node.id}"
 
@@ -247,4 +259,30 @@ def _make_final_fan_out_node(
 
     inner = _make_execution_node(synthetic, config, executor)
     inner.__name__ = f"final_{parent_node.id}_{final_node.id}"
-    return inner
+
+    if not is_first:
+        return inner
+
+    # First-final barrier: wait until every manifest item's child has
+    # landed in completed_nodes (or failed_nodes — failures count as
+    # "settled" so we don't wait forever on a hung child).
+    from abe_froman.compile.graph import _read_manifest
+
+    parent_id = parent_node.id
+
+    async def barrier(state: WorkflowState) -> dict[str, Any]:
+        if node_id in state.get("completed_nodes", []):
+            return {}
+        items = _read_manifest(state, parent_node)
+        if items:
+            settled = set(state.get("completed_nodes", [])) | set(state.get("failed_nodes", []))
+            done = sum(1 for it in items if f"{parent_id}::{it.get('id', 'unknown')}" in settled)
+            if done < len(items):
+                # Wait for more children to settle. LangGraph re-fires this
+                # node on every super-step until all sibling Send branches
+                # have completed.
+                return {}
+        return await inner(state)
+
+    barrier.__name__ = f"final_{parent_node.id}_{final_node.id}"
+    return barrier

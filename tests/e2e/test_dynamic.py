@@ -160,6 +160,58 @@ class TestFinalNodes:
         assert "_final_p_summary" in result["completed_nodes"]
 
     @pytest.mark.asyncio
+    async def test_final_node_sees_all_subphase_outputs(self, tmp_path):
+        """Regression: final node must see ALL children's outputs in
+        `{parent_subphases}`, not fire prematurely on first Send branch.
+
+        Bug: with 3 manifest items and a final whose prompt references
+        `{{parent_subphases}}`, the final was being dispatched as soon as
+        the first Send branch completed (because the static edge
+        `_sub_parent → _final_first` fires per-branch). The fix adds a
+        barrier in `_make_final_fan_out_node(..., is_first=True)` that
+        returns no-op until all manifest items appear in completed_nodes.
+        """
+        from mock_executor import MockExecutor
+        from abe_froman.runtime.result import ExecutionResult
+
+        manifest = [{"id": "a"}, {"id": "b"}, {"id": "c"}]
+        mock = MockExecutor(results={
+            "parent": ExecutionResult(
+                success=True, output=json.dumps({"items": manifest}),
+            ),
+            "parent::a": ExecutionResult(success=True, output="out-a"),
+            "parent::b": ExecutionResult(success=True, output="out-b"),
+            "parent::c": ExecutionResult(success=True, output="out-c"),
+            "_final_parent_summary": ExecutionResult(success=True, output="summary"),
+        })
+
+        (tmp_path / "template.md").write_text("sub {{id}}")
+        (tmp_path / "summary.md").write_text("aggregate {{parent_subphases}}")
+
+        finals = [{"id": "summary", "name": "Summary", "prompt_file": "summary.md"}]
+        config = make_config([dynamic_parent("parent", manifest, final_nodes=finals)])
+
+        graph = build_workflow_graph(config, mock)
+        result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
+
+        # All children + final completed.
+        for child_id in ("parent::a", "parent::b", "parent::c"):
+            assert child_id in result["completed_nodes"], (
+                f"missing child {child_id}; got {result['completed_nodes']}"
+            )
+        assert "_final_parent_summary" in result["completed_nodes"]
+
+        # Final node's context must include ALL three children's outputs.
+        ctx = mock.received_contexts["_final_parent_summary"]
+        assert "parent_subphases" in ctx
+        aggregate = json.loads(ctx["parent_subphases"])
+        assert aggregate == {
+            "parent::a": "out-a",
+            "parent::b": "out-b",
+            "parent::c": "out-c",
+        }, f"final ran with incomplete aggregate: {aggregate}"
+
+    @pytest.mark.asyncio
     async def test_chained_final_nodes(self, tmp_path):
         """Multiple final nodes execute sequentially."""
         (tmp_path / "template.md").write_text("Sub {{id}}")

@@ -254,11 +254,13 @@ def build_workflow_graph(
         node = node_map[node_id]
         builder.add_node(f"_sub_{node.id}", _make_fan_out_node(node, config, executor))
 
-        for final_node in node.fan_out.final_nodes:
+        for idx, final_node in enumerate(node.fan_out.final_nodes):
             fid = f"_final_{node.id}_{final_node.id}"
             final_node_ids[(node.id, final_node.id)] = fid
             builder.add_node(
-                fid, _make_final_fan_out_node(node, final_node, config, executor),
+                fid, _make_final_fan_out_node(
+                    node, final_node, config, executor, is_first=(idx == 0),
+                ),
             )
             if final_node.evaluation:
                 gated_final_ids.add(fid)
