@@ -3,7 +3,7 @@
 The assembled paper is:
 
 ```
-{{reconcile}}
+{{paper_reconcile}}
 ```
 
 Generate a manifest of **3 fake reviewers** with distinct personas. Each item must also carry a **shared 2-3 paragraph paper summary** so downstream per-reviewer children have enough context without re-reading the full paper.

@@ -142,13 +142,11 @@ class TestBuildContext:
 
     def test_subgraph_dotted_outputs_bound_as_flat_vars(self):
         """When a dep's `outputs:` projects values to `dep.key`, build_context
-        binds them under both `{dep}_{key}` and the bare `{key}` template var.
+        binds them under `{dep}_{key}` so templates can reach them without
+        dotted-attribute syntax (Jinja can't dot-into a string).
 
-        Stage 4c regression: reviewer_pool's prompt referenced {{reconcile}}
-        but reconcile was carved into a subgraph, so {{reconcile}} was
-        unbound. Parent now declares `outputs: { reconcile: "{{reconcile}}" }`
-        on the subgraph node and downstream sees both `{{paper_reconcile}}`
-        and `{{reconcile}}` bound to the same value.
+        Stage 4c: a parent declaring `outputs: { reconcile: "{{reconcile}}" }`
+        on the subgraph node lets a downstream node template `{{paper_reconcile}}`.
         """
         node = _phase(depends_on=["paper"])
         state = {
@@ -160,11 +158,13 @@ class TestBuildContext:
         ctx = build_context(node, state)
         assert ctx["paper"] == "terminal-out"
         assert ctx["paper_reconcile"] == "the-paper-text"
-        assert ctx["reconcile"] == "the-paper-text"
+        # Bare-key form is intentionally NOT bound — silent collision risk
+        # when two deps both project the same key. Use the dep-prefixed form.
+        assert "reconcile" not in ctx
 
-    def test_dotted_outputs_collision_first_dep_wins(self):
-        """Two deps both projecting `key` — collision-safe vars
-        (`{dep}_{key}`) keep both; the bare `{key}` binding is set-once."""
+    def test_dotted_outputs_no_bare_key_collision(self):
+        """Two deps each projecting the same suffix — both per-dep keys are
+        bound; the bare key is unbound (no silent collision)."""
         node = _phase(depends_on=["a", "b"])
         state = {
             "node_outputs": {
@@ -174,11 +174,10 @@ class TestBuildContext:
             },
         }
         ctx = build_context(node, state)
-        # Per-dep namespaces are clean.
         assert ctx["a_summary"] == "from-a"
         assert ctx["b_summary"] == "from-b"
-        # The bare `summary` key binds once (first-dep wins via setdefault).
-        assert ctx["summary"] in ("from-a", "from-b")
+        # No silent first-dep-wins binding for bare `summary`.
+        assert "summary" not in ctx
 
     def test_projects_subphase_aggregations(self):
         """Downstream context synthesizes `{dep}_subphases` + worktrees from state.
