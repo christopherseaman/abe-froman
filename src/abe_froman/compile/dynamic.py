@@ -260,26 +260,30 @@ def _make_final_fan_out_node(
     parent_id = parent_node.id
 
     async def barrier(state: WorkflowState) -> dict[str, Any]:
-        if node_id in state.get("completed_nodes", []):
-            return {}
+        # Defer (return {}) in any of three cases:
+        #   1. already done — LangGraph re-fires the node every super-step
+        #      until termination; without this skip, inner runs twice.
+        #   2. items known but not all settled — fan-out children still
+        #      in flight; wait for them.
+        #   3. items empty AND parent hasn't run yet — LangGraph fires
+        #      conditional edges pre-emptively (when an upstream-of-parent
+        #      completes), routing 'no_items' here before the parent's
+        #      prompt produces a manifest. Empty items here means "unknown",
+        #      not "zero children".
         completed = state.get("completed_nodes", [])
         failed = state.get("failed_nodes", [])
-        parent_settled = parent_id in completed or parent_id in failed
         items = _read_manifest(state, parent_node)
-        if items:
-            settled = set(completed) | set(failed)
-            done = sum(1 for it in items if f"{parent_id}::{it.get('id', 'unknown')}" in settled)
-            if done < len(items):
-                # Wait for more children to settle. LangGraph re-fires this
-                # node on every super-step until all sibling Send branches
-                # have completed.
-                return {}
-        elif not parent_settled:
-            # Parent hasn't even produced its manifest yet — defer. Without
-            # this guard, an isolated `_sub_<parent>` (Send-dispatched) that
-            # transitions via static edge can fire `_final_*` before the
-            # parent's prompt has run, so manifest reads empty and `inner`
-            # runs against undefined `{{<parent>_subphases}}`.
+        settled = set(completed) | set(failed)
+        children_pending = items and any(
+            f"{parent_id}::{it.get('id', 'unknown')}" not in settled for it in items
+        )
+        parent_unsettled = parent_id not in completed and parent_id not in failed
+        should_defer = (
+            node_id in completed
+            or children_pending
+            or (not items and parent_unsettled)
+        )
+        if should_defer:
             return {}
         return await inner(state)
 
