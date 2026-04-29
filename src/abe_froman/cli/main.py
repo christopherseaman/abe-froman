@@ -69,6 +69,44 @@ def validate(config_file: str):
 
 
 @cli.command()
+@click.argument("config_file", type=click.Path(exists=True))
+@click.option(
+    "--dry-run", is_flag=True,
+    help="Print rewritten YAML to stdout without writing the file.",
+)
+@click.option(
+    "--in-place", is_flag=True,
+    help="Rewrite the file on disk (default: print rewritten YAML to stdout).",
+)
+def migrate(config_file: str, dry_run: bool, in_place: bool):
+    """Migrate a pre-Stage-4 workflow YAML to the current schema.
+
+    Rewrites: phases → nodes, quality_gate → evaluation,
+    dynamic_subphases → fan_out (with template lift + final_phases
+    promoted to sibling nodes with depends_on).
+
+    Comments, anchors, and templated {{}} strings are preserved.
+    Idempotent: running on already-migrated YAML is a no-op.
+    """
+    from abe_froman.cli.migrate import migrate_file
+
+    path = Path(config_file)
+    rewritten, changes = migrate_file(path, in_place=in_place, dry_run=dry_run)
+
+    if not changes:
+        click.echo(f"No changes needed for {config_file}", err=True)
+        return
+
+    for c in changes:
+        click.echo(f"  - {c}", err=True)
+
+    if in_place and not dry_run:
+        click.echo(f"Wrote {len(changes)} changes to {config_file}", err=True)
+    else:
+        click.echo(rewritten, nl=False)
+
+
+@cli.command()
 @click.argument("config_file", type=click.Path())
 def graph(config_file: str):
     """Render the compiled LangGraph as a Mermaid diagram."""

@@ -10,6 +10,7 @@ dependencies = [
     "langgraph>=1.0",
     "jinja2>=3.0",
     "langgraph-checkpoint-sqlite>=3.0.3",
+    "ruamel.yaml>=0.17",
 ]
 
 [project.scripts]
