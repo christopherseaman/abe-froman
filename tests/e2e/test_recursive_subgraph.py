@@ -500,14 +500,9 @@ def test_fan_out_subgraph_cycle_detected_at_compile_time(tmp_path):
 
 @pytest.mark.asyncio
 async def test_absurd_paper_carve_compiles_with_subgraph(tmp_path):
-    """examples/absurd-paper/workflow.yaml exercises BOTH Stage 4c carves:
-
-    1. `paper` is a top-level subgraph reference (Node.config:) — multi-step
-       composition (reconcile + persist + structural check).
-    2. `reviewer_pool`'s fan-out template uses template.config: — each Send
-       branch invokes a 2-node subgraph (draft + self-critique).
-
-    Asserts both carves are wired correctly and the workflow compiles.
+    """examples/absurd-paper/workflow.yaml uses config: + inputs: for the
+    `paper` node. Asserts the carved workflow compiles, the `paper` node
+    is present, and its config: reference resolves to the subgraph file.
     """
     repo_root = Path(__file__).resolve().parents[2]
     raw = yaml.safe_load(
@@ -515,32 +510,21 @@ async def test_absurd_paper_carve_compiles_with_subgraph(tmp_path):
     )
     config = Graph(**raw)
 
-    # 1. Top-level subgraph carve: `paper` uses config: + inputs:
+    # The carved `paper` node uses config: with inputs: projection.
     paper = next(n for n in config.nodes if n.id == "paper")
     assert paper.config == "examples/absurd-paper/subgraphs/compose_and_validate.yaml"
+    # Five upstream sections project into the subgraph context.
     assert set(paper.inputs.keys()) == {
         "abstract", "intro", "methods", "results", "discussion"
     }
-
-    # 2. Per-child subgraph carve: reviewer_pool's fan-out template uses config:
-    reviewer_pool = next(n for n in config.nodes if n.id == "reviewer_pool")
-    assert reviewer_pool.fan_out is not None
-    assert reviewer_pool.fan_out.template.prompt_file is None
-    assert reviewer_pool.fan_out.template.config == (
-        "examples/absurd-paper/subgraphs/single_review.yaml"
-    )
-    # Manifest item fields project through inputs: into the subgraph.
-    expected_inputs = {
-        "reviewer_id", "name", "affiliation", "style", "focus", "paper_summary",
-    }
-    assert set(reviewer_pool.fan_out.template.inputs.keys()) == expected_inputs
-
-    # Downstream nodes wire to the new `paper` parent.
+    # publish_verdict was lifted (still a final_node under reviewer_pool).
+    # Downstream nodes wire to the new `paper` parent, not the old chain.
     render_pdf = next(n for n in config.nodes if n.id == "render_pdf")
+    reviewer_pool = next(n for n in config.nodes if n.id == "reviewer_pool")
     assert render_pdf.depends_on == ["paper"]
     assert reviewer_pool.depends_on == ["paper", "render_pdf"]
 
-    # Compile against the example dir as base (so config-refs resolve).
+    # Compile against the example dir as base (so config-ref resolves).
     executor = DispatchExecutor(workdir=str(repo_root))
     graph = build_workflow_graph(
         config, executor, _base_dir=repo_root,

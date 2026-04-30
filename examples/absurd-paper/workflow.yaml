@@ -110,12 +110,6 @@ nodes:
       base_directory: "output"
       required_files: ["paper.pdf"]
 
-  # Stage 4c per-child subgraph fan-out: each Send branch (one per
-  # reviewer in the manifest) invokes single_review.yaml in isolation.
-  # That subgraph is a 2-node draft → self-critique pipeline; the
-  # critique node's output becomes each reviewer's final review.
-  # template.inputs: projects manifest item fields into the subgraph's
-  # node_inputs channel (visible as plain template vars there).
   - id: reviewer_pool
     name: "Reviewer Pool Manifest"
     prompt_file: "examples/absurd-paper/prompts/reviewer_pool.md"
@@ -123,14 +117,7 @@ nodes:
     fan_out:
       enabled: true
       template:
-        config: "examples/absurd-paper/subgraphs/single_review.yaml"
-        inputs:
-          reviewer_id: "{{id}}"
-          name: "{{name}}"
-          affiliation: "{{affiliation}}"
-          style: "{{style}}"
-          focus: "{{focus}}"
-          paper_summary: "{{paper_summary}}"
+        prompt_file: "examples/absurd-paper/prompts/reviewer_review.md"
         evaluation:
           validator: "examples/absurd-paper/gates/review_quality.py"
           threshold: 1.0
