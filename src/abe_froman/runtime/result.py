@@ -1,7 +1,7 @@
 """Execution result type and executor protocols.
 
 ExecutionResult is the single result type for backends, executors, and
-subprocesses. PhaseExecutor and PromptBackend are the two duck-typed
+subprocesses. NodeExecutor and PromptBackend are the two duck-typed
 protocols that produce them.
 """
 
@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
-from abe_froman.schema.models import Phase
+from abe_froman.schema.models import Node
 
 
 @dataclass
@@ -19,7 +19,6 @@ class ExecutionResult:
     output: str = ""
     error: str | None = None
     structured_output: dict[str, Any] | None = None
-    tokens_used: dict[str, int] | None = None
 
 
 class OverloadError(Exception):
@@ -29,9 +28,9 @@ class OverloadError(Exception):
 
 
 @runtime_checkable
-class PhaseExecutor(Protocol):
+class NodeExecutor(Protocol):
     async def execute(
-        self, phase: Phase, context: dict[str, Any], workdir: str | None = None
+        self, node: Node, context: dict[str, Any], workdir: str | None = None
     ) -> ExecutionResult: ...
 
 

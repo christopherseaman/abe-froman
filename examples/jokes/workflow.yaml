@@ -1,11 +1,11 @@
 name: "Joke Generator"
 version: "0.1.0"
 
-phases:
+nodes:
   - id: generate
     name: "Generate Jokes"
     prompt_file: "examples/jokes/generate.md"
-    quality_gate:
+    evaluation:
       validator: "examples/jokes/gates/validate_jokes.py"
       threshold: 1.0
       blocking: true

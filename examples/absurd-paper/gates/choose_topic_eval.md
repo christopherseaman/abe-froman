@@ -2,7 +2,7 @@
 
 You are the editorial quality gate for topic selection at the *Journal of Absurd Applied Studies*. Evaluate the chosen topic below for fitness to the journal's deadpan-absurd brief.
 
-**Phase output (JSON):**
+**Node output (JSON):**
 
 ```
 {{output}}
@@ -26,4 +26,4 @@ Return ONLY this JSON — no prose, no code fences, no markdown:
 
 Each dimension MUST be a **top-level numeric field** (not nested inside `"scores"`). The orchestrator derives the overall gate score from the per-dimension minimums declared in the workflow; do NOT emit a `"score"` field.
 
-(Phase id: `{{phase_id}}`, attempt: `{{attempt}}`.)
+(Node id: `{{node_id}}`, attempt: `{{attempt}}`.)

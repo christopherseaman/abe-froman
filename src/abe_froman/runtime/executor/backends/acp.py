@@ -22,12 +22,10 @@ def _is_overload_error(exc: Exception) -> bool:
 
 
 class _ACPCallbacks(Client):
-    """ACP Client that collects text chunks and token usage inline."""
+    """ACP Client that collects text chunks inline."""
 
     def __init__(self) -> None:
         self.chunks: list[str] = []
-        self.input_tokens: int = 0
-        self.output_tokens: int = 0
 
     async def request_permission(
         self, options: Any, session_id: str, tool_call: Any, **kwargs: Any
@@ -47,26 +45,12 @@ class _ACPCallbacks(Client):
         if isinstance(update, AgentMessageChunk):
             if isinstance(update.content, TextContentBlock):
                 self.chunks.append(update.content.text)
-            usage = getattr(update, "usage", None)
-            if usage is not None:
-                inp = getattr(usage, "input_tokens", 0) or 0
-                out = getattr(usage, "output_tokens", 0) or 0
-                if inp or out:
-                    self.input_tokens += inp
-                    self.output_tokens += out
 
     def reset(self) -> None:
         self.chunks.clear()
-        self.input_tokens = 0
-        self.output_tokens = 0
 
     def text(self) -> str:
         return "".join(self.chunks)
-
-    def tokens_used(self) -> dict[str, int] | None:
-        if self.input_tokens or self.output_tokens:
-            return {"input": self.input_tokens, "output": self.output_tokens}
-        return None
 
 
 class ACPBackend:
@@ -129,10 +113,7 @@ class ACPBackend:
                     raise OverloadError(str(e)) from e
                 raise
 
-            return ExecutionResult(
-                output=self._callbacks.text(),
-                tokens_used=self._callbacks.tokens_used(),
-            )
+            return ExecutionResult(output=self._callbacks.text())
 
     async def close(self) -> None:
         if self._ctx_manager is None:

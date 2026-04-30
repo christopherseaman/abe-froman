@@ -11,7 +11,7 @@ from abe_froman.runtime.executor.prompt import (
 from abe_froman.runtime.result import PromptBackend
 from abe_froman.runtime.result import ExecutionResult
 from abe_froman.runtime.executor.backends.stub import StubBackend
-from abe_froman.schema.models import Phase, Settings
+from abe_froman.schema.models import Node, Settings
 
 
 # ---------------------------------------------------------------------------
@@ -57,13 +57,13 @@ class TestRenderTemplate:
         assert result == "{{y}}"
 
     def test_hyphenated_phase_id_errors(self):
-        """Jinja2 parses {{research-phase}} as subtraction (research minus phase).
+        """Jinja2 parses {{research-node}} as subtraction (research minus node).
         This is a known limitation — prompt templates must use underscores for
-        phase IDs that need substitution. Documented in CLAUDE.md."""
+        node IDs that need substitution. Documented in CLAUDE.md."""
         from jinja2 import UndefinedError
 
         with pytest.raises((UndefinedError, TypeError)):
-            render_template("{{research-phase}}", {})
+            render_template("{{research-node}}", {})
 
 
 # ---------------------------------------------------------------------------
@@ -73,14 +73,14 @@ class TestRenderTemplate:
 
 class TestResolveModel:
     def test_phase_model_takes_priority(self):
-        phase = Phase(id="p1", name="P1", model="opus", prompt_file="t.md")
+        node = Node(id="p1", name="P1", model="opus", prompt_file="t.md")
         settings = Settings(default_model="sonnet")
-        assert resolve_model(phase, settings) == "opus"
+        assert resolve_model(node, settings) == "opus"
 
     def test_falls_back_to_settings_default(self):
-        phase = Phase(id="p1", name="P1", prompt_file="t.md")
+        node = Node(id="p1", name="P1", prompt_file="t.md")
         settings = Settings(default_model="sonnet")
-        assert resolve_model(phase, settings) == "sonnet"
+        assert resolve_model(node, settings) == "sonnet"
 
 
 # ---------------------------------------------------------------------------
@@ -95,11 +95,9 @@ class MemoryBackend:
         self,
         response: str = "backend-output",
         structured: dict | None = None,
-        tokens: dict[str, int] | None = None,
     ):
         self._response = response
         self._structured = structured
-        self._tokens = tokens
         self.calls: list[tuple[str, str, str, float | None]] = []
 
     async def send_prompt(
@@ -110,7 +108,6 @@ class MemoryBackend:
         return ExecutionResult(
             output=self._response,
             structured_output=self._structured,
-            tokens_used=self._tokens,
         )
 
     async def close(self) -> None:
@@ -147,8 +144,8 @@ class TestPromptExecutor:
             settings=Settings(default_model="sonnet"),
             workdir=str(tmp_path),
         )
-        phase = Phase(id="p1", name="P1", prompt_file="test.md")
-        result = await executor.execute(phase, {"name": "world"})
+        node = Node(id="p1", name="P1", prompt_file="test.md")
+        result = await executor.execute(node, {"name": "world"})
 
         assert result.success is True
         assert result.output == "backend-output"
@@ -172,8 +169,8 @@ class TestPromptExecutor:
             settings=Settings(default_model="sonnet"),
             workdir=str(base),
         )
-        phase = Phase(id="p", name="P", prompt_file="p.md")
-        result = await executor.execute(phase, {}, workdir=str(override))
+        node = Node(id="p", name="P", prompt_file="p.md")
+        result = await executor.execute(node, {}, workdir=str(override))
 
         assert result.success is True
         assert len(backend.calls) == 1
@@ -189,20 +186,20 @@ class TestPromptExecutor:
             backend=backend, settings=Settings(default_model="sonnet"),
             workdir=str(tmp_path),
         )
-        phase = Phase(id="p", name="P", prompt_file="p.md")
-        await executor.execute(phase, {}, workdir=None)
+        node = Node(id="p", name="P", prompt_file="p.md")
+        await executor.execute(node, {}, workdir=None)
         assert backend.calls[0][2] == str(tmp_path)
 
     @pytest.mark.asyncio
     async def test_preamble_still_resolved_from_base_workdir(self, tmp_path):
-        """Preamble lives with the config; a per-phase worktree override must
+        """Preamble lives with the config; a per-node worktree override must
         NOT relocate preamble resolution."""
         base = tmp_path / "base"
         base.mkdir()
         override = tmp_path / "override"
         override.mkdir()
         (base / "preamble.md").write_text("SHARED PREAMBLE")
-        (override / "p.md").write_text("phase prompt")
+        (override / "p.md").write_text("node prompt")
 
         backend = MemoryBackend()
         executor = PromptExecutor(
@@ -210,11 +207,11 @@ class TestPromptExecutor:
             settings=Settings(default_model="sonnet", preamble_file="preamble.md"),
             workdir=str(base),
         )
-        phase = Phase(id="p", name="P", prompt_file="p.md")
-        result = await executor.execute(phase, {}, workdir=str(override))
+        node = Node(id="p", name="P", prompt_file="p.md")
+        result = await executor.execute(node, {}, workdir=str(override))
         assert result.success is True
         assert backend.calls[0][0].startswith("SHARED PREAMBLE")
-        assert "phase prompt" in backend.calls[0][0]
+        assert "node prompt" in backend.calls[0][0]
 
     @pytest.mark.asyncio
     async def test_missing_prompt_file_returns_error(self, tmp_path):
@@ -224,8 +221,8 @@ class TestPromptExecutor:
             settings=Settings(),
             workdir=str(tmp_path),
         )
-        phase = Phase(id="p1", name="P1", prompt_file="missing.md")
-        result = await executor.execute(phase, {})
+        node = Node(id="p1", name="P1", prompt_file="missing.md")
+        result = await executor.execute(node, {})
 
         assert result.success is False
         assert "not found" in result.error
@@ -241,14 +238,14 @@ class TestPromptExecutor:
             settings=Settings(default_model="sonnet"),
             workdir=str(tmp_path),
         )
-        phase = Phase(id="p1", name="P1", model="opus", prompt_file="t.md")
-        await executor.execute(phase, {})
+        node = Node(id="p1", name="P1", model="opus", prompt_file="t.md")
+        await executor.execute(node, {})
 
         assert backend.calls[0][1] == "opus"
 
     @pytest.mark.asyncio
     async def test_phase_timeout_threaded_to_backend(self, tmp_path):
-        """Per-phase timeout flows through effective_timeout → send_prompt."""
+        """Per-node timeout flows through effective_timeout → send_prompt."""
         (tmp_path / "t.md").write_text("prompt")
         backend = MemoryBackend()
         executor = PromptExecutor(
@@ -256,13 +253,13 @@ class TestPromptExecutor:
             settings=Settings(default_timeout=60.0),
             workdir=str(tmp_path),
         )
-        phase = Phase(id="p1", name="P1", prompt_file="t.md", timeout=15.5)
-        await executor.execute(phase, {})
+        node = Node(id="p1", name="P1", prompt_file="t.md", timeout=15.5)
+        await executor.execute(node, {})
         assert backend.calls[0][3] == 15.5
 
     @pytest.mark.asyncio
     async def test_settings_default_timeout_threaded_to_backend(self, tmp_path):
-        """Phase without timeout override falls back to settings default."""
+        """Node without timeout override falls back to settings default."""
         (tmp_path / "t.md").write_text("prompt")
         backend = MemoryBackend()
         executor = PromptExecutor(
@@ -270,20 +267,20 @@ class TestPromptExecutor:
             settings=Settings(default_timeout=90.0),
             workdir=str(tmp_path),
         )
-        phase = Phase(id="p1", name="P1", prompt_file="t.md")
-        await executor.execute(phase, {})
+        node = Node(id="p1", name="P1", prompt_file="t.md")
+        await executor.execute(node, {})
         assert backend.calls[0][3] == 90.0
 
     @pytest.mark.asyncio
     async def test_no_timeout_configured_passes_none(self, tmp_path):
-        """Neither phase nor settings set → backend sees timeout=None."""
+        """Neither node nor settings set → backend sees timeout=None."""
         (tmp_path / "t.md").write_text("prompt")
         backend = MemoryBackend()
         executor = PromptExecutor(
             backend=backend, settings=Settings(), workdir=str(tmp_path),
         )
-        phase = Phase(id="p1", name="P1", prompt_file="t.md")
-        await executor.execute(phase, {})
+        node = Node(id="p1", name="P1", prompt_file="t.md")
+        await executor.execute(node, {})
         assert backend.calls[0][3] is None
 
     @pytest.mark.asyncio
@@ -296,8 +293,8 @@ class TestPromptExecutor:
             settings=Settings(),
             workdir=str(tmp_path),
         )
-        phase = Phase(id="p1", name="P1", prompt_file="t.md")
-        result = await executor.execute(phase, {})
+        node = Node(id="p1", name="P1", prompt_file="t.md")
+        result = await executor.execute(node, {})
 
         assert result.success is False
         assert "connection failed" in result.error
@@ -313,57 +310,20 @@ class TestPromptExecutor:
             settings=Settings(),
             workdir=str(tmp_path),
         )
-        phase = Phase(id="p1", name="P1", prompt_file="t.md")
-        result = await executor.execute(phase, {})
+        node = Node(id="p1", name="P1", prompt_file="t.md")
+        result = await executor.execute(node, {})
 
         assert result.structured_output == {"key": "value"}
-
-    @pytest.mark.asyncio
-    async def test_tokens_used_threaded_to_phase_result(self, tmp_path):
-        prompt_file = tmp_path / "t.md"
-        prompt_file.write_text("prompt")
-
-        backend = MemoryBackend(
-            response="output",
-            tokens={"input": 500, "output": 120},
-        )
-        executor = PromptExecutor(
-            backend=backend,
-            settings=Settings(),
-            workdir=str(tmp_path),
-        )
-        phase = Phase(id="p1", name="P1", prompt_file="t.md")
-        result = await executor.execute(phase, {})
-
-        assert result.success is True
-        assert result.tokens_used == {"input": 500, "output": 120}
-
-    @pytest.mark.asyncio
-    async def test_tokens_used_none_when_backend_returns_none(self, tmp_path):
-        prompt_file = tmp_path / "t.md"
-        prompt_file.write_text("prompt")
-
-        backend = MemoryBackend(response="output")
-        executor = PromptExecutor(
-            backend=backend,
-            settings=Settings(),
-            workdir=str(tmp_path),
-        )
-        phase = Phase(id="p1", name="P1", prompt_file="t.md")
-        result = await executor.execute(phase, {})
-
-        assert result.success is True
-        assert result.tokens_used is None
 
     @pytest.mark.asyncio
     async def test_wrong_execution_type_returns_error(self):
         backend = MemoryBackend()
         executor = PromptExecutor(backend=backend, settings=Settings())
-        phase = Phase(
+        node = Node(
             id="p1", name="P1",
             execution={"type": "command", "command": "echo"},
         )
-        result = await executor.execute(phase, {})
+        result = await executor.execute(node, {})
 
         assert result.success is False
         assert "CommandExecution" in result.error
@@ -440,8 +400,8 @@ class TestPreambleInjection:
             settings=Settings(preamble_file="preamble.md"),
             workdir=str(tmp_path),
         )
-        phase = Phase(id="p1", name="P1", prompt_file="prompt.md")
-        result = await executor.execute(phase, {})
+        node = Node(id="p1", name="P1", prompt_file="prompt.md")
+        result = await executor.execute(node, {})
 
         assert result.success is True
         assert backend.calls[0][0] == "SHARED CONTEXT\n\nDo the thing"
@@ -457,8 +417,8 @@ class TestPreambleInjection:
             settings=Settings(preamble_file="preamble.md"),
             workdir=str(tmp_path),
         )
-        phase = Phase(id="p1", name="P1", prompt_file="prompt.md")
-        result = await executor.execute(phase, {"dep": "injected"})
+        node = Node(id="p1", name="P1", prompt_file="prompt.md")
+        result = await executor.execute(node, {"dep": "injected"})
 
         assert result.success is True
         assert backend.calls[0][0] == "Preamble text\n\nUse injected here"
@@ -473,8 +433,8 @@ class TestPreambleInjection:
             settings=Settings(preamble_file="missing_preamble.md"),
             workdir=str(tmp_path),
         )
-        phase = Phase(id="p1", name="P1", prompt_file="prompt.md")
-        result = await executor.execute(phase, {})
+        node = Node(id="p1", name="P1", prompt_file="prompt.md")
+        result = await executor.execute(node, {})
 
         assert result.success is False
         assert "Preamble file not found" in result.error
@@ -489,19 +449,19 @@ class TestPreambleInjection:
             settings=Settings(),
             workdir=str(tmp_path),
         )
-        phase = Phase(id="p1", name="P1", prompt_file="prompt.md")
-        result = await executor.execute(phase, {})
+        node = Node(id="p1", name="P1", prompt_file="prompt.md")
+        result = await executor.execute(node, {})
 
         assert result.success is True
         assert backend.calls[0][0] == "Just the prompt"
 
     def test_preamble_in_config_yaml(self):
-        from abe_froman.schema.models import WorkflowConfig
+        from abe_froman.schema.models import Graph
 
-        config = WorkflowConfig(
+        config = Graph(
             name="test",
             version="1.0",
-            phases=[Phase(id="p1", name="P1", prompt_file="t.md")],
+            nodes=[Node(id="p1", name="P1", prompt_file="t.md")],
             settings=Settings(preamble_file="preamble.md"),
         )
         assert config.settings.preamble_file == "preamble.md"

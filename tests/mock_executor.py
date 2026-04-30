@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from abe_froman.runtime.result import ExecutionResult
-from abe_froman.schema.models import Phase
+from abe_froman.schema.models import Node
 
 
 class MockExecutor:
@@ -15,14 +15,14 @@ class MockExecutor:
         self.execution_order: list[str] = []
         self.received_contexts: dict[str, dict[str, Any]] = {}
 
-    async def execute(self, phase: Phase, context: dict[str, Any]) -> ExecutionResult:
-        self.execution_order.append(phase.id)
-        self.received_contexts[phase.id] = context
+    async def execute(self, node: Node, context: dict[str, Any]) -> ExecutionResult:
+        self.execution_order.append(node.id)
+        self.received_contexts[node.id] = context
 
-        if phase.id in self._results:
-            return self._results[phase.id]
+        if node.id in self._results:
+            return self._results[node.id]
 
         return ExecutionResult(
             success=True,
-            output=f"[mock] {phase.id} completed",
+            output=f"[mock] {node.id} completed",
         )

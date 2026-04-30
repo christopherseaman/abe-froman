@@ -1,20 +1,20 @@
 """Shared test utilities — imported by test modules, not conftest.py."""
 
-from abe_froman.schema.models import WorkflowConfig
+from abe_froman.schema.models import Graph
 
 
-def make_config(phases, **settings_kwargs) -> WorkflowConfig:
-    """Build a WorkflowConfig from a phase list and optional settings."""
-    return WorkflowConfig(
+def make_config(nodes, **settings_kwargs) -> Graph:
+    """Build a Graph from a node list and optional settings."""
+    return Graph(
         name="Test",
         version="1.0.0",
-        phases=phases,
+        nodes=nodes,
         settings=settings_kwargs,
     )
 
 
 def cmd_phase(id, name="", output="ok", depends_on=None, **kwargs):
-    """Shorthand for a command phase that echoes a known string."""
+    """Shorthand for a command node that echoes a known string."""
     return {
         "id": id,
         "name": name or id,
@@ -25,7 +25,7 @@ def cmd_phase(id, name="", output="ok", depends_on=None, **kwargs):
 
 
 def fail_phase(id, name="", depends_on=None, **kwargs):
-    """Shorthand for a command phase that always fails."""
+    """Shorthand for a command node that always fails."""
     return {
         "id": id,
         "name": name or id,

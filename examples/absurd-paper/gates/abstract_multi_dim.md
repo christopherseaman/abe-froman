@@ -6,13 +6,13 @@ You are a strict quality gate for a satirical-academic abstract. Score the abstr
 
 **buzzwords** — Does it emit a coherent list of 4-6 domain-specific terms/acronyms the rest of the paper can reuse? 0.0 = missing, empty, or mismatched to the domain; 1.0 = strong set of 4-6 terms that feel invented-but-plausible.
 
-## Abstract under review (phase output, including its JSON envelope)
+## Abstract under review (node output, including its JSON envelope)
 
 ```
 {{output}}
 ```
 
-(Phase id: `{{phase_id}}`, attempt: `{{attempt}}`.)
+(Node id: `{{node_id}}`, attempt: `{{attempt}}`.)
 
 ## Your response
 

@@ -26,13 +26,14 @@ YAML Config → Pydantic Schema → LangGraph StateGraph (+ SqliteSaver checkpoi
 
 ```bash
 uv sync                                    # install deps
-uv run pytest tests/ -v                    # run all tests (~335 tests)
+uv run pytest tests/ -v                    # run all tests (~515 tests)
 uv run abe-froman validate config.yaml     # validate a workflow config
 uv run abe-froman run config.yaml --dry-run # dry run
 uv run abe-froman run config.yaml -e acp   # run with Claude via ACP
 uv run abe-froman run config.yaml --resume        # resume from last checkpoint
 uv run abe-froman run config.yaml --log out.jsonl  # run with JSONL event log
 uv run abe-froman graph config.yaml        # emit Mermaid graph (LangGraph draw_mermaid)
+uv run abe-froman migrate old.yaml --in-place  # rewrite pre-Stage-4 YAML to current schema
 ```
 
 ## Workflow Schema
@@ -41,15 +42,15 @@ uv run abe-froman graph config.yaml        # emit Mermaid graph (LangGraph draw_
 name: "Workflow Name"         # required
 version: "1.0.0"             # required
 
-phases:                       # required, list of phases
-  - id: my-phase              # required, unique identifier
+nodes:                        # required, list of nodes (Stage 4: phases→nodes)
+  - id: my-node               # required, unique identifier
     name: "Human Name"        # required
     description: "..."        # optional
     model: "opus"             # optional, overrides settings.default_model
-    depends_on: ["other-id"]  # optional, list of phase IDs this depends on
+    depends_on: ["other-id"]  # optional, list of node IDs this depends on
     timeout: 30.0             # optional, seconds, overrides settings.default_timeout
 
-    # Execution — pick ONE approach:
+    # Execution — pick ONE approach (mutually exclusive with `config:`):
     prompt_file: "path/to/prompt.md"   # shorthand for type: prompt
     # OR
     execution:
@@ -62,12 +63,19 @@ phases:                       # required, list of phases
       args: ["hello"]                  # optional, default []
     # OR
     execution:
-      type: gate_only                  # no execution, just gate evaluation
+      type: gate_only                  # no execution, just evaluation
+    # OR
+    execution:
+      type: join                       # no-op topology marker for fan-in
+    # OR
+    config: "subgraphs/sub.yaml"       # subgraph reference — see "Recursive subgraphs"
+    inputs: { var: "{{parent_dep}}" }  # parent → subgraph context projection
+    outputs: { key: "{{sub_node}}" }   # subgraph terminal → parent state
 
-    # Quality gate — optional
-    quality_gate:
+    # Evaluation — optional (renamed from quality_gate in Stage 4a)
+    evaluation:
       validator: "gates/check.py"     # .py, .js, or .md (LLM gate)
-      threshold: 0.8                  # 0.0–1.0, gate passes when score >= threshold
+      threshold: 0.8                  # 0.0–1.0, evaluation passes when score >= threshold
       blocking: false                 # true = failure stops workflow, false = warn and continue
       max_retries: 3                  # optional, overrides settings.max_retries
       model: "opus"                   # optional, only used by .md LLM gates
@@ -77,14 +85,14 @@ phases:                       # required, list of phases
       base_directory: "output/dir"
       required_files: ["file1.md"]
 
-    # Dynamic subphases — optional
-    dynamic_subphases:
+    # Fan-out — optional (renamed from dynamic_subphases in Stage 4a)
+    fan_out:
       enabled: true
       manifest_path: "manifest.json"
       template:
         prompt_file: "template.md"
-        quality_gate: { ... }
-      final_phases: [{ id, name, prompt_file, ... }]
+        evaluation: { ... }
+      final_nodes: [{ id, name, prompt_file, ... }]
 
 settings:                      # optional, all fields have defaults
   output_directory: "output"   # default: "output"
@@ -92,9 +100,10 @@ settings:                      # optional, all fields have defaults
   default_model: "sonnet"      # default: "sonnet"
   executor: "stub"             # default: "stub", options: "stub", "acp"
   default_timeout: 300         # optional, seconds, None = no timeout
-  preamble_file: "preamble.md" # optional, prepended to all prompt phases
+  preamble_file: "preamble.md" # optional, prepended to all prompt nodes
   retry_backoff: [10, 30, 60]  # optional, delay seconds per retry attempt
   max_parallel_jobs: 4         # foreman global concurrency cap (default: 4)
+  max_subgraph_depth: 10       # cap on recursive subgraph nesting (default: 10)
   per_model_limits:            # foreman per-model concurrency caps (default: {})
     opus: 2
     sonnet: 4
@@ -106,7 +115,34 @@ settings:                      # optional, all fields have defaults
 |------|-------------|---------|
 | `prompt` | Sends rendered prompt to Claude via PromptBackend | AI-generated content |
 | `command` | Runs subprocess, captures stdout | Scripts, validators, data processing |
-| `gate_only` | No execution, just quality gate | Validation checkpoints |
+| `gate_only` | No execution, just evaluation | Validation checkpoints |
+| `join` | No-op topology marker (Stage 4b) | Explicit fan-in synchronization |
+| (config:) | Recursively compile referenced graph | Subgraph composition (Stage 4c) |
+
+### Recursive subgraphs (Stage 4c)
+
+A node with `config: path/to/another.yaml` is a subgraph reference. The
+referenced YAML is loaded as a `Graph` (identical schema to the top-level
+workflow) and recursively compiled. Graphs and subgraphs are
+definitionally identical — the same YAML file is runnable both
+standalone via `abe-froman run <file>` and as a subgraph reference from
+another graph.
+
+State projection across the boundary is explicit:
+
+- `inputs:` renders parent context into the subgraph's `node_inputs`
+  channel. Subgraph nodes see them as plain template variables (e.g.
+  `{{topic}}`) alongside their own dep outputs.
+- `outputs:` exposes named subgraph node outputs as
+  `node_outputs[parent_id.key]` in the parent. Default (empty
+  `outputs:`) projects the subgraph's terminal-node output as
+  `node_outputs[parent_id]`.
+
+The subgraph runs in isolation — it never sees the parent's full state,
+only what `inputs:` projects in. Failed nodes inside a subgraph surface
+as `failed_nodes[parent_id]` in the parent; subgraph internals are not
+flattened. Compile-time guards: cycle detection over the
+config-reference DAG, and `settings.max_subgraph_depth` (default 10).
 
 ### Prompt templating
 
@@ -249,9 +285,8 @@ Prioritized features for future development. See `docs/backlog-adapter-inspirati
 ### P3 — Nice to have
 
 9. ~~**Stepped retry backoff**~~ — **DONE**. `settings.retry_backoff` list of delay values in seconds. Applied via `asyncio.sleep()` before retry execution in `_make_phase_node`. Clamps to last value for attempts beyond list length. Empty list (default) = no delay.
-10. ~~**Token usage tracking**~~ — **DONE**. Per-phase token counts (`input`/`output`) flow from `PromptBackendResult` → `PhaseResult` → `WorkflowState.token_usage`. CLI prints totals after run. JSONL `phase_completed` events include `tokens` field. ACP backend captures usage if exposed; stub/command phases return `None` gracefully.
-11. Execution mode fallback chain (ACP → direct API on failure)
-12. Post-workflow cleanup (remove intermediate artifacts on success)
+10. Execution mode fallback chain (ACP → direct API on failure)
+11. Post-workflow cleanup (remove intermediate artifacts on success)
 13. ~~**Extended env var injection into validators**~~ — **DONE**. Gate validator scripts receive `PHASE_ID`, `WORKFLOW_NAME`, `ATTEMPT_NUMBER`, and `WORKDIR` as environment variables.
 14. Git integration for outputs (auto-push to branch on completion)
 15. Health check endpoint (for container orchestration)

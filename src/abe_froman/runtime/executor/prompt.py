@@ -6,7 +6,7 @@ from typing import Any
 from jinja2 import Template
 
 from abe_froman.runtime.result import ExecutionResult, OverloadError, PromptBackend
-from abe_froman.schema.models import Phase, PromptExecution, Settings
+from abe_froman.schema.models import Node, PromptExecution, Settings
 
 
 def downgrade_model(current: str, chain: list[str]) -> str | None:
@@ -23,8 +23,8 @@ def render_template(template: str, context: dict[str, Any]) -> str:
     return Template(template, keep_trailing_newline=True).render(**context)
 
 
-def resolve_model(phase: Phase, settings: Settings) -> str:
-    return phase.model or settings.default_model
+def resolve_model(node: Node, settings: Settings) -> str:
+    return node.model or settings.default_model
 
 
 class PromptExecutor:
@@ -36,16 +36,16 @@ class PromptExecutor:
         self._workdir = workdir
 
     async def execute(
-        self, phase: Phase, context: dict[str, Any], workdir: str | None = None
+        self, node: Node, context: dict[str, Any], workdir: str | None = None
     ) -> ExecutionResult:
-        if not isinstance(phase.execution, PromptExecution):
+        if not isinstance(node.execution, PromptExecution):
             return ExecutionResult(
                 success=False,
-                error=f"PromptExecutor requires PromptExecution, got {type(phase.execution).__name__}",
+                error=f"PromptExecutor requires PromptExecution, got {type(node.execution).__name__}",
             )
 
         effective_workdir = workdir or self._workdir
-        prompt_path = Path(effective_workdir) / phase.execution.prompt_file
+        prompt_path = Path(effective_workdir) / node.execution.prompt_file
         try:
             template = prompt_path.read_text()
         except FileNotFoundError:
@@ -55,7 +55,7 @@ class PromptExecutor:
             )
 
         if self._settings.preamble_file:
-            # Preamble lives with the config, not in a per-phase worktree —
+            # Preamble lives with the config, not in a per-node worktree —
             # always resolve from the base workdir.
             preamble_path = Path(self._workdir) / self._settings.preamble_file
             try:
@@ -68,8 +68,8 @@ class PromptExecutor:
                 )
 
         rendered = render_template(template, context)
-        current_model = resolve_model(phase, self._settings)
-        timeout = phase.effective_timeout(self._settings)
+        current_model = resolve_model(node, self._settings)
+        timeout = node.effective_timeout(self._settings)
 
         try:
             while True:
@@ -96,7 +96,6 @@ class PromptExecutor:
             success=True,
             output=result.output,
             structured_output=result.structured_output,
-            tokens_used=result.tokens_used,
         )
 
     async def close(self) -> None:

@@ -62,11 +62,11 @@ def minimal_config_dict():
     return {
         "name": "Test Workflow",
         "version": "1.0.0",
-        "phases": [
+        "nodes": [
             {
-                "id": "phase-1",
-                "name": "First Phase",
-                "prompt_file": "phases/phase-1.md",
+                "id": "node-1",
+                "name": "First Node",
+                "prompt_file": "nodes/node-1.md",
             }
         ],
     }
@@ -75,19 +75,19 @@ def minimal_config_dict():
 @pytest.fixture
 def multi_phase_config_dict():
     return {
-        "name": "Multi Phase",
+        "name": "Multi Node",
         "version": "1.0.0",
-        "phases": [
+        "nodes": [
             {
-                "id": "phase-1",
+                "id": "node-1",
                 "name": "First",
-                "prompt_file": "phases/phase-1.md",
+                "prompt_file": "nodes/node-1.md",
             },
             {
-                "id": "phase-2",
+                "id": "node-2",
                 "name": "Second",
-                "prompt_file": "phases/phase-2.md",
-                "depends_on": ["phase-1"],
+                "prompt_file": "nodes/node-2.md",
+                "depends_on": ["node-1"],
             },
         ],
     }
@@ -99,7 +99,7 @@ def parallel_config_dict():
     return {
         "name": "Parallel Workflow",
         "version": "1.0.0",
-        "phases": [
+        "nodes": [
             {"id": "a", "name": "A", "prompt_file": "a.md"},
             {"id": "b", "name": "B", "prompt_file": "b.md", "depends_on": ["a"]},
             {"id": "c", "name": "C", "prompt_file": "c.md", "depends_on": ["a"]},

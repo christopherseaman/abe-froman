@@ -1,34 +1,34 @@
-"""Phase node factory and decomposed helpers.
+"""Node node factory and decomposed helpers.
 
-_make_phase_node returns an async callable for StateGraph.add_node.
-Pure helpers (check_*, build_context, classify_gate_outcome, etc.)
-operate on WorkflowState/Phase dicts with no langgraph dependency.
+_make_execution_node returns an async callable for StateGraph.add_node.
+Pure helpers (check_*, build_context, classify_evaluation_outcome, etc.)
+operate on WorkflowState/Node dicts with no langgraph dependency.
 """
 
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from abe_froman.compile.evaluation import (
     EvaluationRecord,
     build_eval_context,
-    gate_fallback,
-    gate_to_routes,
+    evaluation_fallback,
+    evaluation_to_routes,
     walk_routes,
 )
 from abe_froman.runtime.gates import (
-    GateResult,
+    EvaluationResult,
     scaffold_output_directory,
     validate_output_contract,
 )
-from abe_froman.runtime.gates import evaluate_gate
+from abe_froman.runtime.gates import run_evaluation
 from abe_froman.runtime.result import ExecutionResult
 from abe_froman.runtime.state import WorkflowState
-from abe_froman.schema.models import Phase, Settings, WorkflowConfig
+from abe_froman.schema.models import Node, Settings, Graph
 
 if TYPE_CHECKING:
-    from abe_froman.runtime.result import PhaseExecutor
+    from abe_froman.runtime.result import NodeExecutor
 
 
 def _get_retry_delay(retry_count: int, backoff: list[float]) -> float:
@@ -43,15 +43,15 @@ def _get_retry_delay(retry_count: int, backoff: list[float]) -> float:
     return backoff[idx]
 
 
-def check_dep_failed(phase: Phase, state: WorkflowState) -> dict | None:
-    failed = state.get("failed_phases", [])
-    for dep in phase.depends_on:
+def check_dep_failed(node: Node, state: WorkflowState) -> dict | None:
+    failed = state.get("failed_nodes", [])
+    for dep in node.depends_on:
         if dep in failed:
             return {
-                "failed_phases": [phase.id],
+                "failed_nodes": [node.id],
                 "errors": [
                     {
-                        "phase": phase.id,
+                        "node": node.id,
                         "error": f"Skipped: dependency '{dep}' failed",
                     }
                 ],
@@ -59,86 +59,126 @@ def check_dep_failed(phase: Phase, state: WorkflowState) -> dict | None:
     return None
 
 
-def all_deps_completed(phase: Phase, state: WorkflowState) -> bool:
-    """True iff every dep is in completed_phases.
+def all_deps_completed(node: Node, state: WorkflowState) -> bool:
+    """True iff every dep is in completed_nodes.
 
-    Multi-predecessor phases whose preds are gated get triggered by each
+    Multi-predecessor nodes whose preds are gated get triggered by each
     pred's router independently (conditional edges). Returning {} from the
     node body until all preds are done causes LangGraph to re-fire the
     node on each subsequent pred-trigger — a natural join barrier.
     """
-    completed = set(state.get("completed_phases", []))
-    return all(dep in completed for dep in phase.depends_on)
+    completed = set(state.get("completed_nodes", []))
+    return all(dep in completed for dep in node.depends_on)
 
 
-def check_dry_run(phase: Phase, state: WorkflowState) -> dict | None:
+def check_dry_run(node: Node, state: WorkflowState) -> dict | None:
     if not state.get("dry_run", False):
         return None
+    # Dry-run writes node_outputs + completed_nodes. Gated nodes still
+    # route through their Evaluation node, which handles dry-run itself by
+    # synthesizing a pass EvaluationRecord — so we don't pre-complete here
+    # for gated nodes.
     update: dict[str, Any] = {
-        "completed_phases": [phase.id],
-        "phase_outputs": {phase.id: f"[dry-run] {phase.name}"},
+        "node_outputs": {node.id: f"[dry-run] {node.name}"},
     }
-    if phase.quality_gate:
-        update["gate_scores"] = {phase.id: 1.0}
+    if not node.evaluation:
+        update["completed_nodes"] = [node.id]
     return update
 
 
-def build_context(phase: Phase, state: WorkflowState) -> dict[str, Any]:
+def build_context(node: Node, state: WorkflowState) -> dict[str, Any]:
     import json as _json
 
     context: dict[str, Any] = {}
-    outputs = state.get("phase_outputs", {})
-    structured = state.get("phase_structured_outputs", {})
-    worktrees = state.get("phase_worktrees", {})
-    sub_outputs = state.get("subphase_outputs", {})
-    for dep in phase.depends_on:
+    outputs = state.get("node_outputs", {})
+    structured = state.get("node_structured_outputs", {})
+    worktrees = state.get("node_worktrees", {})
+    sub_outputs = state.get("child_outputs", {})
+    # Subgraph inputs (Stage 4c): inputs declared on a parent's subgraph-
+    # reference node are projected into the subgraph's state.node_inputs
+    # before invocation. Subgraph nodes see them as plain template vars,
+    # alongside their own dep outputs. Top-level graphs have no inputs.
+    inputs = state.get("node_inputs", {}) or {}
+    context.update(inputs)
+    for dep in node.depends_on:
         if dep in outputs:
             context[dep] = outputs[dep]
         if dep in structured:
             context[f"{dep}_structured"] = structured[dep]
         if dep in worktrees:
             context[f"{dep}_worktree"] = worktrees[dep]
-        # Synthesize fan-out aggregates from state. Any phase depending on
+        # Subgraph `outputs:` projects values to `node_outputs[dep.key]`.
+        # Bind those under `{dep}_{key}` so templates can reach them
+        # without dotted-attribute syntax (Jinja can't dot-into a string).
+        dotted_prefix = f"{dep}."
+        for k, v in outputs.items():
+            if k.startswith(dotted_prefix):
+                suffix = k[len(dotted_prefix):]
+                context[f"{dep}_{suffix}"] = v
+        # Synthesize fan-out aggregates from state. Any node depending on
         # a dynamic parent sees `{{dep_subphases}}` (JSON id→output map) and
         # `{{dep_subphase_worktrees}}` (JSON list of worktree paths) — not
-        # just the final-phase wrapper.
+        # just the final-node wrapper.
         prefix = f"{dep}::"
         dep_subs = {k: v for k, v in sub_outputs.items() if k.startswith(prefix)}
         if dep_subs:
             context[f"{dep}_subphases"] = _json.dumps(dep_subs)
             dep_wts = [v for k, v in worktrees.items() if k.startswith(prefix)]
             context[f"{dep}_subphase_worktrees"] = _json.dumps(dep_wts)
+
+    # When a node has multiple deps, provide aggregate collections so
+    # templates can iterate inputs generically without hardcoding names.
+    if len(node.depends_on) > 1:
+        dep_outputs_map = {}
+        dep_worktrees_map = {}
+        for dep in node.depends_on:
+            if dep in outputs:
+                dep_outputs_map[dep] = outputs[dep]
+            if dep in worktrees:
+                dep_worktrees_map[dep] = worktrees[dep]
+        context["_deps"] = _json.dumps(dep_outputs_map)
+        if dep_worktrees_map:
+            context["_dep_worktrees"] = _json.dumps(dep_worktrees_map)
     return context
 
 
 def inject_retry_reason(
-    context: dict[str, Any], phase: Phase, state: WorkflowState, max_retries: int
+    context: dict[str, Any],
+    node: Node,
+    state: WorkflowState,
+    max_retries: int,
+    *,
+    node_id: str | None = None,
 ) -> dict[str, Any]:
-    retry_count = state.get("retries", {}).get(phase.id, 0)
-    if retry_count == 0 or not phase.quality_gate:
+    key = node_id or node.id
+    retry_count = state.get("retries", {}).get(key, 0)
+    if retry_count == 0 or not node.evaluation:
         return context
 
-    gate = phase.quality_gate
-    feedback = state.get("gate_feedback", {}).get(phase.id, {})
+    records = state.get("evaluations", {}).get(key, [])
+    if not records:
+        return context
+    last_result = records[-1].get("result", {}) or {}
 
-    if gate.dimensions:
-        dim_scores = feedback.get("scores", {})
+    evaluation = node.evaluation
+    if evaluation.dimensions:
+        dim_scores = last_result.get("scores", {}) or {}
         score_parts = [
             f"{d.field}={dim_scores.get(d.field, 0.0):.2f} (min={d.min})"
-            for d in gate.dimensions
+            for d in evaluation.dimensions
         ]
         score_summary = "; ".join(score_parts)
     else:
-        prev_score = state.get("gate_scores", {}).get(phase.id, 0.0)
-        score_summary = f"score={prev_score:.2f}, threshold={gate.threshold}"
+        prev_score = last_result.get("score", 0.0) or 0.0
+        score_summary = f"score={prev_score:.2f}, threshold={evaluation.threshold}"
 
     lines = [
-        f"Attempt {retry_count} failed quality gate ({score_summary}). "
+        f"Attempt {retry_count} failed evaluation ({score_summary}). "
         f"This is retry {retry_count} of {max_retries}."
     ]
-    if feedback.get("feedback"):
-        lines.append(f"Feedback: {feedback['feedback']}")
-    unmet = feedback.get("pass_criteria_unmet") or []
+    if last_result.get("feedback"):
+        lines.append(f"Feedback: {last_result['feedback']}")
+    unmet = last_result.get("pass_criteria_unmet") or []
     if unmet:
         lines.append(
             "Unmet criteria:\n" + "\n".join(f"- {c}" for c in unmet)
@@ -149,132 +189,135 @@ def inject_retry_reason(
 
 
 async def execute_with_timeout(
-    executor, phase: Phase, context: dict[str, Any], timeout: float | None
+    executor, node: Node, context: dict[str, Any], timeout: float | None
 ) -> ExecutionResult | str:
     try:
         if timeout is not None:
             result = await asyncio.wait_for(
-                executor.execute(phase, context), timeout=timeout
+                executor.execute(node, context), timeout=timeout
             )
         else:
-            result = await executor.execute(phase, context)
+            result = await executor.execute(node, context)
         return result
     except asyncio.TimeoutError:
         return "timeout"
 
 
-def make_failure_update(phase_id: str, error_message: str) -> dict[str, Any]:
+def make_failure_update(node_id: str, error_message: str) -> dict[str, Any]:
     return {
-        "failed_phases": [phase_id],
-        "errors": [{"phase": phase_id, "error": error_message}],
+        "failed_nodes": [node_id],
+        "errors": [{"node": node_id, "error": error_message}],
     }
 
 
-def assemble_success_update(phase: Phase, result: ExecutionResult) -> dict[str, Any]:
+def assemble_success_update(node: Node, result: ExecutionResult) -> dict[str, Any]:
     update: dict[str, Any] = {
-        "phase_outputs": {phase.id: result.output},
+        "node_outputs": {node.id: result.output},
     }
     if result.structured_output is not None:
-        update["phase_structured_outputs"] = {phase.id: result.structured_output}
-    if result.tokens_used is not None:
-        update["token_usage"] = {phase.id: result.tokens_used}
+        update["node_structured_outputs"] = {node.id: result.structured_output}
     return update
 
 
-def _gate_result_payload(
-    gate_result: GateResult, gate: Any | None = None
+def _evaluation_result_payload(
+    eval_result: EvaluationResult, evaluation: Any | None = None
 ) -> dict[str, Any]:
-    """Flatten GateResult into the `result` dict the route walker sees.
+    """Flatten EvaluationResult into the `result` dict the route walker sees.
 
-    When the gate declares dimensions, backfill any missing dims with 0.0
-    so numeric comparisons don't silently evaluate against None and escape
-    both pass and retry routes.
+    When the evaluation declares dimensions, backfill any missing dims with
+    0.0 so numeric comparisons don't silently evaluate against None and
+    escape both pass and retry routes.
     """
-    scores = dict(gate_result.scores)
-    if gate is not None and getattr(gate, "dimensions", None):
-        for d in gate.dimensions:
+    scores = dict(eval_result.scores)
+    if evaluation is not None and getattr(evaluation, "dimensions", None):
+        for d in evaluation.dimensions:
             scores.setdefault(d.field, 0.0)
     return {
-        "score": gate_result.score,
+        "score": eval_result.score,
         "scores": scores,
-        "feedback": gate_result.feedback,
-        "pass_criteria_met": list(gate_result.pass_criteria_met),
-        "pass_criteria_unmet": list(gate_result.pass_criteria_unmet),
+        "feedback": eval_result.feedback,
+        "pass_criteria_met": list(eval_result.pass_criteria_met),
+        "pass_criteria_unmet": list(eval_result.pass_criteria_unmet),
     }
 
 
-def classify_gate_outcome(
-    phase: Phase, gate_result: GateResult, retries: int, max_retries: int
+def classify_evaluation_outcome(
+    node: Node,
+    eval_result: EvaluationResult,
+    retries: int,
+    max_retries: int,
+    *,
+    history: list[dict[str, Any]] | None = None,
 ) -> str:
-    """Walk the routes generated from the QualityGate sugar.
+    """Walk the routes generated from the Evaluation sugar.
 
     Kept as public API (tests + external callers). Internally this is just
     a thin adapter over `walk_routes` from compile/evaluation.py — the
     string return value ("pass", "retry", "fail_blocking", "warn_continue")
     is the matched route's destination label.
     """
-    gate = phase.quality_gate
-    routes = gate_to_routes(gate, max_retries)
+    evaluation = node.evaluation
+    routes = evaluation_to_routes(evaluation, max_retries)
     context = build_eval_context(
-        _gate_result_payload(gate_result, gate), invocation=retries, history=[]
+        _evaluation_result_payload(eval_result, evaluation),
+        invocation=retries,
+        history=list(history or []),
     )
     matched = walk_routes(routes, context)
     if matched is not None:
         return matched.to
-    return gate_fallback(gate)
+    return evaluation_fallback(evaluation)
 
 
-def _gate_summary(phase: Phase, result: GateResult) -> str:
-    gate = phase.quality_gate
-    if gate.dimensions:
+def _evaluation_summary(node: Node, result: EvaluationResult) -> str:
+    evaluation = node.evaluation
+    if evaluation.dimensions:
         parts = [
             f"{d.field}={result.scores.get(d.field, 0.0):.2f}>={d.min}"
-            for d in gate.dimensions
+            for d in evaluation.dimensions
         ]
         return ", ".join(parts)
-    return f"score={result.score:.2f}, threshold={gate.threshold}"
+    return f"score={result.score:.2f}, threshold={evaluation.threshold}"
 
 
-def build_gate_outcome_update(
-    phase: Phase, result: GateResult, outcome: str, retries: int, max_retries: int
+def build_evaluation_outcome_update(
+    node: Node,
+    result: EvaluationResult,
+    outcome: str,
+    retries: int,
+    max_retries: int,
+    *,
+    node_id: str | None = None,
 ) -> dict[str, Any]:
+    key = node_id or node.id
     record = EvaluationRecord.now(
         invocation=retries,
-        result=_gate_result_payload(result, phase.quality_gate),
+        result=_evaluation_result_payload(result, node.evaluation),
     )
     update: dict[str, Any] = {
-        "evaluations": {phase.id: [record.to_dict()]},
-        "gate_scores": {phase.id: result.score},
-        "gate_feedback": {
-            phase.id: {
-                "feedback": result.feedback,
-                "pass_criteria_met": list(result.pass_criteria_met),
-                "pass_criteria_unmet": list(result.pass_criteria_unmet),
-                "scores": dict(result.scores),
-            }
-        },
+        "evaluations": {key: [record.to_dict()]},
     }
-    summary = _gate_summary(phase, result)
+    summary = _evaluation_summary(node, result)
 
     if outcome == "pass":
-        update["completed_phases"] = [phase.id]
+        update["completed_nodes"] = [key]
     elif outcome == "retry":
-        update["retries"] = {phase.id: retries + 1}
+        update["retries"] = {key: retries + 1}
     elif outcome == "fail_blocking":
-        update["failed_phases"] = [phase.id]
+        update["failed_nodes"] = [key]
         update["errors"] = [
             {
-                "phase": phase.id,
-                "error": f"Quality gate failed after {max_retries} retries ({summary})",
+                "node": key,
+                "error": f"Evaluation failed after {max_retries} retries ({summary})",
             }
         ]
     elif outcome == "warn_continue":
-        update["completed_phases"] = [phase.id]
+        update["completed_nodes"] = [key]
         update["errors"] = [
             {
-                "phase": phase.id,
+                "node": key,
                 "error": (
-                    f"Quality gate below threshold after {max_retries} retries "
+                    f"Evaluation below threshold after {max_retries} retries "
                     f"({summary}), continuing (non-blocking)"
                 ),
             }
@@ -283,22 +326,26 @@ def build_gate_outcome_update(
     return update
 
 
-async def evaluate_gate_and_outcome(
-    phase: Phase,
-    config: WorkflowConfig,
+async def run_evaluation_and_outcome(
+    node: Node,
+    config: Graph,
     state: WorkflowState,
     result: ExecutionResult,
     timeout: float | None,
     backend: Any = None,
+    *,
+    node_id: str | None = None,
+    history: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    max_retries = phase.effective_max_retries(config.settings)
-    retries = state.get("retries", {}).get(phase.id, 0)
+    key = node_id or node.id
+    max_retries = node.effective_max_retries(config.settings)
+    retries = state.get("retries", {}).get(key, 0)
 
-    gate_call = evaluate_gate(
-        phase.quality_gate,
-        phase.id,
+    eval_call = run_evaluation(
+        node.evaluation,
+        key,
         workdir=state.get("workdir", "."),
-        phase_output=result.output,
+        node_output=result.output,
         workflow_name=config.name,
         attempt_number=retries + 1,
         backend=backend,
@@ -306,101 +353,177 @@ async def evaluate_gate_and_outcome(
     )
     try:
         if timeout is not None:
-            gate_result = await asyncio.wait_for(gate_call, timeout=timeout)
+            eval_result = await asyncio.wait_for(eval_call, timeout=timeout)
         else:
-            gate_result = await gate_call
+            eval_result = await eval_call
     except asyncio.TimeoutError:
         return make_failure_update(
-            phase.id, f"Quality gate timed out after {timeout}s"
+            key, f"Evaluation timed out after {timeout}s"
         )
 
-    outcome = classify_gate_outcome(phase, gate_result, retries, max_retries)
-    return build_gate_outcome_update(phase, gate_result, outcome, retries, max_retries)
+    outcome = classify_evaluation_outcome(
+        node, eval_result, retries, max_retries, history=history
+    )
+    return build_evaluation_outcome_update(
+        node, eval_result, outcome, retries, max_retries, node_id=key
+    )
 
 
-def _make_phase_node(
-    phase: Phase,
-    config: WorkflowConfig,
-    executor: PhaseExecutor | None = None,
+
+
+def _make_execution_node(
+    node: Node,
+    config: Graph,
+    executor: NodeExecutor | None = None,
 ):
-    max_retries = phase.effective_max_retries(config.settings)
-    timeout = phase.effective_timeout(config.settings)
+    max_retries = node.effective_max_retries(config.settings)
+    timeout = node.effective_timeout(config.settings)
 
     async def node_fn(state: WorkflowState) -> dict[str, Any]:
-        if phase.id in state.get("completed_phases", []):
+        if node.id in state.get("completed_nodes", []):
             return {}
         for check in (check_dep_failed, check_dry_run):
-            if (r := check(phase, state)) is not None:
+            if (r := check(node, state)) is not None:
                 return r
-        if phase.depends_on and not all_deps_completed(phase, state):
+        if node.depends_on and not all_deps_completed(node, state):
             # A gated predecessor routed here before its siblings finished.
             # Return no-op — subsequent pred completions re-fire this node.
             return {}
         if executor is None:
             update: dict[str, Any] = {
-                "completed_phases": [phase.id],
-                "phase_outputs": {phase.id: f"[no-executor] {phase.name}"},
+                "node_outputs": {node.id: f"[no-executor] {node.name}"},
             }
-            if phase.quality_gate:
-                update["gate_scores"] = {phase.id: 1.0}
+            if not node.evaluation:
+                update["completed_nodes"] = [node.id]
             return update
 
-        context = build_context(phase, state)
-        retry_count = state.get("retries", {}).get(phase.id, 0)
+        context = build_context(node, state)
+        retry_count = state.get("retries", {}).get(node.id, 0)
         if retry_count > 0:
             delay = _get_retry_delay(retry_count, config.settings.retry_backoff)
             if delay > 0:
                 await asyncio.sleep(delay)
-        context = inject_retry_reason(context, phase, state, max_retries)
+        context = inject_retry_reason(context, node, state, max_retries)
 
-        if phase.output_contract:
+        if node.output_contract:
             scaffold_output_directory(
-                phase.output_contract, state.get("workdir", ".")
+                node.output_contract, state.get("workdir", ".")
             )
 
-        exec_result = await execute_with_timeout(executor, phase, context, timeout)
+        exec_result = await execute_with_timeout(executor, node, context, timeout)
         if exec_result == "timeout":
             return make_failure_update(
-                phase.id, f"Phase timed out after {timeout}s"
+                node.id, f"Node timed out after {timeout}s"
             )
         if not exec_result.success:
-            return make_failure_update(phase.id, exec_result.error)
+            return make_failure_update(node.id, exec_result.error)
 
-        if phase.output_contract:
+        if node.output_contract:
             missing = validate_output_contract(
-                phase.output_contract, state.get("workdir", ".")
+                node.output_contract, state.get("workdir", ".")
             )
             if missing:
                 return {
-                    "failed_phases": [phase.id],
+                    "failed_nodes": [node.id],
                     "errors": [
                         {
-                            "phase": phase.id,
+                            "node": node.id,
                             "error": (
                                 f"Output contract violated: missing files: "
                                 f"{', '.join(missing)}"
                             ),
                         }
                     ],
-                    "phase_outputs": {phase.id: exec_result.output},
+                    "node_outputs": {node.id: exec_result.output},
                 }
 
-        update = assemble_success_update(phase, exec_result)
+        update = assemble_success_update(node, exec_result)
         if hasattr(executor, "get_worktree"):
-            wt = executor.get_worktree(phase.id)
+            wt = executor.get_worktree(node.id)
             if wt:
-                update["phase_worktrees"] = {phase.id: wt}
-        if phase.quality_gate:
-            backend = (
-                executor.get_backend() if hasattr(executor, "get_backend") else None
-            )
-            update |= await evaluate_gate_and_outcome(
-                phase, config, state, exec_result, timeout, backend=backend,
-            )
-        else:
-            update["completed_phases"] = [phase.id]
+                update["node_worktrees"] = {node.id: wt}
+        if not node.evaluation:
+            update["completed_nodes"] = [node.id]
+        # Gated nodes hand off to _eval_{node.id} via plain edge; the
+        # Evaluation node writes completed_nodes / retries / failed_nodes.
 
         return update
 
-    node_fn.__name__ = f"node_{phase.id}"
+    node_fn.__name__ = f"node_{node.id}"
+    return node_fn
+
+
+def _make_evaluation_node(
+    node: Node,
+    config: Graph,
+    executor: "NodeExecutor | None" = None,
+    *,
+    node_id_resolver: Callable[[WorkflowState], str] | None = None,
+):
+    """Create the Evaluation node — second half of a gated node pair.
+
+    Reads `node_outputs[node_id]` (produced by the upstream Execution
+    node), runs the gate, walks routes (first-match + catch-all fallback),
+    and writes an `EvaluationRecord` plus the outcome's state transitions.
+
+    `node_id_resolver` lets child eval nodes derive the per-branch id
+    from `state._fan_out_item`. Defaults to `node.id` for top-level use.
+    """
+    timeout = node.effective_timeout(config.settings)
+    resolve = node_id_resolver or (lambda _s: node.id)
+
+    async def node_fn(state: WorkflowState) -> dict[str, Any]:
+        node_id = resolve(state)
+
+        if node_id in state.get("completed_nodes", []):
+            return {}
+        if node_id in state.get("failed_nodes", []):
+            return {}
+
+        if state.get("dry_run", False):
+            record = EvaluationRecord.now(
+                invocation=0,
+                result={
+                    "score": 1.0,
+                    "scores": {},
+                    "feedback": "[dry-run]",
+                    "pass_criteria_met": [],
+                    "pass_criteria_unmet": [],
+                },
+            )
+            return {
+                "evaluations": {node_id: [record.to_dict()]},
+                "completed_nodes": [node_id],
+            }
+
+        history = list(state.get("evaluations", {}).get(node_id, []))
+        outputs = state.get("node_outputs", {})
+        # Defer until upstream Execution wrote node_outputs[node_id]. Key-
+        # absence rather than empty-value because JoinExecution legitimately
+        # writes "". See test_defers_when_upstream_output_absent.
+        if node_id not in outputs:
+            return {}
+        output = outputs[node_id]
+        structured = state.get("node_structured_outputs", {}).get(node_id)
+        synthetic_result = ExecutionResult(
+            success=True, output=output, structured_output=structured
+        )
+
+        backend = (
+            executor.get_backend()
+            if (executor is not None and hasattr(executor, "get_backend"))
+            else None
+        )
+        return await run_evaluation_and_outcome(
+            node,
+            config,
+            state,
+            synthetic_result,
+            timeout,
+            backend=backend,
+            node_id=node_id,
+            history=history,
+        )
+
+    node_fn.__name__ = f"eval_{node.id}"
     return node_fn

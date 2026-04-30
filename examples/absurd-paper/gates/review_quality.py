@@ -1,6 +1,6 @@
-"""Record-only gate for per-reviewer peer-review subphases.
+"""Record-only gate for per-reviewer peer-review children.
 
-Per CLAUDE.md known limitation, subphase gates record scores but don't
+Per CLAUDE.md known limitation, child gates record scores but don't
 trigger retries. This script still emits structured feedback so the JSONL
 `gate_evaluated` events carry meaningful data.
 

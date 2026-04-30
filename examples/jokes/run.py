@@ -8,11 +8,11 @@ from abe_froman.compile.graph import build_workflow_graph
 from abe_froman.runtime.executor.backends.factory import create_prompt_backend
 from abe_froman.runtime.executor.dispatch import DispatchExecutor
 from abe_froman.runtime.state import make_initial_state
-from abe_froman.schema.models import WorkflowConfig
+from abe_froman.schema.models import Graph
 
 
 async def main():
-    config = WorkflowConfig(**yaml.safe_load(Path("examples/jokes/workflow.yaml").read_text()))
+    config = Graph(**yaml.safe_load(Path("examples/jokes/workflow.yaml").read_text()))
     backend = create_prompt_backend("acp")
     executor = DispatchExecutor(workdir=".", prompt_backend=backend, settings=config.settings)
     compiled = build_workflow_graph(config, executor)
@@ -20,17 +20,22 @@ async def main():
     result = await compiled.ainvoke(state)
 
     print("=== Workflow Result ===")
-    print(f"Completed: {result.get('completed_phases', [])}")
-    print(f"Failed: {result.get('failed_phases', [])}")
+    print(f"Completed: {result.get('completed_nodes', [])}")
+    print(f"Failed: {result.get('failed_nodes', [])}")
 
     for err in result.get("errors", []):
         print(f"  Error: {err}")
 
-    print(f"\nGate scores: {result.get('gate_scores', {})}")
+    scores = {
+        node: records[-1].get("result", {}).get("score")
+        for node, records in result.get("evaluations", {}).items()
+        if records
+    }
+    print(f"\nGate scores: {scores}")
     print(f"Retries: {result.get('retries', {})}")
 
-    for phase_id, output in result.get("phase_outputs", {}).items():
-        print(f"\n--- {phase_id} ---")
+    for node_id, output in result.get("node_outputs", {}).items():
+        print(f"\n--- {node_id} ---")
         print(output)
 
     await executor.close()

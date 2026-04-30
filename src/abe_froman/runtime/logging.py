@@ -35,34 +35,31 @@ class JsonlLogger:
         curr: dict[str, Any],
     ) -> None:
         """Diff two state snapshots and emit events for all transitions."""
-        prev_completed = set(prev.get("completed_phases", []))
-        curr_completed = set(curr.get("completed_phases", []))
-        for phase in curr_completed - prev_completed:
-            event: dict[str, Any] = {"event": "phase_completed", "phase": phase}
-            tokens = curr.get("token_usage", {}).get(phase)
-            if tokens:
-                event["tokens"] = tokens
+        prev_completed = set(prev.get("completed_nodes", []))
+        curr_completed = set(curr.get("completed_nodes", []))
+        for node in curr_completed - prev_completed:
+            event: dict[str, Any] = {"event": "node_completed", "node": node}
             self.emit(event)
 
-        prev_failed = set(prev.get("failed_phases", []))
-        curr_failed = set(curr.get("failed_phases", []))
-        for phase in curr_failed - prev_failed:
+        prev_failed = set(prev.get("failed_nodes", []))
+        curr_failed = set(curr.get("failed_nodes", []))
+        for node in curr_failed - prev_failed:
             error = ""
             for err in curr.get("errors", []):
-                if err.get("phase") == phase:
+                if err.get("node") == node:
                     error = err.get("error", "")
                     break
-            self.emit({"event": "phase_failed", "phase": phase, "error": error})
+            self.emit({"event": "node_failed", "node": node, "error": error})
 
         prev_evals = prev.get("evaluations", {})
         curr_evals = curr.get("evaluations", {})
-        for phase, records in curr_evals.items():
-            prev_count = len(prev_evals.get(phase, []))
+        for node, records in curr_evals.items():
+            prev_count = len(prev_evals.get(node, []))
             for record in records[prev_count:]:
                 result = record.get("result", {})
                 event: dict[str, Any] = {
                     "event": "gate_evaluated",
-                    "phase": phase,
+                    "node": node,
                     "invocation": record.get("invocation", 0),
                     "score": result.get("score", 0.0),
                 }
@@ -74,6 +71,6 @@ class JsonlLogger:
 
         prev_retries = prev.get("retries", {})
         curr_retries = curr.get("retries", {})
-        for phase, count in curr_retries.items():
-            if count > prev_retries.get(phase, 0):
-                self.emit({"event": "phase_retried", "phase": phase, "attempt": count})
+        for node, count in curr_retries.items():
+            if count > prev_retries.get(node, 0):
+                self.emit({"event": "node_retried", "node": node, "attempt": count})

@@ -1,162 +1,289 @@
-"""Node factories for dynamic subphases (fan-out via Send)."""
+"""Node factories for dynamic children (fan-out via Send)."""
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Any
 
 from abe_froman.compile.nodes import (
-    _make_phase_node,
+    _get_retry_delay,
+    _make_execution_node,
     build_context,
+    run_evaluation_and_outcome,
     execute_with_timeout,
+    inject_retry_reason,
     make_failure_update,
 )
-from abe_froman.runtime.gates import evaluate_gate
-from abe_froman.runtime.state import WorkflowState
-from abe_froman.schema.models import Phase, WorkflowConfig
+from abe_froman.runtime.result import ExecutionResult
+from abe_froman.runtime.state import REDUCERS, WorkflowState
+from abe_froman.schema.models import Node, Graph
 
 if TYPE_CHECKING:
-    from abe_froman.runtime.result import PhaseExecutor
+    from abe_froman.runtime.result import NodeExecutor
 
 
-def _make_subphase_node(
-    parent_phase: Phase,
-    config: WorkflowConfig,
-    executor: PhaseExecutor | None = None,
-):
-    """Create a template node function for dynamic subphases.
+def _merge_updates(base: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
+    """Merge `extra` into `base` using the same reducers LangGraph uses.
 
-    Each invocation receives a different ``_subphase_item`` via LangGraph's
-    Send — the manifest item dict for this particular subphase instance.
+    The fan-out node accumulates state inline across its retry loop; once
+    it returns, LangGraph's super-step reducers fold the aggregate into
+    prior state. Using `state.REDUCERS` here keeps the inline merge
+    semantically identical to the boundary merge — single source of truth.
+    Keys not in REDUCERS (e.g. `_fan_out_item`) overwrite by assignment.
     """
-    template = parent_phase.dynamic_subphases.template
-    timeout = parent_phase.effective_timeout(config.settings)
+    out = dict(base)
+    for key, value in extra.items():
+        if key in out and key in REDUCERS:
+            out[key] = REDUCERS[key](out[key], value)
+        else:
+            out[key] = value
+    return out
+
+
+def _make_fan_out_node(
+    parent_node: Node,
+    config: Graph,
+    executor: NodeExecutor | None = None,
+):
+    """Create a template node function for dynamic children.
+
+    Each invocation receives a different ``_fan_out_item`` via LangGraph's
+    Send. Gated templates run their retry loop **inline** inside this
+    node body — LangGraph merges Send-dispatched branches at any
+    conditional-edge boundary, which would strip per-branch
+    ``_fan_out_item`` state and break graph-level retry self-loops.
+    Inline retry preserves per-item state trivially.
+    """
+    template = parent_node.fan_out.template
+    timeout = parent_node.effective_timeout(config.settings)
+    max_retries = parent_node.effective_max_retries(config.settings)
+    retry_backoff = config.settings.retry_backoff
 
     async def node_fn(state: WorkflowState) -> dict[str, Any]:
-        item = state.get("_subphase_item", {})
+        item = state.get("_fan_out_item", {})
         item_id = item.get("id", "unknown")
-        subphase_id = f"{parent_phase.id}::{item_id}"
+        child_id = f"{parent_node.id}::{item_id}"
 
-        if subphase_id in state.get("completed_phases", []):
+        if child_id in state.get("completed_nodes", []):
+            return {}
+        if child_id in state.get("failed_nodes", []):
             return {}
 
         if state.get("dry_run", False):
             return {
-                "completed_phases": [subphase_id],
-                "phase_outputs": {subphase_id: f"[dry-run] subphase {item_id}"},
-                "subphase_outputs": {subphase_id: f"[dry-run] subphase {item_id}"},
+                "node_outputs": {child_id: f"[dry-run] child {item_id}"},
+                "child_outputs": {child_id: f"[dry-run] child {item_id}"},
+                "completed_nodes": [child_id],
             }
 
         if executor is None:
             return {
-                "completed_phases": [subphase_id],
-                "phase_outputs": {
-                    subphase_id: f"[no-executor] subphase {item_id}"
+                "node_outputs": {
+                    child_id: f"[no-executor] child {item_id}"
                 },
-                "subphase_outputs": {
-                    subphase_id: f"[no-executor] subphase {item_id}"
+                "child_outputs": {
+                    child_id: f"[no-executor] child {item_id}"
                 },
+                "completed_nodes": [child_id],
             }
 
-        synthetic_phase = Phase(
-            id=subphase_id,
-            name=f"{parent_phase.name} - {item.get('name', item_id)}",
+        synthetic_node = Node(
+            id=child_id,
+            name=f"{parent_node.name} - {item.get('name', item_id)}",
             prompt_file=template.prompt_file,
-            model=parent_phase.model,
+            evaluation=template.evaluation,
+            model=parent_node.model,
         )
 
-        # Subphase templates inherit the parent phase's full upstream context
-        # so `{{dep}}` works for any of the parent's dependencies, not just
-        # the parent output itself. Per-item manifest fields layer on top.
-        context = build_context(parent_phase, state)
-        parent_output = state.get("phase_outputs", {}).get(parent_phase.id, "")
-        context[parent_phase.id] = parent_output
+        # Build context up front — dep outputs + per-item manifest fields
+        # do not change across retries within this node invocation.
+        base_context = build_context(parent_node, state)
+        parent_output = state.get("node_outputs", {}).get(parent_node.id, "")
+        base_context[parent_node.id] = parent_output
         for key, value in item.items():
-            context[key] = str(value)
+            base_context[key] = str(value)
 
-        exec_result = await execute_with_timeout(
-            executor, synthetic_phase, context, timeout
+        # Simulated state that accumulates inline across retries within this
+        # branch. Starts from the caller-provided state so reducers at the
+        # super-step boundary see the whole history.
+        update: dict[str, Any] = {}
+        history: list[dict[str, Any]] = list(
+            state.get("evaluations", {}).get(child_id, [])
         )
-        if exec_result == "timeout":
-            return make_failure_update(
-                subphase_id, f"Phase timed out after {timeout}s"
+        retries_local = state.get("retries", {}).get(child_id, 0)
+
+        while True:
+            context = dict(base_context)
+            if retries_local > 0:
+                delay = _get_retry_delay(retries_local, retry_backoff)
+                if delay > 0:
+                    await asyncio.sleep(delay)
+                synthetic_state: WorkflowState = {
+                    **state,
+                    "evaluations": _synth_evaluations(
+                        state.get("evaluations", {}), child_id, history
+                    ),
+                    "retries": {
+                        **state.get("retries", {}),
+                        child_id: retries_local,
+                    },
+                }
+                context = inject_retry_reason(
+                    context, synthetic_node, synthetic_state,
+                    max_retries, node_id=child_id,
+                )
+
+            exec_result = await execute_with_timeout(
+                executor, synthetic_node, context, timeout
             )
-        if not exec_result.success:
-            return make_failure_update(subphase_id, exec_result.error)
+            if exec_result == "timeout":
+                return _merge_updates(update, make_failure_update(
+                    child_id, f"Node timed out after {timeout}s"
+                ))
+            if not exec_result.success:
+                return _merge_updates(update, make_failure_update(
+                    child_id, exec_result.error
+                ))
 
-        update: dict[str, Any] = {
-            "completed_phases": [subphase_id],
-            "phase_outputs": {subphase_id: exec_result.output},
-            "subphase_outputs": {subphase_id: exec_result.output},
-        }
-        if exec_result.tokens_used is not None:
-            update["token_usage"] = {subphase_id: exec_result.tokens_used}
+            exec_update: dict[str, Any] = {
+                "node_outputs": {child_id: exec_result.output},
+                "child_outputs": {child_id: exec_result.output},
+            }
+            update = _merge_updates(update, exec_update)
 
-        if template.quality_gate:
-            import asyncio
+            if not template.evaluation:
+                update.setdefault("completed_nodes", []).append(child_id)
+                return update
 
             backend = (
-                executor.get_backend() if hasattr(executor, "get_backend") else None
+                executor.get_backend()
+                if hasattr(executor, "get_backend") else None
             )
-            gate_call = evaluate_gate(
-                template.quality_gate,
-                subphase_id,
-                workdir=state.get("workdir", "."),
-                phase_output=exec_result.output,
-                workflow_name=config.name,
-                attempt_number=1,
-                backend=backend,
-                default_model=config.settings.default_model,
-            )
-            try:
-                if timeout is not None:
-                    gate_result = await asyncio.wait_for(gate_call, timeout=timeout)
-                else:
-                    gate_result = await gate_call
-            except asyncio.TimeoutError:
-                return make_failure_update(
-                    subphase_id, f"Quality gate timed out after {timeout}s"
-                )
-            update["gate_scores"] = {subphase_id: gate_result.score}
-            update["gate_feedback"] = {
-                subphase_id: {
-                    "feedback": gate_result.feedback,
-                    "pass_criteria_met": list(gate_result.pass_criteria_met),
-                    "pass_criteria_unmet": list(gate_result.pass_criteria_unmet),
-                }
+            # Call run_evaluation_and_outcome with a state reflecting the
+            # inline retries counter, so its own read of retries matches.
+            eval_state: WorkflowState = {
+                **state,
+                "retries": {
+                    **state.get("retries", {}),
+                    child_id: retries_local,
+                },
             }
+            eval_update = await run_evaluation_and_outcome(
+                synthetic_node, config, eval_state, exec_result, timeout,
+                backend=backend, node_id=child_id, history=history,
+            )
+            update = _merge_updates(update, eval_update)
 
-        return update
+            new_record = eval_update.get("evaluations", {}).get(child_id, [])
+            history = history + list(new_record)
 
-    node_fn.__name__ = f"subphase_{parent_phase.id}"
+            if child_id in eval_update.get("completed_nodes", []):
+                return update
+            if child_id in eval_update.get("failed_nodes", []):
+                return update
+
+            # Retry outcome — increment and loop.
+            bumped = eval_update.get("retries", {}).get(child_id)
+            if bumped is None:
+                # Defensive: no retry signal → treat as terminal to avoid infinite loop.
+                return update
+            retries_local = bumped
+
+    node_fn.__name__ = f"subphase_{parent_node.id}"
     return node_fn
 
 
-def _make_final_phase_node(
-    parent_phase: Phase,
-    final_phase,
-    config: WorkflowConfig,
-    executor: PhaseExecutor | None = None,
-):
-    """Create a node function for a final phase in a dynamic subphase group.
-
-    Subphase aggregates reach the final phase through `build_context`'s
-    suffix synthesis (same mechanism any non-final downstream uses), so
-    this factory is a thin wrapper that just renames the synthetic phase
-    to stay out of the parent-id namespace.
+def _synth_evaluations(
+    existing: dict[str, list[dict[str, Any]]],
+    key: str,
+    history: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    """Return a new evaluations dict where `key` reflects the inline
+    history. Leaves other keys untouched.
     """
-    node_id = f"_final_{parent_phase.id}_{final_phase.id}"
+    out = {k: list(v) for k, v in existing.items()}
+    out[key] = list(history)
+    return out
 
-    synthetic = Phase(
+
+def _make_final_fan_out_node(
+    parent_node: Node,
+    final_node,
+    config: Graph,
+    executor: NodeExecutor | None = None,
+    *,
+    is_first: bool = False,
+):
+    """Create a node function for a final node in a dynamic child group.
+
+    Subphase aggregates reach the final node through `build_context`'s
+    suffix synthesis (same mechanism any non-final downstream uses).
+
+    The FIRST final node in the chain has an incoming static edge from
+    `_sub_<parent>`. With LangGraph's Send-dispatch semantics, that edge
+    fires once per Send branch — i.e. once per fan-out child. Without a
+    barrier, the first final would dispatch on the FIRST child's
+    completion, before sibling children land in `child_outputs`, so its
+    `{{<parent>_subphases}}` template var would render against an
+    incomplete state. The wrapper below short-circuits with `{}` until
+    all expected manifest items have completed.
+
+    Subsequent finals chain through the prior final and don't need the
+    barrier (their predecessor already ran with full state).
+    """
+    node_id = f"_final_{parent_node.id}_{final_node.id}"
+
+    synthetic = Node(
         id=node_id,
-        name=final_phase.name,
-        description=final_phase.description,
-        prompt_file=final_phase.prompt_file,
-        execution=final_phase.execution,
-        quality_gate=final_phase.quality_gate,
-        model=parent_phase.model,
-        depends_on=[parent_phase.id],
+        name=final_node.name,
+        description=final_node.description,
+        prompt_file=final_node.prompt_file,
+        execution=final_node.execution,
+        evaluation=final_node.evaluation,
+        model=parent_node.model,
+        depends_on=[parent_node.id],
     )
 
-    inner = _make_phase_node(synthetic, config, executor)
-    inner.__name__ = f"final_{parent_phase.id}_{final_phase.id}"
-    return inner
+    inner = _make_execution_node(synthetic, config, executor)
+    inner.__name__ = f"final_{parent_node.id}_{final_node.id}"
+
+    if not is_first:
+        return inner
+
+    # First-final barrier: wait until every manifest item's child has
+    # landed in completed_nodes (or failed_nodes — failures count as
+    # "settled" so we don't wait forever on a hung child).
+    from abe_froman.compile.graph import _read_manifest
+
+    parent_id = parent_node.id
+
+    async def barrier(state: WorkflowState) -> dict[str, Any]:
+        # Defer (return {}) in any of three cases:
+        #   1. already done — LangGraph re-fires the node every super-step
+        #      until termination; without this skip, inner runs twice.
+        #   2. items known but not all settled — fan-out children still
+        #      in flight; wait for them.
+        #   3. items empty AND parent hasn't run yet — LangGraph fires
+        #      conditional edges pre-emptively (when an upstream-of-parent
+        #      completes), routing 'no_items' here before the parent's
+        #      prompt produces a manifest. Empty items here means "unknown",
+        #      not "zero children".
+        completed = state.get("completed_nodes", [])
+        failed = state.get("failed_nodes", [])
+        items = _read_manifest(state, parent_node)
+        settled = set(completed) | set(failed)
+        children_pending = items and any(
+            f"{parent_id}::{it.get('id', 'unknown')}" not in settled for it in items
+        )
+        parent_unsettled = parent_id not in completed and parent_id not in failed
+        should_defer = (
+            node_id in completed
+            or children_pending
+            or (not items and parent_unsettled)
+        )
+        if should_defer:
+            return {}
+        return await inner(state)
+
+    barrier.__name__ = f"final_{parent_node.id}_{final_node.id}"
+    return barrier

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import operator
-from typing import Annotated, Any, NotRequired
+from typing import Annotated, Any, Callable, NotRequired
 
 from typing_extensions import TypedDict
 
@@ -23,23 +23,41 @@ def _merge_evaluations(
     return merged
 
 
+# Reducer table — single source of truth for how state fields combine.
+# Mirrors WorkflowState's Annotated metadata; consumed by both LangGraph
+# (via the TypedDict annotations) and `dynamic._merge_updates` (when the
+# fan-out node accumulates state inline across its retry loop).
+REDUCERS: dict[str, Callable[[Any, Any], Any]] = {
+    "completed_nodes": operator.add,
+    "failed_nodes": operator.add,
+    "errors": operator.add,
+    "node_outputs": _merge_dicts,
+    "node_structured_outputs": _merge_dicts,
+    "retries": _merge_dicts,
+    "child_outputs": _merge_dicts,
+    "node_worktrees": _merge_dicts,
+    "evaluations": _merge_evaluations,
+}
+
+
 class WorkflowState(TypedDict):
     workflow_name: str
-    completed_phases: Annotated[list[str], operator.add]
-    failed_phases: Annotated[list[str], operator.add]
-    phase_outputs: Annotated[dict[str, Any], _merge_dicts]
-    phase_structured_outputs: Annotated[dict[str, Any], _merge_dicts]
-    gate_scores: Annotated[dict[str, float], _merge_dicts]
-    gate_feedback: Annotated[dict[str, dict[str, Any]], _merge_dicts]
-    evaluations: Annotated[dict[str, list[dict[str, Any]]], _merge_evaluations]
-    retries: Annotated[dict[str, int], _merge_dicts]
-    subphase_outputs: Annotated[dict[str, Any], _merge_dicts]
-    token_usage: Annotated[dict[str, dict[str, int]], _merge_dicts]
-    phase_worktrees: Annotated[dict[str, str], _merge_dicts]
-    errors: Annotated[list[dict], operator.add]
+    completed_nodes: Annotated[list[str], REDUCERS["completed_nodes"]]
+    failed_nodes: Annotated[list[str], REDUCERS["failed_nodes"]]
+    node_outputs: Annotated[dict[str, Any], REDUCERS["node_outputs"]]
+    node_structured_outputs: Annotated[dict[str, Any], REDUCERS["node_structured_outputs"]]
+    evaluations: Annotated[dict[str, list[dict[str, Any]]], REDUCERS["evaluations"]]
+    retries: Annotated[dict[str, int], REDUCERS["retries"]]
+    child_outputs: Annotated[dict[str, Any], REDUCERS["child_outputs"]]
+    node_worktrees: Annotated[dict[str, str], REDUCERS["node_worktrees"]]
+    errors: Annotated[list[dict], REDUCERS["errors"]]
     workdir: str
     dry_run: bool
-    _subphase_item: NotRequired[dict[str, Any]]
+    _fan_out_item: NotRequired[dict[str, Any]]
+    # Subgraph context: rendered inputs visible as template vars to subgraph
+    # nodes. Set by the subgraph wrapper before subgraph invocation; not
+    # populated at the top level. Merged into build_context output.
+    node_inputs: NotRequired[dict[str, str]]
 
 
 def make_initial_state(
@@ -54,17 +72,14 @@ def make_initial_state(
     """
     state: dict[str, Any] = {
         "workflow_name": workflow_name,
-        "completed_phases": [],
-        "failed_phases": [],
-        "phase_outputs": {},
-        "phase_structured_outputs": {},
-        "gate_scores": {},
-        "gate_feedback": {},
+        "completed_nodes": [],
+        "failed_nodes": [],
+        "node_outputs": {},
+        "node_structured_outputs": {},
         "evaluations": {},
         "retries": {},
-        "subphase_outputs": {},
-        "token_usage": {},
-        "phase_worktrees": {},
+        "child_outputs": {},
+        "node_worktrees": {},
         "errors": [],
         "workdir": workdir,
         "dry_run": dry_run,

@@ -12,7 +12,7 @@ from abe_froman.runtime.executor.dispatch import DispatchExecutor
 from abe_froman.runtime.foreman import ForemanExecutor
 from abe_froman.runtime.runner import run_workflow
 from abe_froman.runtime.state import make_initial_state
-from abe_froman.schema.models import WorkflowConfig
+from abe_froman.schema.models import Graph
 
 CHECKPOINT_DB = ".abe-froman-checkpoint.db"
 
@@ -30,15 +30,15 @@ def _is_git_repo(workdir: str) -> bool:
         return False
 
 
-def load_config(config_file: str) -> WorkflowConfig:
+def load_config(config_file: str) -> Graph:
     path = Path(config_file)
     if not path.exists():
         raise click.BadParameter(f"File not found: {config_file}")
     raw = yaml.safe_load(path.read_text())
-    return WorkflowConfig(**raw)
+    return Graph(**raw)
 
 
-def _thread_id_for(config: WorkflowConfig, workdir: str) -> str:
+def _thread_id_for(config: Graph, workdir: str) -> str:
     """Deterministic thread_id for a (workflow, workdir) pair."""
     key = f"{config.name}:{Path(workdir).resolve()}"
     return hashlib.sha1(key.encode()).hexdigest()[:16]
@@ -62,10 +62,48 @@ def validate(config_file: str):
         config = load_config(config_file)
         build_workflow_graph(config)
         click.echo(
-            f"Valid: {config.name} v{config.version} ({len(config.phases)} phases)"
+            f"Valid: {config.name} v{config.version} ({len(config.nodes)} nodes)"
         )
     except Exception as e:
         raise click.ClickException(str(e))
+
+
+@cli.command()
+@click.argument("config_file", type=click.Path(exists=True))
+@click.option(
+    "--dry-run", is_flag=True,
+    help="Print rewritten YAML to stdout without writing the file.",
+)
+@click.option(
+    "--in-place", is_flag=True,
+    help="Rewrite the file on disk (default: print rewritten YAML to stdout).",
+)
+def migrate(config_file: str, dry_run: bool, in_place: bool):
+    """Migrate a pre-Stage-4 workflow YAML to the current schema.
+
+    Rewrites: phases → nodes, quality_gate → evaluation,
+    dynamic_subphases → fan_out (with template lift + final_phases
+    promoted to sibling nodes with depends_on).
+
+    Comments, anchors, and templated {{}} strings are preserved.
+    Idempotent: running on already-migrated YAML is a no-op.
+    """
+    from abe_froman.cli.migrate import migrate_file
+
+    path = Path(config_file)
+    rewritten, changes = migrate_file(path, in_place=in_place, dry_run=dry_run)
+
+    if not changes:
+        click.echo(f"No changes needed for {config_file}", err=True)
+        return
+
+    for c in changes:
+        click.echo(f"  - {c}", err=True)
+
+    if in_place and not dry_run:
+        click.echo(f"Wrote {len(changes)} changes to {config_file}", err=True)
+    else:
+        click.echo(rewritten, nl=False)
 
 
 @cli.command()
@@ -82,7 +120,7 @@ def graph(config_file: str):
 
 
 async def _run_async(
-    config: WorkflowConfig,
+    config: Graph,
     workdir: str,
     dry_run: bool,
     executor_type: str,
@@ -120,15 +158,15 @@ async def _run_async(
             old = dict(prev.checkpoint.get("channel_values", {}))
             state = {
                 **old,
-                "failed_phases": [],
+                "failed_nodes": [],
                 "retries": {},
                 "errors": [],
                 "workdir": workdir,
                 "dry_run": False,
             }
             click.echo(
-                f"Resuming: {len(state.get('completed_phases', []))} "
-                f"phases already completed"
+                f"Resuming: {len(state.get('completed_nodes', []))} "
+                f"nodes already completed"
             )
             # Wipe the thread so reducers don't merge with stale state
             await cp.adelete_thread(thread_id)
@@ -144,7 +182,7 @@ async def _run_async(
                 base_workdir=workdir,
                 max_parallel_jobs=config.settings.max_parallel_jobs,
                 per_model_limits=dict(config.settings.per_model_limits),
-                rehydrate=dict(state.get("phase_worktrees", {})),
+                rehydrate=dict(state.get("node_worktrees", {})),
                 settings=config.settings,
             )
         else:
@@ -202,33 +240,24 @@ def run(
         _run_async(config, workdir, dry_run, executor_type, resume, log_file)
     )
 
-    completed = result.get("completed_phases", [])
-    failed = result.get("failed_phases", [])
+    completed = result.get("completed_nodes", [])
+    failed = result.get("failed_nodes", [])
     errors = result.get("errors", [])
 
     if dry_run:
-        click.echo(f"Dry run completed: {len(completed)} phases traced")
+        click.echo(f"Dry run completed: {len(completed)} nodes traced")
     else:
-        click.echo(f"Completed: {len(completed)} phases")
-
-    token_usage = result.get("token_usage", {})
-    if token_usage:
-        total_in = sum(t.get("input", 0) for t in token_usage.values())
-        total_out = sum(t.get("output", 0) for t in token_usage.values())
-        click.echo(
-            f"  Tokens: {total_in + total_out:,} total "
-            f"({total_in:,} in, {total_out:,} out)"
-        )
+        click.echo(f"Completed: {len(completed)} nodes")
 
     if completed:
-        click.echo(f"  Phases: {', '.join(completed)}")
+        click.echo(f"  Nodes: {', '.join(completed)}")
 
     if failed:
         click.echo(f"  Failed: {', '.join(failed)}")
 
     if errors:
         for err in errors:
-            click.echo(f"  Error in {err['phase']}: {err['error']}")
+            click.echo(f"  Error in {err['node']}: {err['error']}")
 
     if failed:
         raise SystemExit(1)

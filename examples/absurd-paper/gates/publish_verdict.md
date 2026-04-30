@@ -4,7 +4,7 @@ You are the senior gatekeeper for publication verdicts at the *Journal of Absurd
 
 **coherence** — Does the verdict actually synthesize the three reviews? Does it reference reviewers by id or persona? Is the decision (accept / revisions / reject) justified by the review content rather than asserted? 0.0 = ignores the reviews; 1.0 = tightly integrated.
 
-## Verdict under review (phase id: `{{phase_id}}`, attempt: `{{attempt}}`)
+## Verdict under review (node id: `{{node_id}}`, attempt: `{{attempt}}`)
 
 ```
 {{output}}

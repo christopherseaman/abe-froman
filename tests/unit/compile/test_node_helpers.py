@@ -12,25 +12,25 @@ from abe_froman.compile.nodes import (
     _get_retry_delay,
     assemble_success_update,
     build_context,
-    build_gate_outcome_update,
+    build_evaluation_outcome_update,
     check_dep_failed,
     check_dry_run,
-    classify_gate_outcome,
+    classify_evaluation_outcome,
     execute_with_timeout,
     inject_retry_reason,
     make_failure_update,
 )
-from abe_froman.runtime.gates import GateResult
+from abe_froman.runtime.gates import EvaluationResult
 from abe_froman.runtime.result import ExecutionResult
-from abe_froman.schema.models import Phase, QualityGate
+from abe_froman.schema.models import Node, Evaluation
 
 
-def _phase(id="p1", depends_on=None, quality_gate=None, **kw):
-    return Phase(id=id, name=id, depends_on=depends_on or [], quality_gate=quality_gate, **kw)
+def _phase(id="p1", depends_on=None, evaluation=None, **kw):
+    return Node(id=id, name=id, depends_on=depends_on or [], evaluation=evaluation, **kw)
 
 
 def _gate(threshold=0.8, blocking=True, max_retries=None):
-    return QualityGate(validator="v.py", threshold=threshold, blocking=blocking, max_retries=max_retries)
+    return Evaluation(validator="v.py", threshold=threshold, blocking=blocking, max_retries=max_retries)
 
 
 class TestGetRetryDelay:
@@ -52,41 +52,44 @@ class TestGetRetryDelay:
 
 class TestCheckDepFailed:
     def test_dependency_failed(self):
-        phase = _phase(depends_on=["dep1"])
-        state = {"failed_phases": ["dep1"]}
-        result = check_dep_failed(phase, state)
-        assert result["failed_phases"] == ["p1"]
+        node = _phase(depends_on=["dep1"])
+        state = {"failed_nodes": ["dep1"]}
+        result = check_dep_failed(node, state)
+        assert result["failed_nodes"] == ["p1"]
         assert "dependency 'dep1' failed" in result["errors"][0]["error"]
 
     def test_no_failed_deps(self):
-        phase = _phase(depends_on=["dep1"])
-        state = {"failed_phases": []}
-        assert check_dep_failed(phase, state) is None
+        node = _phase(depends_on=["dep1"])
+        state = {"failed_nodes": []}
+        assert check_dep_failed(node, state) is None
 
     def test_no_deps(self):
-        phase = _phase(depends_on=[])
-        state = {"failed_phases": ["something"]}
-        assert check_dep_failed(phase, state) is None
+        node = _phase(depends_on=[])
+        state = {"failed_nodes": ["something"]}
+        assert check_dep_failed(node, state) is None
 
     def test_unrelated_failure(self):
-        phase = _phase(depends_on=["dep1"])
-        state = {"failed_phases": ["dep2"]}
-        assert check_dep_failed(phase, state) is None
+        node = _phase(depends_on=["dep1"])
+        state = {"failed_nodes": ["dep2"]}
+        assert check_dep_failed(node, state) is None
 
 
 class TestCheckDryRun:
     def test_dry_run_without_gate(self):
         state = {"dry_run": True}
         result = check_dry_run(_phase(), state)
-        assert result["completed_phases"] == ["p1"]
-        assert "[dry-run]" in result["phase_outputs"]["p1"]
+        assert result["completed_nodes"] == ["p1"]
+        assert "[dry-run]" in result["node_outputs"]["p1"]
         assert "gate_scores" not in result
 
     def test_dry_run_with_gate(self):
-        phase = _phase(quality_gate=_gate())
+        """Gated nodes in dry-run: node node writes node_outputs only; the
+        downstream Evaluation node synthesizes a pass EvaluationRecord."""
+        node = _phase(evaluation=_gate())
         state = {"dry_run": True}
-        result = check_dry_run(phase, state)
-        assert result["gate_scores"] == {"p1": 1.0}
+        result = check_dry_run(node, state)
+        assert "[dry-run]" in result["node_outputs"]["p1"]
+        assert "completed_nodes" not in result
 
     def test_not_dry_run(self):
         assert check_dry_run(_phase(), {"dry_run": False}) is None
@@ -98,60 +101,101 @@ class TestCheckDryRun:
 
 class TestBuildContext:
     def test_with_matching_deps(self):
-        phase = _phase(depends_on=["a"])
+        node = _phase(depends_on=["a"])
         state = {
-            "phase_outputs": {"a": "out-a"},
-            "phase_structured_outputs": {"a": {"k": "v"}},
+            "node_outputs": {"a": "out-a"},
+            "node_structured_outputs": {"a": {"k": "v"}},
         }
-        ctx = build_context(phase, state)
+        ctx = build_context(node, state)
         assert ctx == {"a": "out-a", "a_structured": {"k": "v"}}
 
     def test_no_matching_deps(self):
-        phase = _phase(depends_on=["b"])
-        state = {"phase_outputs": {"a": "out-a"}}
-        assert build_context(phase, state) == {}
+        node = _phase(depends_on=["b"])
+        state = {"node_outputs": {"a": "out-a"}}
+        assert build_context(node, state) == {}
 
     def test_empty_deps(self):
-        assert build_context(_phase(), {"phase_outputs": {"a": "x"}}) == {}
+        assert build_context(_phase(), {"node_outputs": {"a": "x"}}) == {}
 
     def test_output_only_no_structured(self):
-        phase = _phase(depends_on=["a"])
-        state = {"phase_outputs": {"a": "text"}}
-        assert build_context(phase, state) == {"a": "text"}
+        node = _phase(depends_on=["a"])
+        state = {"node_outputs": {"a": "text"}}
+        assert build_context(node, state) == {"a": "text"}
 
     def test_projects_dep_worktree_path(self):
-        """`{{dep_worktree}}` is populated from state.phase_worktrees."""
-        phase = _phase(depends_on=["a"])
+        """`{{dep_worktree}}` is populated from state.node_worktrees."""
+        node = _phase(depends_on=["a"])
         state = {
-            "phase_outputs": {"a": "out"},
-            "phase_worktrees": {"a": "/tmp/wt-a"},
+            "node_outputs": {"a": "out"},
+            "node_worktrees": {"a": "/tmp/wt-a"},
         }
-        ctx = build_context(phase, state)
+        ctx = build_context(node, state)
         assert ctx["a_worktree"] == "/tmp/wt-a"
 
     def test_no_worktree_means_no_worktree_key(self):
-        phase = _phase(depends_on=["a"])
-        state = {"phase_outputs": {"a": "out"}, "phase_worktrees": {}}
-        ctx = build_context(phase, state)
+        node = _phase(depends_on=["a"])
+        state = {"node_outputs": {"a": "out"}, "node_worktrees": {}}
+        ctx = build_context(node, state)
         assert "a_worktree" not in ctx
+
+    # -- subgraph outputs: projection (dotted keys) ----------------------
+
+    def test_subgraph_dotted_outputs_bound_as_flat_vars(self):
+        """When a dep's `outputs:` projects values to `dep.key`, build_context
+        binds them under `{dep}_{key}` so templates can reach them without
+        dotted-attribute syntax (Jinja can't dot-into a string).
+
+        Stage 4c: a parent declaring `outputs: { reconcile: "{{reconcile}}" }`
+        on the subgraph node lets a downstream node template `{{paper_reconcile}}`.
+        """
+        node = _phase(depends_on=["paper"])
+        state = {
+            "node_outputs": {
+                "paper": "terminal-out",
+                "paper.reconcile": "the-paper-text",
+            },
+        }
+        ctx = build_context(node, state)
+        assert ctx["paper"] == "terminal-out"
+        assert ctx["paper_reconcile"] == "the-paper-text"
+        # Bare-key form is intentionally NOT bound — silent collision risk
+        # when two deps both project the same key. Use the dep-prefixed form.
+        assert "reconcile" not in ctx
+
+    def test_dotted_outputs_no_bare_key_collision(self):
+        """Two deps each projecting the same suffix — both per-dep keys are
+        bound; the bare key is unbound (no silent collision)."""
+        node = _phase(depends_on=["a", "b"])
+        state = {
+            "node_outputs": {
+                "a": "a-out", "b": "b-out",
+                "a.summary": "from-a",
+                "b.summary": "from-b",
+            },
+        }
+        ctx = build_context(node, state)
+        assert ctx["a_summary"] == "from-a"
+        assert ctx["b_summary"] == "from-b"
+        # No silent first-dep-wins binding for bare `summary`.
+        assert "summary" not in ctx
 
     def test_projects_subphase_aggregations(self):
         """Downstream context synthesizes `{dep}_subphases` + worktrees from state.
 
-        Stage 2b moved aggregation out of the final-phase wrapper; any
-        phase depending on a dynamic parent now sees the same aggregate
+        Stage 2b moved aggregation out of the final-node wrapper; any
+        node depending on a dynamic parent now sees the same aggregate
         via build_context's state projection.
         """
-        phase = _phase(depends_on=["parent"])
+        node = _phase(depends_on=["parent"])
         state = {
-            "phase_outputs": {"parent": "parent-out"},
-            "subphase_outputs": {"parent::a": "x", "parent::b": "y"},
-            "phase_worktrees": {
+            "node_outputs": {"parent": "parent-out"},
+            "child_outputs": {"parent::a": "x", "parent::b": "y"},
+            "node_worktrees": {
                 "parent::a": "/tmp/wt-a",
                 "parent::b": "/tmp/wt-b",
             },
         }
-        ctx = build_context(phase, state)
+        ctx = build_context(node, state)
         import json as _json
         assert _json.loads(ctx["parent_subphases"]) == {
             "parent::a": "x",
@@ -163,27 +207,92 @@ class TestBuildContext:
         ]
 
     def test_no_subphase_aggregations_when_absent(self):
-        """Phases with no dynamic parent in deps get no aggregate keys."""
-        phase = _phase(depends_on=["normal"])
+        """Nodes with no fan-out parent in deps get no aggregate keys."""
+        node = _phase(depends_on=["normal"])
         state = {
-            "phase_outputs": {"normal": "out"},
-            "subphase_outputs": {},
-            "phase_worktrees": {},
+            "node_outputs": {"normal": "out"},
+            "child_outputs": {},
+            "node_worktrees": {},
         }
-        ctx = build_context(phase, state)
+        ctx = build_context(node, state)
         assert "normal_subphases" not in ctx
         assert "normal_subphase_worktrees" not in ctx
+
+    # -- aggregate _deps / _dep_worktrees ---------------------------------
+
+    def test_single_dep_no_aggregate(self):
+        """Node with exactly one dep does NOT get _deps — it's unnecessary."""
+        node = _phase(depends_on=["a"])
+        state = {"node_outputs": {"a": "out-a"}}
+        ctx = build_context(node, state)
+        assert "_deps" not in ctx
+        assert "_dep_worktrees" not in ctx
+
+    def test_multi_dep_aggregate_outputs(self):
+        """Node with 2+ deps gets _deps mapping dep_id → output."""
+        import json as _json
+        node = _phase(depends_on=["a", "b"])
+        state = {"node_outputs": {"a": "out-a", "b": "out-b"}}
+        ctx = build_context(node, state)
+        assert "_deps" in ctx
+        assert _json.loads(ctx["_deps"]) == {"a": "out-a", "b": "out-b"}
+
+    def test_multi_dep_aggregate_worktrees(self):
+        """_dep_worktrees is present when some deps have worktrees."""
+        import json as _json
+        node = _phase(depends_on=["a", "b"])
+        state = {
+            "node_outputs": {"a": "out-a", "b": "out-b"},
+            "node_worktrees": {"a": "/tmp/wt-a", "b": "/tmp/wt-b"},
+        }
+        ctx = build_context(node, state)
+        assert "_dep_worktrees" in ctx
+        assert _json.loads(ctx["_dep_worktrees"]) == {
+            "a": "/tmp/wt-a",
+            "b": "/tmp/wt-b",
+        }
+
+    def test_multi_dep_no_worktrees_omits_key(self):
+        """_dep_worktrees is absent when no deps have worktrees."""
+        node = _phase(depends_on=["a", "b"])
+        state = {
+            "node_outputs": {"a": "out-a", "b": "out-b"},
+            "node_worktrees": {},
+        }
+        ctx = build_context(node, state)
+        assert "_deps" in ctx
+        assert "_dep_worktrees" not in ctx
+
+    def test_multi_dep_json_roundtrip(self):
+        """_deps value is valid JSON."""
+        import json as _json
+        node = _phase(depends_on=["a", "b"])
+        state = {"node_outputs": {"a": "hello", "b": "world"}}
+        ctx = build_context(node, state)
+        parsed = _json.loads(ctx["_deps"])
+        assert isinstance(parsed, dict)
+        assert parsed["a"] == "hello"
 
 
 class TestInjectRetryReason:
     def test_first_attempt_no_injection(self):
-        ctx = inject_retry_reason({}, _phase(quality_gate=_gate()), {"retries": {}}, 3)
+        ctx = inject_retry_reason({}, _phase(evaluation=_gate()), {"retries": {}}, 3)
         assert "_retry_reason" not in ctx
 
     def test_retry_injects_reason(self):
-        phase = _phase(quality_gate=_gate(threshold=0.8))
-        state = {"retries": {"p1": 1}, "gate_scores": {"p1": 0.5}}
-        ctx = inject_retry_reason({}, phase, state, 3)
+        node = _phase(evaluation=_gate(threshold=0.8))
+        state = {
+            "retries": {"p1": 1},
+            "evaluations": {
+                "p1": [{
+                    "invocation": 0,
+                    "result": {"score": 0.5, "scores": {}, "feedback": None,
+                               "pass_criteria_met": [], "pass_criteria_unmet": []},
+                    "timestamp": "t",
+                }],
+            },
+        }
+        ctx = inject_retry_reason({}, node, state, 3)
         assert "score=0.50" in ctx["_retry_reason"]
         assert "threshold=0.8" in ctx["_retry_reason"]
         assert "retry 1 of 3" in ctx["_retry_reason"]
@@ -195,19 +304,24 @@ class TestInjectRetryReason:
 
     def test_includes_feedback_narrative(self):
         """Structured gate feedback appears in the retry reason."""
-        phase = _phase(quality_gate=_gate())
+        node = _phase(evaluation=_gate())
         state = {
             "retries": {"p1": 1},
-            "gate_scores": {"p1": 0.4},
-            "gate_feedback": {
-                "p1": {
-                    "feedback": "missing docstring",
-                    "pass_criteria_met": [],
-                    "pass_criteria_unmet": ["docs", "tests"],
-                }
+            "evaluations": {
+                "p1": [{
+                    "invocation": 0,
+                    "result": {
+                        "score": 0.4,
+                        "scores": {},
+                        "feedback": "missing docstring",
+                        "pass_criteria_met": [],
+                        "pass_criteria_unmet": ["docs", "tests"],
+                    },
+                    "timestamp": "t",
+                }],
             },
         }
-        ctx = inject_retry_reason({}, phase, state, 3)
+        ctx = inject_retry_reason({}, node, state, 3)
         reason = ctx["_retry_reason"]
         assert "Feedback: missing docstring" in reason
         assert "- docs" in reason
@@ -216,23 +330,28 @@ class TestInjectRetryReason:
     def test_partial_feedback_produces_minimal_retry_reason(self):
         """Gate that returns only `{"score": ...}` produces feedback with
         feedback=None and empty pass_criteria lists (the shape
-        build_gate_outcome_update writes). The retry reason must still surface
+        build_evaluation_outcome_update writes). The retry reason must still surface
         the score/threshold/attempt lines without "Feedback:" or
         "Unmet criteria:" sections.
         """
-        phase = _phase(quality_gate=_gate(threshold=0.8))
+        node = _phase(evaluation=_gate(threshold=0.8))
         state = {
             "retries": {"p1": 1},
-            "gate_scores": {"p1": 0.4},
-            "gate_feedback": {
-                "p1": {
-                    "feedback": None,
-                    "pass_criteria_met": [],
-                    "pass_criteria_unmet": [],
-                }
+            "evaluations": {
+                "p1": [{
+                    "invocation": 0,
+                    "result": {
+                        "score": 0.4,
+                        "scores": {},
+                        "feedback": None,
+                        "pass_criteria_met": [],
+                        "pass_criteria_unmet": [],
+                    },
+                    "timestamp": "t",
+                }],
             },
         }
-        ctx = inject_retry_reason({}, phase, state, 3)
+        ctx = inject_retry_reason({}, node, state, 3)
         reason = ctx["_retry_reason"]
         assert "score=0.40" in reason
         assert "threshold=0.8" in reason
@@ -245,7 +364,7 @@ class TestExecuteWithTimeout:
     @pytest.mark.asyncio
     async def test_successful_execution(self):
         class FakeExec:
-            async def execute(self, phase, context):
+            async def execute(self, node, context):
                 return ExecutionResult(output="done")
 
         result = await execute_with_timeout(FakeExec(), _phase(), {}, None)
@@ -255,7 +374,7 @@ class TestExecuteWithTimeout:
     @pytest.mark.asyncio
     async def test_with_timeout_succeeds(self):
         class FakeExec:
-            async def execute(self, phase, context):
+            async def execute(self, node, context):
                 return ExecutionResult(output="fast")
 
         result = await execute_with_timeout(FakeExec(), _phase(), {}, 5.0)
@@ -264,7 +383,7 @@ class TestExecuteWithTimeout:
     @pytest.mark.asyncio
     async def test_timeout_returns_sentinel(self):
         class SlowExec:
-            async def execute(self, phase, context):
+            async def execute(self, node, context):
                 await asyncio.sleep(10)
                 return ExecutionResult(output="never")
 
@@ -276,8 +395,8 @@ class TestMakeFailureUpdate:
     def test_structure(self):
         result = make_failure_update("p1", "something broke")
         assert result == {
-            "failed_phases": ["p1"],
-            "errors": [{"phase": "p1", "error": "something broke"}],
+            "failed_nodes": ["p1"],
+            "errors": [{"node": "p1", "error": "something broke"}],
         }
 
 
@@ -285,27 +404,17 @@ class TestAssembleSuccessUpdate:
     def test_basic_output(self):
         result = ExecutionResult(output="hello")
         update = assemble_success_update(_phase(), result)
-        assert update == {"phase_outputs": {"p1": "hello"}}
-
-    def test_with_tokens(self):
-        result = ExecutionResult(output="x", tokens_used={"input": 10, "output": 20})
-        update = assemble_success_update(_phase(), result)
-        assert update["token_usage"] == {"p1": {"input": 10, "output": 20}}
+        assert update == {"node_outputs": {"p1": "hello"}}
 
     def test_with_structured_output(self):
         result = ExecutionResult(output="x", structured_output={"key": "val"})
         update = assemble_success_update(_phase(), result)
-        assert update["phase_structured_outputs"] == {"p1": {"key": "val"}}
-
-    def test_none_tokens_excluded(self):
-        result = ExecutionResult(output="x", tokens_used=None)
-        update = assemble_success_update(_phase(), result)
-        assert "token_usage" not in update
+        assert update["node_structured_outputs"] == {"p1": {"key": "val"}}
 
     def test_none_structured_excluded(self):
         result = ExecutionResult(output="x", structured_output=None)
         update = assemble_success_update(_phase(), result)
-        assert "phase_structured_outputs" not in update
+        assert "node_structured_outputs" not in update
 
 
 class TestClassifyGateOutcome:
@@ -323,69 +432,69 @@ class TestClassifyGateOutcome:
         ],
     )
     def test_gate_outcomes(self, score, threshold, retries, max_retries, blocking, expected):
-        phase = _phase(quality_gate=_gate(threshold=threshold, blocking=blocking))
-        result = GateResult(score=score)
-        assert classify_gate_outcome(phase, result, retries, max_retries) == expected
+        node = _phase(evaluation=_gate(threshold=threshold, blocking=blocking))
+        result = EvaluationResult(score=score)
+        assert classify_evaluation_outcome(node, result, retries, max_retries) == expected
 
 
 class TestBuildGateOutcomeUpdate:
     def test_pass(self):
-        phase = _phase(quality_gate=_gate())
-        update = build_gate_outcome_update(phase, GateResult(score=0.9), "pass", 0, 3)
-        assert update["gate_scores"] == {"p1": 0.9}
-        fb = update["gate_feedback"]["p1"]
-        assert fb["feedback"] is None
-        assert fb["scores"] == {}
-        assert update["completed_phases"] == ["p1"]
-        assert "failed_phases" not in update
+        node = _phase(evaluation=_gate())
+        update = build_evaluation_outcome_update(node, EvaluationResult(score=0.9), "pass", 0, 3)
+        record = update["evaluations"]["p1"][0]
+        assert record["result"]["score"] == 0.9
+        assert record["result"]["feedback"] is None
+        assert record["result"]["scores"] == {}
+        assert update["completed_nodes"] == ["p1"]
+        assert "failed_nodes" not in update
 
     def test_retry(self):
-        phase = _phase(quality_gate=_gate())
-        update = build_gate_outcome_update(phase, GateResult(score=0.5), "retry", 1, 3)
+        node = _phase(evaluation=_gate())
+        update = build_evaluation_outcome_update(node, EvaluationResult(score=0.5), "retry", 1, 3)
         assert update["retries"] == {"p1": 2}
-        assert "completed_phases" not in update
+        assert "completed_nodes" not in update
 
     def test_fail_blocking(self):
-        phase = _phase(quality_gate=_gate(threshold=0.8))
-        update = build_gate_outcome_update(
-            phase, GateResult(score=0.3), "fail_blocking", 3, 3
+        node = _phase(evaluation=_gate(threshold=0.8))
+        update = build_evaluation_outcome_update(
+            node, EvaluationResult(score=0.3), "fail_blocking", 3, 3
         )
-        assert update["failed_phases"] == ["p1"]
+        assert update["failed_nodes"] == ["p1"]
         assert "score=0.30" in update["errors"][0]["error"]
         assert "threshold=0.8" in update["errors"][0]["error"]
 
     def test_warn_continue(self):
-        phase = _phase(quality_gate=_gate(threshold=0.8, blocking=False))
-        update = build_gate_outcome_update(
-            phase, GateResult(score=0.3), "warn_continue", 3, 3
+        node = _phase(evaluation=_gate(threshold=0.8, blocking=False))
+        update = build_evaluation_outcome_update(
+            node, EvaluationResult(score=0.3), "warn_continue", 3, 3
         )
-        assert update["completed_phases"] == ["p1"]
+        assert update["completed_nodes"] == ["p1"]
         assert "non-blocking" in update["errors"][0]["error"]
 
     def test_feedback_populated_from_gate_result(self):
-        phase = _phase(quality_gate=_gate())
-        gr = GateResult(
+        node = _phase(evaluation=_gate())
+        gr = EvaluationResult(
             score=0.5,
             feedback="missing docstring",
             pass_criteria_met=["tests pass"],
             pass_criteria_unmet=["docs"],
         )
-        update = build_gate_outcome_update(phase, gr, "retry", 0, 3)
-        fb = update["gate_feedback"]["p1"]
-        assert fb["feedback"] == "missing docstring"
-        assert fb["pass_criteria_met"] == ["tests pass"]
-        assert fb["pass_criteria_unmet"] == ["docs"]
-        assert fb["scores"] == {}
+        update = build_evaluation_outcome_update(node, gr, "retry", 0, 3)
+        record = update["evaluations"]["p1"][0]
+        assert record["result"]["feedback"] == "missing docstring"
+        assert record["result"]["pass_criteria_met"] == ["tests pass"]
+        assert record["result"]["pass_criteria_unmet"] == ["docs"]
+        assert record["result"]["scores"] == {}
 
     def test_evaluation_record_written_to_state(self):
         """Each gate call appends an EvaluationRecord to state.evaluations."""
-        phase = _phase(quality_gate=_gate(threshold=0.8))
-        gr = GateResult(
+        node = _phase(evaluation=_gate(threshold=0.8))
+        gr = EvaluationResult(
             score=0.6,
             feedback="too thin",
             pass_criteria_unmet=["detail"],
         )
-        update = build_gate_outcome_update(phase, gr, "retry", 1, 3)
+        update = build_evaluation_outcome_update(node, gr, "retry", 1, 3)
         records = update["evaluations"]["p1"]
         assert len(records) == 1
         rec = records[0]
@@ -405,7 +514,7 @@ from abe_froman.schema.models import DimensionCheck
 
 class TestDimensionGateClassification:
     def _dim_gate(self, dims, blocking=True):
-        return QualityGate(
+        return Evaluation(
             validator="v.py",
             blocking=blocking,
             dimensions=[DimensionCheck(**d) for d in dims],
@@ -413,63 +522,63 @@ class TestDimensionGateClassification:
 
     def test_all_dimensions_pass(self):
         gate = self._dim_gate([{"field": "correctness", "min": 0.7}, {"field": "style", "min": 0.5}])
-        phase = _phase(quality_gate=gate)
-        result = GateResult(score=0.0, scores={"correctness": 0.8, "style": 0.6})
-        assert classify_gate_outcome(phase, result, 0, 3) == "pass"
+        node = _phase(evaluation=gate)
+        result = EvaluationResult(score=0.0, scores={"correctness": 0.8, "style": 0.6})
+        assert classify_evaluation_outcome(node, result, 0, 3) == "pass"
 
     def test_one_dimension_fails(self):
         gate = self._dim_gate([{"field": "correctness", "min": 0.7}, {"field": "style", "min": 0.5}])
-        phase = _phase(quality_gate=gate)
-        result = GateResult(score=0.0, scores={"correctness": 0.8, "style": 0.3})
-        assert classify_gate_outcome(phase, result, 0, 3) == "retry"
+        node = _phase(evaluation=gate)
+        result = EvaluationResult(score=0.0, scores={"correctness": 0.8, "style": 0.3})
+        assert classify_evaluation_outcome(node, result, 0, 3) == "retry"
 
     def test_missing_dimension_treated_as_zero(self):
         gate = self._dim_gate([{"field": "correctness", "min": 0.7}])
-        phase = _phase(quality_gate=gate)
-        result = GateResult(score=0.0, scores={})
-        assert classify_gate_outcome(phase, result, 0, 3) == "retry"
+        node = _phase(evaluation=gate)
+        result = EvaluationResult(score=0.0, scores={})
+        assert classify_evaluation_outcome(node, result, 0, 3) == "retry"
 
     def test_dimension_gate_exhausted_blocking(self):
         gate = self._dim_gate([{"field": "x", "min": 0.8}], blocking=True)
-        phase = _phase(quality_gate=gate)
-        result = GateResult(score=0.0, scores={"x": 0.5})
-        assert classify_gate_outcome(phase, result, 3, 3) == "fail_blocking"
+        node = _phase(evaluation=gate)
+        result = EvaluationResult(score=0.0, scores={"x": 0.5})
+        assert classify_evaluation_outcome(node, result, 3, 3) == "fail_blocking"
 
     def test_dimension_gate_exhausted_non_blocking(self):
         gate = self._dim_gate([{"field": "x", "min": 0.8}], blocking=False)
-        phase = _phase(quality_gate=gate)
-        result = GateResult(score=0.0, scores={"x": 0.5})
-        assert classify_gate_outcome(phase, result, 3, 3) == "warn_continue"
+        node = _phase(evaluation=gate)
+        result = EvaluationResult(score=0.0, scores={"x": 0.5})
+        assert classify_evaluation_outcome(node, result, 3, 3) == "warn_continue"
 
     def test_dimension_scores_stored_in_feedback(self):
         gate = self._dim_gate([{"field": "correctness", "min": 0.7}])
-        phase = _phase(quality_gate=gate)
-        gr = GateResult(score=0.0, scores={"correctness": 0.9})
-        update = build_gate_outcome_update(phase, gr, "pass", 0, 3)
-        assert update["gate_feedback"]["p1"]["scores"] == {"correctness": 0.9}
+        node = _phase(evaluation=gate)
+        gr = EvaluationResult(score=0.0, scores={"correctness": 0.9})
+        update = build_evaluation_outcome_update(node, gr, "pass", 0, 3)
+        assert update["evaluations"]["p1"][0]["result"]["scores"] == {"correctness": 0.9}
 
     def test_dimension_gate_ignore_threshold(self):
         """When dimensions are set, the single-score threshold is irrelevant."""
-        gate = QualityGate(
+        gate = Evaluation(
             validator="v.py", threshold=0.99,
             dimensions=[DimensionCheck(field="x", min=0.5)],
         )
-        phase = _phase(quality_gate=gate)
-        result = GateResult(score=0.0, scores={"x": 0.6})
-        assert classify_gate_outcome(phase, result, 0, 3) == "pass"
+        node = _phase(evaluation=gate)
+        result = EvaluationResult(score=0.0, scores={"x": 0.6})
+        assert classify_evaluation_outcome(node, result, 0, 3) == "pass"
 
 
 # ---------------------------------------------------------------------------
-# evaluate_gate_and_outcome — end-to-end gate+classifier+update integration
+# run_evaluation_and_outcome — end-to-end gate+classifier+update integration
 # ---------------------------------------------------------------------------
 
-from abe_froman.compile.nodes import evaluate_gate_and_outcome
-from abe_froman.schema.models import Settings, WorkflowConfig
+from abe_froman.compile.nodes import run_evaluation_and_outcome
+from abe_froman.schema.models import Settings, Graph
 
 
-def _config_with_phase(phase: Phase, **settings_kwargs) -> WorkflowConfig:
-    return WorkflowConfig(
-        name="T", version="1.0", phases=[phase],
+def _config_with_phase(node: Node, **settings_kwargs) -> Graph:
+    return Graph(
+        name="T", version="1.0", nodes=[node],
         settings=Settings(**settings_kwargs),
     )
 
@@ -485,55 +594,55 @@ class TestEvaluateGateAndOutcome:
     @pytest.mark.asyncio
     async def test_pass_path(self, tmp_path):
         validator = _write_validator(tmp_path, "pass.py", "1.0")
-        phase = _phase(quality_gate=_gate(threshold=0.8))
-        phase.quality_gate.validator = validator
-        config = _config_with_phase(phase)
+        node = _phase(evaluation=_gate(threshold=0.8))
+        node.evaluation.validator = validator
+        config = _config_with_phase(node)
         state = {
             "workdir": str(tmp_path),
             "retries": {},
         }
-        update = await evaluate_gate_and_outcome(
-            phase, config, state, ExecutionResult(output="x"), timeout=None,
+        update = await run_evaluation_and_outcome(
+            node, config, state, ExecutionResult(output="x"), timeout=None,
         )
-        assert update["completed_phases"] == ["p1"]
-        assert update["gate_scores"] == {"p1": 1.0}
+        assert update["completed_nodes"] == ["p1"]
+        assert update["evaluations"]["p1"][0]["result"]["score"] == 1.0
 
     @pytest.mark.asyncio
     async def test_retry_path_bumps_retries(self, tmp_path):
         validator = _write_validator(tmp_path, "fail.py", "0.0")
-        phase = _phase(quality_gate=_gate(threshold=0.8))
-        phase.quality_gate.validator = validator
-        config = _config_with_phase(phase, max_retries=3)
+        node = _phase(evaluation=_gate(threshold=0.8))
+        node.evaluation.validator = validator
+        config = _config_with_phase(node, max_retries=3)
         state = {"workdir": str(tmp_path), "retries": {"p1": 1}}
-        update = await evaluate_gate_and_outcome(
-            phase, config, state, ExecutionResult(output="x"), timeout=None,
+        update = await run_evaluation_and_outcome(
+            node, config, state, ExecutionResult(output="x"), timeout=None,
         )
         assert update["retries"] == {"p1": 2}
-        assert "completed_phases" not in update
+        assert "completed_nodes" not in update
 
     @pytest.mark.asyncio
     async def test_fail_blocking_path(self, tmp_path):
         validator = _write_validator(tmp_path, "fail.py", "0.0")
-        phase = _phase(quality_gate=_gate(threshold=0.8, blocking=True))
-        phase.quality_gate.validator = validator
-        config = _config_with_phase(phase, max_retries=0)
+        node = _phase(evaluation=_gate(threshold=0.8, blocking=True))
+        node.evaluation.validator = validator
+        config = _config_with_phase(node, max_retries=0)
         state = {"workdir": str(tmp_path), "retries": {}}
-        update = await evaluate_gate_and_outcome(
-            phase, config, state, ExecutionResult(output="x"), timeout=None,
+        update = await run_evaluation_and_outcome(
+            node, config, state, ExecutionResult(output="x"), timeout=None,
         )
-        assert update["failed_phases"] == ["p1"]
+        assert update["failed_nodes"] == ["p1"]
 
     @pytest.mark.asyncio
     async def test_warn_continue_path(self, tmp_path):
         validator = _write_validator(tmp_path, "fail.py", "0.0")
-        phase = _phase(quality_gate=_gate(threshold=0.8, blocking=False))
-        phase.quality_gate.validator = validator
-        config = _config_with_phase(phase, max_retries=0)
+        node = _phase(evaluation=_gate(threshold=0.8, blocking=False))
+        node.evaluation.validator = validator
+        config = _config_with_phase(node, max_retries=0)
         state = {"workdir": str(tmp_path), "retries": {}}
-        update = await evaluate_gate_and_outcome(
-            phase, config, state, ExecutionResult(output="x"), timeout=None,
+        update = await run_evaluation_and_outcome(
+            node, config, state, ExecutionResult(output="x"), timeout=None,
         )
-        assert update["completed_phases"] == ["p1"]
+        assert update["completed_nodes"] == ["p1"]
         assert "non-blocking" in update["errors"][0]["error"]
 
     @pytest.mark.asyncio
@@ -541,12 +650,12 @@ class TestEvaluateGateAndOutcome:
         """Slow validator + tight timeout → failure update with timeout message."""
         slow = tmp_path / "slow.py"
         slow.write_text("import time, sys\nsys.stdin.read()\ntime.sleep(10)\nprint('1.0')\n")
-        phase = _phase(quality_gate=_gate(threshold=0.8))
-        phase.quality_gate.validator = "slow.py"
-        config = _config_with_phase(phase)
+        node = _phase(evaluation=_gate(threshold=0.8))
+        node.evaluation.validator = "slow.py"
+        config = _config_with_phase(node)
         state = {"workdir": str(tmp_path), "retries": {}}
-        update = await evaluate_gate_and_outcome(
-            phase, config, state, ExecutionResult(output="x"), timeout=0.1,
+        update = await run_evaluation_and_outcome(
+            node, config, state, ExecutionResult(output="x"), timeout=0.1,
         )
-        assert update["failed_phases"] == ["p1"]
+        assert update["failed_nodes"] == ["p1"]
         assert "timed out" in update["errors"][0]["error"]

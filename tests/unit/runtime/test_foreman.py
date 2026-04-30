@@ -16,7 +16,7 @@ import pytest
 from abe_froman.runtime.executor.command import CommandExecutor
 from abe_froman.runtime.executor.dispatch import DispatchExecutor
 from abe_froman.runtime.foreman import ForemanExecutor
-from abe_froman.schema.models import Phase, Settings
+from abe_froman.schema.models import Node, Settings
 
 
 def _init_git_repo(path: Path) -> None:
@@ -35,9 +35,9 @@ def _init_git_repo(path: Path) -> None:
     )
 
 
-def _cmd_phase(phase_id: str, command: str = "pwd", args=None) -> Phase:
-    return Phase(
-        id=phase_id, name=phase_id,
+def _cmd_phase(node_id: str, command: str = "pwd", args=None) -> Node:
+    return Node(
+        id=node_id, name=node_id,
         execution={"type": "command", "command": command, "args": args or []},
     )
 
@@ -60,7 +60,7 @@ class TestWorktreePool:
 
     @pytest.mark.asyncio
     async def test_retry_reuses_same_worktree(self, tmp_path):
-        """Second execute() with same phase_id must use the same worktree path."""
+        """Second execute() with same node_id must use the same worktree path."""
         _init_git_repo(tmp_path)
         inner = DispatchExecutor(workdir=str(tmp_path))
         foreman = ForemanExecutor(inner=inner, base_workdir=str(tmp_path))
@@ -80,7 +80,7 @@ class TestWorktreePool:
             await foreman.close()
 
     @pytest.mark.asyncio
-    async def test_different_phases_get_different_worktrees(self, tmp_path):
+    async def test_different_nodes_get_different_worktrees(self, tmp_path):
         _init_git_repo(tmp_path)
         inner = DispatchExecutor(workdir=str(tmp_path))
         foreman = ForemanExecutor(inner=inner, base_workdir=str(tmp_path))
@@ -93,7 +93,7 @@ class TestWorktreePool:
 
     @pytest.mark.asyncio
     async def test_subphase_composite_id_gets_own_worktree(self, tmp_path):
-        """Dynamic subphase ids (parent::item) each get their own tree."""
+        """Dynamic child ids (parent::item) each get their own tree."""
         _init_git_repo(tmp_path)
         inner = DispatchExecutor(workdir=str(tmp_path))
         foreman = ForemanExecutor(inner=inner, base_workdir=str(tmp_path))
@@ -199,7 +199,7 @@ class TestRehydration:
 class TestConcurrencyCap:
     @pytest.mark.asyncio
     async def test_global_semaphore_bounds_parallelism(self, tmp_path):
-        """With max_parallel_jobs=2 and 6 sleeping phases, wall time is bounded
+        """With max_parallel_jobs=2 and 6 sleeping nodes, wall time is bounded
         from below by (N/K) * per_phase_duration."""
         _init_git_repo(tmp_path)
         inner = DispatchExecutor(workdir=str(tmp_path))
@@ -228,7 +228,7 @@ class TestConcurrencyCap:
 
     @pytest.mark.asyncio
     async def test_no_cap_runs_fully_parallel(self, tmp_path):
-        """Without a cap, 4 sleeping phases finish in ~1 sleep duration."""
+        """Without a cap, 4 sleeping nodes finish in ~1 sleep duration."""
         _init_git_repo(tmp_path)
         inner = DispatchExecutor(workdir=str(tmp_path))
         foreman = ForemanExecutor(
@@ -255,7 +255,7 @@ class TestConcurrencyCap:
 class TestPerModelBackpressure:
     """Per-model semaphores apply on top of the global cap.
 
-    We construct prompt phases with different models, each using a MemoryBackend
+    We construct prompt nodes with different models, each using a MemoryBackend
     that sleeps — MemoryBackend is the existing in-repo test double for the
     PromptBackend Protocol (see tests/unit/runtime/test_prompt.py).
     """
@@ -333,17 +333,17 @@ class TestPerModelBackpressure:
             per_model_limits={"opus": 1, "sonnet": 2},
         )
 
-        phases = []
+        nodes = []
         for i in range(3):
-            phases.append(Phase(
+            nodes.append(Node(
                 id=f"opus{i}", name=f"opus{i}", prompt_file="p.md", model="opus",
             ))
-            phases.append(Phase(
+            nodes.append(Node(
                 id=f"son{i}", name=f"son{i}", prompt_file="p.md", model="sonnet",
             ))
 
         try:
-            await asyncio.gather(*[foreman.execute(p, {}) for p in phases])
+            await asyncio.gather(*[foreman.execute(p, {}) for p in nodes])
             assert backend.max_inflight.get("opus", 0) == 1
             assert backend.max_inflight.get("sonnet", 0) == 2
         finally:

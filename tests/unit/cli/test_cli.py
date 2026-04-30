@@ -38,21 +38,21 @@ class TestValidateCommand:
     def test_validate_reports_phase_count(self, runner, tmp_path):
         config = tmp_path / "simple.yaml"
         config.write_text(
-            "name: Test\nversion: '1.0'\nphases:\n"
-            "  - id: p1\n    name: Phase 1\n    prompt_file: t.md\n"
+            "name: Test\nversion: '1.0'\nnodes:\n"
+            "  - id: p1\n    name: Node 1\n    prompt_file: t.md\n"
         )
         result = runner.invoke(cli, ["validate", str(config)])
         assert result.exit_code == 0
-        assert "1 phases" in result.output
+        assert "1 nodes" in result.output
 
 
 class TestGraphCommand:
     def test_graph_prints_phase_ids(self, runner, example_workflow_path):
         result = runner.invoke(cli, ["graph", str(example_workflow_path)])
         assert result.exit_code == 0
-        assert "phase-0" in result.output
-        assert "phase-1" in result.output
-        assert "phase-5" in result.output
+        assert "node-0" in result.output
+        assert "node-1" in result.output
+        assert "node-5" in result.output
 
     def test_graph_mermaid_format(self, runner, example_workflow_path):
         """Default format is Mermaid — output should contain the header."""
@@ -61,7 +61,7 @@ class TestGraphCommand:
         assert "graph TD" in result.output
 
     def test_graph_shows_gate_edges(self, runner, example_workflow_path):
-        """Gated phases produce conditional (dotted) edges in mermaid output."""
+        """Gated nodes produce conditional (dotted) edges in mermaid output."""
         result = runner.invoke(cli, ["graph", str(example_workflow_path)])
         assert result.exit_code == 0
         assert "-.->" in result.output
@@ -81,37 +81,37 @@ class TestRunCommand:
         )
         assert result.exit_code == 0
         assert "Dry run completed" in result.output
-        assert "phases traced" in result.output
+        assert "nodes traced" in result.output
 
     def test_run_nonexistent_file(self, runner):
         result = runner.invoke(cli, ["run", "nonexistent.yaml"])
         assert result.exit_code != 0
 
-    def test_run_dry_run_lists_phases(self, runner, example_workflow_path):
+    def test_run_dry_run_lists_nodes(self, runner, example_workflow_path):
         result = runner.invoke(
             cli, ["run", str(example_workflow_path), "--dry-run"]
         )
         assert result.exit_code == 0
-        assert "Phases:" in result.output
-        assert "phase-0" in result.output
+        assert "Nodes:" in result.output
+        assert "node-0" in result.output
 
     def test_run_simple_workflow(self, runner, tmp_path):
-        """End-to-end: command phase that actually runs."""
+        """End-to-end: command node that actually runs."""
         config = tmp_path / "simple.yaml"
         config.write_text(
-            "name: Simple\nversion: '1.0'\nphases:\n"
+            "name: Simple\nversion: '1.0'\nnodes:\n"
             "  - id: echo\n    name: Echo Test\n"
             "    execution:\n      type: command\n      command: echo\n      args: ['hello']\n"
         )
         result = runner.invoke(cli, ["run", str(config), "--workdir", str(tmp_path)])
         assert result.exit_code == 0
-        assert "Completed: 1 phases" in result.output
+        assert "Completed: 1 nodes" in result.output
 
     def test_run_failing_command_exits_nonzero(self, runner, tmp_path):
-        """A failing command phase should cause non-zero exit."""
+        """A failing command node should cause non-zero exit."""
         config = tmp_path / "fail.yaml"
         config.write_text(
-            "name: Fail\nversion: '1.0'\nphases:\n"
+            "name: Fail\nversion: '1.0'\nnodes:\n"
             "  - id: fail\n    name: Fail Test\n"
             "    execution:\n      type: command\n      command: 'false'\n"
         )
@@ -120,43 +120,12 @@ class TestRunCommand:
         assert "Failed:" in result.output
 
 
-class TestTokenSummary:
-    def test_token_summary_displayed(self, runner, tmp_path):
-        """Token usage from a prompt-stub phase should show in CLI output."""
-        config = tmp_path / "workflow.yaml"
-        config.write_text(
-            "name: Test\nversion: '1.0'\nphases:\n"
-            "  - id: a\n    name: A\n    prompt_file: t.md\n"
-        )
-        (tmp_path / "t.md").write_text("hello")
-
-        result = runner.invoke(
-            cli, ["run", str(config), "--workdir", str(tmp_path)]
-        )
-        assert result.exit_code == 0
-        # Stub backend returns None for tokens_used, so no token line
-        assert "Tokens:" not in result.output
-
-    def test_no_token_summary_for_command_phases(self, runner, tmp_path):
-        config = tmp_path / "workflow.yaml"
-        config.write_text(
-            "name: Test\nversion: '1.0'\nphases:\n"
-            "  - id: a\n    name: A\n"
-            "    execution:\n      type: command\n      command: echo\n      args: ['hi']\n"
-        )
-        result = runner.invoke(
-            cli, ["run", str(config), "--workdir", str(tmp_path)]
-        )
-        assert result.exit_code == 0
-        assert "Tokens:" not in result.output
-
-
 class TestRunOptions:
     def test_executor_unknown_raises(self, runner, tmp_path):
         config = tmp_path / "simple.yaml"
         config.write_text(
-            "name: Test\nversion: '1.0'\nphases:\n"
-            "  - id: phase-1\n    name: Phase 1\n"
+            "name: Test\nversion: '1.0'\nnodes:\n"
+            "  - id: node-1\n    name: Node 1\n"
             "    execution:\n      type: command\n      command: echo\n      args: ['hi']\n"
         )
         result = runner.invoke(
@@ -169,7 +138,7 @@ class TestResumeCommand:
     def _simple_config(self, tmp_path):
         config = tmp_path / "simple.yaml"
         config.write_text(
-            "name: Test\nversion: '1.0'\nphases:\n"
+            "name: Test\nversion: '1.0'\nnodes:\n"
             "  - id: a\n    name: A\n"
             "    execution:\n      type: command\n      command: echo\n      args: ['hi']\n"
         )
@@ -185,7 +154,7 @@ class TestResumeCommand:
         assert "No saved state" in result.output
 
     def test_resume_reads_previous_checkpoint(self, runner, tmp_path):
-        """Run, then --resume → picks up completed phases from SQLite checkpoint."""
+        """Run, then --resume → picks up completed nodes from SQLite checkpoint."""
         config = self._simple_config(tmp_path)
 
         first = runner.invoke(
@@ -197,48 +166,7 @@ class TestResumeCommand:
             cli, ["run", str(config), "--resume", "--workdir", str(tmp_path)]
         )
         assert second.exit_code == 0
-        assert "Resuming: 1 phases already completed" in second.output
-
-
-# ---------------------------------------------------------------------------
-# Token summary positive path (J8)
-# ---------------------------------------------------------------------------
-
-
-class TestTokenSummaryPositive:
-    def test_token_summary_displayed_when_tokens_present(self, runner, tmp_path, monkeypatch):
-        """Wire a backend that returns tokens_used; verify summary appears."""
-        from abe_froman.runtime.result import ExecutionResult
-
-        class TokenBackend:
-            async def send_prompt(self, prompt, model, workdir, timeout=None):
-                return ExecutionResult(
-                    output="ok",
-                    tokens_used={"input": 100, "output": 50},
-                )
-
-            async def close(self):
-                pass
-
-        monkeypatch.setattr(
-            "abe_froman.runtime.executor.backends.factory.create_prompt_backend",
-            lambda _type: TokenBackend(),
-        )
-
-        config = tmp_path / "workflow.yaml"
-        config.write_text(
-            "name: Test\nversion: '1.0'\nphases:\n"
-            "  - id: a\n    name: A\n    prompt_file: t.md\n"
-        )
-        (tmp_path / "t.md").write_text("hello")
-
-        result = runner.invoke(
-            cli, ["run", str(config), "--workdir", str(tmp_path)]
-        )
-        assert result.exit_code == 0
-        assert "Tokens:" in result.output
-        assert "100" in result.output
-        assert "50" in result.output
+        assert "Resuming: 1 nodes already completed" in second.output
 
 
 # ---------------------------------------------------------------------------
@@ -256,11 +184,11 @@ class TestCliHelpers:
         assert _is_git_repo(str(tmp_path)) is False
 
     def test_thread_id_deterministic(self, tmp_path):
-        from abe_froman.schema.models import WorkflowConfig
+        from abe_froman.schema.models import Graph
 
-        config = WorkflowConfig(
+        config = Graph(
             name="test", version="1.0",
-            phases=[{"id": "a", "name": "A", "prompt_file": "t.md"}],
+            nodes=[{"id": "a", "name": "A", "prompt_file": "t.md"}],
         )
         id1 = _thread_id_for(config, str(tmp_path))
         id2 = _thread_id_for(config, str(tmp_path))
@@ -269,11 +197,11 @@ class TestCliHelpers:
         assert all(c in "0123456789abcdef" for c in id1)
 
     def test_thread_id_workdir_sensitive(self, tmp_path):
-        from abe_froman.schema.models import WorkflowConfig
+        from abe_froman.schema.models import Graph
 
-        config = WorkflowConfig(
+        config = Graph(
             name="test", version="1.0",
-            phases=[{"id": "a", "name": "A", "prompt_file": "t.md"}],
+            nodes=[{"id": "a", "name": "A", "prompt_file": "t.md"}],
         )
         id_a = _thread_id_for(config, str(tmp_path / "a"))
         id_b = _thread_id_for(config, str(tmp_path / "b"))

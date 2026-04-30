@@ -10,20 +10,20 @@ from __future__ import annotations
 
 from typing import Any
 
-from abe_froman.schema.models import WorkflowConfig
+from abe_froman.schema.models import Graph
 
 
 async def run_workflow(
     compiled_graph: Any,
     initial_state: dict[str, Any],
-    config: WorkflowConfig,
+    config: Graph,
     thread_id: str | None = None,
     log_file: str | None = None,
 ) -> dict[str, Any]:
     """Execute a compiled workflow graph, streaming state snapshots.
 
     When ``log_file`` is provided, structured JSONL events are written for
-    each state transition (phase completions, failures, gates, retries).
+    each state transition (node completions, failures, gates, retries).
     """
     from abe_froman.runtime.logging import JsonlLogger
 
@@ -54,8 +54,8 @@ async def run_workflow(
     if logger is not None:
         logger.emit({
             "event": "workflow_end",
-            "completed": len(last_state.get("completed_phases", [])),
-            "failed": len(last_state.get("failed_phases", [])),
+            "completed": len(last_state.get("completed_nodes", [])),
+            "failed": len(last_state.get("failed_nodes", [])),
         })
         logger.close()
 
