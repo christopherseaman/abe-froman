@@ -334,6 +334,18 @@ def build_workflow_graph(
 
     # ----- Plain edges: start + dep-to-node -----
 
+    # Goto targets of routes: a node reached only by Command(goto=) must
+    # not get a START → node fallback edge (would fire it unconditionally
+    # regardless of routing).
+    route_goto_targets: set[str] = set()
+    for node in config.nodes:
+        if isinstance(node.execution, RouteExecution):
+            for case in node.execution.cases:
+                if case.goto != "__end__":
+                    route_goto_targets.add(case.goto)
+            if node.execution.else_ != "__end__":
+                route_goto_targets.add(node.execution.else_)
+
     has_incoming: set[str] = set()
 
     for node in config.nodes:
@@ -349,7 +361,7 @@ def build_workflow_graph(
             has_incoming.add(node.id)
 
     for node in config.nodes:
-        if node.id not in has_incoming:
+        if node.id not in has_incoming and node.id not in route_goto_targets:
             builder.add_edge(START, node.id)
 
     # ----- Top-level gated node wiring (non-dynamic) -----

@@ -1,0 +1,43 @@
+name: "Flow A — Score routing"
+version: "1.0.0"
+
+nodes:
+  - id: produce
+    name: produce
+    execution:
+      type: command
+      command: echo
+      args: ["-n", "draft"]
+
+  - id: judge
+    name: judge
+    depends_on: [produce]
+    execution:
+      type: gate_only
+    evaluation:
+      # Absolute path so this YAML works with any --workdir.
+      validator: "/home/christopher/projects/abe-froman/tests/fixtures/route/score_high.py"
+      threshold: 0.5
+      blocking: false
+      max_retries: 0
+
+  - id: decide
+    name: decide
+    depends_on: [judge]
+    execution:
+      type: route
+      cases:
+        - when: "history['judge'][-1]['result']['score'] >= 0.5"
+          goto: ship
+      else: __end__
+
+  - id: ship
+    name: ship
+    execution:
+      type: command
+      command: echo
+      args: ["-n", "shipped"]
+
+settings:
+  output_directory: "/tmp/abe-route-flow-a"
+  max_retries: 0
