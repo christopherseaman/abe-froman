@@ -62,11 +62,8 @@ class TestACPCallbacks:
 
         cb = _ACPCallbacks()
         cb.chunks.append("data")
-        cb.input_tokens = 10
-        cb.output_tokens = 20
         cb.reset()
         assert cb.text() == ""
-        assert cb.tokens_used() is None
 
 
 # ---------------------------------------------------------------------------

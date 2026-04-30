@@ -128,27 +128,6 @@ class TestLogSnapshot:
         assert events[0]["node"] == "research"
         assert events[0]["attempt"] == 2
 
-    def test_completed_phase_includes_tokens(self):
-        buf = StringIO()
-        logger = JsonlLogger(buf)
-        prev = {"completed_nodes": [], "failed_nodes": [], "retries": {}, "errors": [], "token_usage": {}}
-        curr = {**prev, "completed_nodes": ["research"], "token_usage": {"research": {"input": 500, "output": 120}}}
-        logger.log_snapshot(prev, curr)
-        events = [json.loads(l) for l in buf.getvalue().strip().split("\n")]
-        assert len(events) == 1
-        assert events[0]["event"] == "node_completed"
-        assert events[0]["tokens"] == {"input": 500, "output": 120}
-
-    def test_completed_phase_without_tokens_has_no_tokens_key(self):
-        buf = StringIO()
-        logger = JsonlLogger(buf)
-        prev = {"completed_nodes": [], "failed_nodes": [], "retries": {}, "errors": [], "token_usage": {}}
-        curr = {**prev, "completed_nodes": ["research"]}
-        logger.log_snapshot(prev, curr)
-        events = [json.loads(l) for l in buf.getvalue().strip().split("\n")]
-        assert len(events) == 1
-        assert "tokens" not in events[0]
-
     def test_no_events_on_identical_snapshots(self):
         buf = StringIO()
         logger = JsonlLogger(buf)

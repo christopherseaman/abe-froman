@@ -96,7 +96,6 @@ class PromptExecutor:
             success=True,
             output=result.output,
             structured_output=result.structured_output,
-            tokens_used=result.tokens_used,
         )
 
     async def close(self) -> None:

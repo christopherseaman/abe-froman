@@ -35,7 +35,6 @@ REDUCERS: dict[str, Callable[[Any, Any], Any]] = {
     "node_structured_outputs": _merge_dicts,
     "retries": _merge_dicts,
     "child_outputs": _merge_dicts,
-    "token_usage": _merge_dicts,
     "node_worktrees": _merge_dicts,
     "evaluations": _merge_evaluations,
 }
@@ -50,7 +49,6 @@ class WorkflowState(TypedDict):
     evaluations: Annotated[dict[str, list[dict[str, Any]]], REDUCERS["evaluations"]]
     retries: Annotated[dict[str, int], REDUCERS["retries"]]
     child_outputs: Annotated[dict[str, Any], REDUCERS["child_outputs"]]
-    token_usage: Annotated[dict[str, dict[str, int]], REDUCERS["token_usage"]]
     node_worktrees: Annotated[dict[str, str], REDUCERS["node_worktrees"]]
     errors: Annotated[list[dict], REDUCERS["errors"]]
     workdir: str
@@ -81,7 +79,6 @@ def make_initial_state(
         "evaluations": {},
         "retries": {},
         "child_outputs": {},
-        "token_usage": {},
         "node_worktrees": {},
         "errors": [],
         "workdir": workdir,

@@ -120,37 +120,6 @@ class TestRunCommand:
         assert "Failed:" in result.output
 
 
-class TestTokenSummary:
-    def test_token_summary_displayed(self, runner, tmp_path):
-        """Token usage from a prompt-stub node should show in CLI output."""
-        config = tmp_path / "workflow.yaml"
-        config.write_text(
-            "name: Test\nversion: '1.0'\nnodes:\n"
-            "  - id: a\n    name: A\n    prompt_file: t.md\n"
-        )
-        (tmp_path / "t.md").write_text("hello")
-
-        result = runner.invoke(
-            cli, ["run", str(config), "--workdir", str(tmp_path)]
-        )
-        assert result.exit_code == 0
-        # Stub backend returns None for tokens_used, so no token line
-        assert "Tokens:" not in result.output
-
-    def test_no_token_summary_for_command_nodes(self, runner, tmp_path):
-        config = tmp_path / "workflow.yaml"
-        config.write_text(
-            "name: Test\nversion: '1.0'\nnodes:\n"
-            "  - id: a\n    name: A\n"
-            "    execution:\n      type: command\n      command: echo\n      args: ['hi']\n"
-        )
-        result = runner.invoke(
-            cli, ["run", str(config), "--workdir", str(tmp_path)]
-        )
-        assert result.exit_code == 0
-        assert "Tokens:" not in result.output
-
-
 class TestRunOptions:
     def test_executor_unknown_raises(self, runner, tmp_path):
         config = tmp_path / "simple.yaml"

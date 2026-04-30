@@ -676,61 +676,6 @@ class TestDimensionGateExecution:
         assert int(counter.read_text().strip()) == 2
 
 
-class TestTokenUsageAccumulation:
-    @pytest.mark.asyncio
-    async def test_token_usage_accumulated_in_state(self):
-        from mock_executor import MockExecutor
-        from abe_froman.runtime.result import ExecutionResult
-
-        mock = MockExecutor(results={
-            "a": ExecutionResult(
-                success=True, output="a-out",
-                tokens_used={"input": 100, "output": 50},
-            ),
-            "b": ExecutionResult(
-                success=True, output="b-out",
-                tokens_used={"input": 200, "output": 75},
-            ),
-        })
-        config = make_config([
-            {"id": "a", "name": "A", "prompt_file": "t.md"},
-            {"id": "b", "name": "B", "prompt_file": "t.md", "depends_on": ["a"]},
-        ])
-        graph = build_workflow_graph(config, mock)
-        result = await graph.ainvoke(make_initial_state())
-
-        assert result["token_usage"] == {
-            "a": {"input": 100, "output": 50},
-            "b": {"input": 200, "output": 75},
-        }
-
-    @pytest.mark.asyncio
-    async def test_token_usage_empty_for_command_nodes(self):
-        config = make_config([cmd_phase("p1", output="ok")])
-        executor = DispatchExecutor()
-        graph = build_workflow_graph(config, executor)
-        result = await graph.ainvoke(make_initial_state())
-
-        assert "p1" in result["completed_nodes"]
-        assert result.get("token_usage", {}) == {}
-
-    @pytest.mark.asyncio
-    async def test_token_usage_none_not_stored(self):
-        from mock_executor import MockExecutor
-        from abe_froman.runtime.result import ExecutionResult
-
-        mock = MockExecutor(results={
-            "a": ExecutionResult(success=True, output="out", tokens_used=None),
-        })
-        config = make_config([
-            {"id": "a", "name": "A", "prompt_file": "t.md"},
-        ])
-        graph = build_workflow_graph(config, mock)
-        result = await graph.ainvoke(make_initial_state())
-
-        assert result.get("token_usage", {}) == {}
-
-
 class TestOutputContract:
     @pytest.mark.asyncio
     async def test_contract_pass_continues_to_gate(self, tmp_path):

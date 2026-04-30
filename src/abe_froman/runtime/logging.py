@@ -39,9 +39,6 @@ class JsonlLogger:
         curr_completed = set(curr.get("completed_nodes", []))
         for node in curr_completed - prev_completed:
             event: dict[str, Any] = {"event": "node_completed", "node": node}
-            tokens = curr.get("token_usage", {}).get(node)
-            if tokens:
-                event["tokens"] = tokens
             self.emit(event)
 
         prev_failed = set(prev.get("failed_nodes", []))

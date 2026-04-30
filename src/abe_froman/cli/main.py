@@ -249,15 +249,6 @@ def run(
     else:
         click.echo(f"Completed: {len(completed)} nodes")
 
-    token_usage = result.get("token_usage", {})
-    if token_usage:
-        total_in = sum(t.get("input", 0) for t in token_usage.values())
-        total_out = sum(t.get("output", 0) for t in token_usage.values())
-        click.echo(
-            f"  Tokens: {total_in + total_out:,} total "
-            f"({total_in:,} in, {total_out:,} out)"
-        )
-
     if completed:
         click.echo(f"  Nodes: {', '.join(completed)}")
 

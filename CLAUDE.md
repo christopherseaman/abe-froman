@@ -285,9 +285,8 @@ Prioritized features for future development. See `docs/backlog-adapter-inspirati
 ### P3 — Nice to have
 
 9. ~~**Stepped retry backoff**~~ — **DONE**. `settings.retry_backoff` list of delay values in seconds. Applied via `asyncio.sleep()` before retry execution in `_make_phase_node`. Clamps to last value for attempts beyond list length. Empty list (default) = no delay.
-10. ~~**Token usage tracking**~~ — **DONE**. Per-phase token counts (`input`/`output`) flow from `PromptBackendResult` → `PhaseResult` → `WorkflowState.token_usage`. CLI prints totals after run. JSONL `phase_completed` events include `tokens` field. ACP backend captures usage if exposed; stub/command phases return `None` gracefully.
-11. Execution mode fallback chain (ACP → direct API on failure)
-12. Post-workflow cleanup (remove intermediate artifacts on success)
+10. Execution mode fallback chain (ACP → direct API on failure)
+11. Post-workflow cleanup (remove intermediate artifacts on success)
 13. ~~**Extended env var injection into validators**~~ — **DONE**. Gate validator scripts receive `PHASE_ID`, `WORKFLOW_NAME`, `ATTEMPT_NUMBER`, and `WORKDIR` as environment variables.
 14. Git integration for outputs (auto-push to branch on completion)
 15. Health check endpoint (for container orchestration)

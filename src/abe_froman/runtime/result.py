@@ -19,7 +19,6 @@ class ExecutionResult:
     output: str = ""
     error: str | None = None
     structured_output: dict[str, Any] | None = None
-    tokens_used: dict[str, int] | None = None
 
 
 class OverloadError(Exception):

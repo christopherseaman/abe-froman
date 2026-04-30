@@ -406,20 +406,10 @@ class TestAssembleSuccessUpdate:
         update = assemble_success_update(_phase(), result)
         assert update == {"node_outputs": {"p1": "hello"}}
 
-    def test_with_tokens(self):
-        result = ExecutionResult(output="x", tokens_used={"input": 10, "output": 20})
-        update = assemble_success_update(_phase(), result)
-        assert update["token_usage"] == {"p1": {"input": 10, "output": 20}}
-
     def test_with_structured_output(self):
         result = ExecutionResult(output="x", structured_output={"key": "val"})
         update = assemble_success_update(_phase(), result)
         assert update["node_structured_outputs"] == {"p1": {"key": "val"}}
-
-    def test_none_tokens_excluded(self):
-        result = ExecutionResult(output="x", tokens_used=None)
-        update = assemble_success_update(_phase(), result)
-        assert "token_usage" not in update
 
     def test_none_structured_excluded(self):
         result = ExecutionResult(output="x", structured_output=None)

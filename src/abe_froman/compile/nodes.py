@@ -216,8 +216,6 @@ def assemble_success_update(node: Node, result: ExecutionResult) -> dict[str, An
     }
     if result.structured_output is not None:
         update["node_structured_outputs"] = {node.id: result.structured_output}
-    if result.tokens_used is not None:
-        update["token_usage"] = {node.id: result.tokens_used}
     return update
 
 

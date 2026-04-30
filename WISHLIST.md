@@ -4,6 +4,10 @@
     - README with project overview, usage, and functionality
     - TECHNICAL.md with layout/breakdown of implementation
 
+## High-level Architectural
+
+- [ ] Possible to offload orchastration piece to lightweight local tool/package instead of writing from scratch, similar to how we are leveraging langgraph? Dagster? Airflow and Kestra too heavy.
+
 ## Simplification candidates (surfaced by 2026-04-17 refactor-done review)
 
 - [x] **Unify gate-eval via outcome-as-routing-signal** — _landed, Stages 3 + 3b._ Top-level phases use the data-driven model from `compile/evaluation.py` (`Criterion`, `Route`, `walk_routes`, `gate_to_routes`). `classify_gate_outcome` walks routes; `state.evaluations: {node_id: [EvaluationRecord]}` is the single source of truth for scores/feedback. Stage 3b (branch `stage-3b-evaluation-node`) completed the picture: gated top-level phases are a graph pair (`phase` execution node → `_eval_{phase}` evaluation node via `_make_evaluation_router`); gated subphase templates evaluate inline within the Send-dispatched subphase node (graph-level self-loops strip `_subphase_item` at the super-step boundary, so inline retry is the only shape that preserves per-branch identity); legacy `gate_scores`/`gate_feedback` state channels removed outright. Subphase gates honor `max_retries`, write `EvaluationRecord`s with real `invocation` counters, and log per-dimension scores.
@@ -89,7 +93,7 @@ Building the 13-phase demo surfaced issues not previously cataloged. Kept here a
 
 - [ ] **Gate validators can't see dep outputs; gate-only phases have no useful signal**
     - Script gate stdin is the phase's own output (via `evaluate_gate_script(phase_output=...)`). For a `gate_only` phase the "output" is the hardcoded string `[gate-only] {id}` from `dispatch.py:48`. So a gate_only phase's validator can only match against that placeholder.
-    - **Current workaround (see `examples/absurd-paper/gates/submission_check.py`):** a gate_only phase that runs *after* a persistence phase can read disk via `$WORKDIR` (injected env var) and validate whatever's on disk there. Works when the thing you want to check has already been written to `<workdir>/<path>`. Doesn't work pre-persistence.
+    - **Current workaround (see `examples/absurd-paper/gates/submission_check.py`):** a gate_only phase that runs _after_ a persistence phase can read disk via `$WORKDIR` (injected env var) and validate whatever's on disk there. Works when the thing you want to check has already been written to `<workdir>/<path>`. Doesn't work pre-persistence.
     - Fix: pass `state` (or at minimum `phase_outputs`) into the gate-eval context. Script gates could receive dep outputs as environment variables (like `PHASE_ID` today) or on stdin as JSON. LLM gates would need the same projection in their template context. This unlocks gate_only checkpoints that don't require a round-trip to disk.
 
 ### Observability
@@ -234,6 +238,7 @@ Audit of where we shadow LangGraph functionality. Most of our code is genuinely 
 - [ ] **Stop hand-writing router closures** — pairs with `Command` objects above. Delete `_make_evaluation_router`, `_subphase_id_resolver`, the dynamic-router closure, and the conditional-edge scaffolding they feed in `compile/graph.py`. Decision nodes return `Command(goto=...)` directly.
 
 **Not reimplementation** (clarified during audit, kept for reference):
+
 - Eval-score-driven retries (ours) vs `RetryPolicy` (exception-driven) — complementary, not duplicative.
 - `_merge_dicts` / `_merge_evaluations` reducers — LangGraph offers no dict-merge or per-key list-append natively.
 - Timeouts (`asyncio.wait_for`), concurrency caps (`asyncio.Semaphore`), worktree pool — outside LangGraph's scope.

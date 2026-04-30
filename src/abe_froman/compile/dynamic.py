@@ -186,8 +186,6 @@ def _make_fan_out_node(
                 "node_outputs": {child_id: exec_result.output},
                 "child_outputs": {child_id: exec_result.output},
             }
-            if exec_result.tokens_used is not None:
-                exec_update["token_usage"] = {child_id: exec_result.tokens_used}
             update = _merge_updates(update, exec_update)
 
             if not template.evaluation:

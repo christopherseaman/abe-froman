@@ -95,11 +95,9 @@ class MemoryBackend:
         self,
         response: str = "backend-output",
         structured: dict | None = None,
-        tokens: dict[str, int] | None = None,
     ):
         self._response = response
         self._structured = structured
-        self._tokens = tokens
         self.calls: list[tuple[str, str, str, float | None]] = []
 
     async def send_prompt(
@@ -110,7 +108,6 @@ class MemoryBackend:
         return ExecutionResult(
             output=self._response,
             structured_output=self._structured,
-            tokens_used=self._tokens,
         )
 
     async def close(self) -> None:
@@ -317,43 +314,6 @@ class TestPromptExecutor:
         result = await executor.execute(node, {})
 
         assert result.structured_output == {"key": "value"}
-
-    @pytest.mark.asyncio
-    async def test_tokens_used_threaded_to_phase_result(self, tmp_path):
-        prompt_file = tmp_path / "t.md"
-        prompt_file.write_text("prompt")
-
-        backend = MemoryBackend(
-            response="output",
-            tokens={"input": 500, "output": 120},
-        )
-        executor = PromptExecutor(
-            backend=backend,
-            settings=Settings(),
-            workdir=str(tmp_path),
-        )
-        node = Node(id="p1", name="P1", prompt_file="t.md")
-        result = await executor.execute(node, {})
-
-        assert result.success is True
-        assert result.tokens_used == {"input": 500, "output": 120}
-
-    @pytest.mark.asyncio
-    async def test_tokens_used_none_when_backend_returns_none(self, tmp_path):
-        prompt_file = tmp_path / "t.md"
-        prompt_file.write_text("prompt")
-
-        backend = MemoryBackend(response="output")
-        executor = PromptExecutor(
-            backend=backend,
-            settings=Settings(),
-            workdir=str(tmp_path),
-        )
-        node = Node(id="p1", name="P1", prompt_file="t.md")
-        result = await executor.execute(node, {})
-
-        assert result.success is True
-        assert result.tokens_used is None
 
     @pytest.mark.asyncio
     async def test_wrong_execution_type_returns_error(self):
