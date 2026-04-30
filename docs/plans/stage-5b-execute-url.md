@@ -199,7 +199,8 @@ reverted) **falls out for free** under this shape.
 
 ### Schema (`src/abe_froman/schema/models.py`) — ~80 LOC delta
 
-- Define `Execute(BaseModel)` with `url: str` and `params: dict[str, Any] = {}`.
+- Define `Execute(BaseModel)` with `url: str | None = None`, `type: Literal["join"] | None = None`, and `params: PromptParams | SubgraphParams | ScriptParams | ExecParams = {}` (discriminated by resolved URL extension/scheme; see `schema/params.py`). Validator: exactly one of `url` or `type` set.
+- New `src/abe_froman/schema/params.py` (~60 LOC): per-mode Pydantic models (`PromptParams`, `SubgraphParams`, `ScriptParams`, `ExecParams`) plus a resolver that picks the right shape from a resolved URL.
 - Replace `Node.execution: Execution | None`, `Node.config: str | None`,
   `Node.inputs: dict`, `Node.outputs: dict`, `Node.prompt_file: str | None`
   with a single `Node.execute: Execute | None`.
@@ -320,37 +321,46 @@ handling, and `FanOutTemplate.prompt_file` handling. Net: smaller
 mental footprint, modestly larger code surface in one well-bounded
 place.
 
+## Resolved design decisions
+
+The following were open going into Stage 5b and are now locked:
+
+1. **Join marker** — **Keep `execute: { type: "join" }` as an explicit
+   sentinel.** Authors can name a fan-in point even when topology
+   alone implies a join. Carve-out in the dispatch table: a `type:
+   "join"` entry on `Execute` short-circuits URL resolution.
+2. **Bare commands** — **Treat any URL not matching a known extension
+   as a binary path.** `url: "echo"` resolves to `file://<workdir>/echo`
+   (won't exist) → fails fast; `url: "/bin/echo"` works; `url: "echo"`
+   with absolute resolution via `$PATH` lookup is **not** supported
+   (too magical). The migrate tool rewrites `command: echo` →
+   `url: "/bin/echo"` (using `shutil.which` at migrate time).
+3. **Params validation** — **Per-mode Pydantic dataclasses.** Define
+   `PromptParams`, `SubgraphParams`, `ScriptParams`, `ExecParams` in
+   `schema/params.py`. Schema validator looks at the resolved URL's
+   extension/scheme and selects the matching dataclass to coerce
+   `Execute.params` into. Catches typos like `arg` vs `args` at
+   compile time, before runtime.
+4. **Remote fetch cache scope** — **Per-compile only.**
+   `_RemoteFetchCache` is a dict threaded through compile context.
+   Persistent caching deferred — would require ETag/cache-control
+   handling and a `cache clear` CLI knob.
+
 ## Open design questions
 
-1. **Join marker**: keep `execute: { type: "join" }` as an explicit
-   sentinel, or rely on "no `execute:` block + multiple `depends_on:`"?
-   Recommend: keep the sentinel for author intent.
-2. **Bare commands**: `command: echo` doesn't have a file extension.
-   Options: (a) treat any URL not matching an extension as a binary
-   path, run via subprocess; (b) require `url: "/bin/echo"` (absolute
-   path); (c) add `url: "echo"` + `params: { mode: "command" }`
-   override. Recommend (a) for simplicity.
-3. **Params validation**: do we validate `params:` shape per mode at
-   schema time (e.g. subgraph requires no `args:`), or trust the
-   handler to fail at runtime? Recommend schema-time per-mode dataclass
-   for prompt/subgraph/script; keep `params:` open for direct-exec.
-4. **Migration of `inputs:` / `outputs:`**: currently top-level on
+1. **Migration of `inputs:` / `outputs:`**: currently top-level on
    Node; in the new shape they're nested under `execute.params`. The
    migrate tool needs to lift them in. (Mechanical.)
-5. **Remote fetch size cap**: should `fetch_url` enforce a max body
+2. **Remote fetch size cap**: should `fetch_url` enforce a max body
    size (e.g. 5 MB) to bound memory on a misconfigured allowlist?
    Recommend yes — `Settings.max_remote_fetch_bytes: int = 5_000_000`,
    exceeded fetches raise `RemoteURLFetchError`.
-6. **Persistent remote cache**: keep `_RemoteFetchCache` per-compile
-   only, or persist to `<workdir>/.abe-froman-url-cache/`? Recommend
-   per-compile for Stage 5b; persistent caching is a separate
-   reproducibility feature (would need ETag / cache-control handling).
-7. **`${VAR}` expansion scope**: env-var expansion in `url_headers`
+3. **`${VAR}` expansion scope**: env-var expansion in `url_headers`
    values is non-negotiable (secrets). Should it also apply to `url:`
    itself (e.g. `url: "${PROMPTS_BASE}/x.md"`)? Recommend no — keeps
    the resolution algorithm pure-string; users put base in
    `Settings.base_url` instead.
-8. **Allowlist match semantics**: `allowed_url_hosts` patterns —
+4. **Allowlist match semantics**: `allowed_url_hosts` patterns —
    substring, glob, or regex? Recommend glob (`fnmatch.fnmatch`) on
    the host component only; rejects path-injection tricks like
    `https://attacker.com/?fake=trusted.example.com`.
@@ -380,6 +390,13 @@ place.
 ## Exit criteria
 
 - [ ] `Execute` schema landed; `Execution` union deleted.
+- [ ] `schema/params.py` per-mode dataclasses landed; schema-time
+      validator rejects mode-mismatched keys (e.g. `args:` on a
+      prompt URL).
+- [ ] `execute: { type: "join" }` sentinel works end-to-end (no URL
+      resolution, no fetch, dispatcher returns empty output).
+- [ ] Migrate tool rewrites `command: <bare>` → `url: <shutil.which(bare)>`
+      (or fails loudly if not found on `$PATH`).
 - [ ] Dispatch table operational; one handler per supported URL pattern.
 - [ ] `runtime/url.py::resolve_url` covers all six rows of the
       examples table; unit tests pin each.
