@@ -85,6 +85,16 @@ class TestRuntimeLayerIsolation:
                 f"{f.relative_to(SRC)} imports langgraph"
             )
 
+    def test_url_module_is_langgraph_free(self):
+        """runtime/url.py must stay langgraph-free so schema and compile
+        can import it across layer boundaries (covered by the broader
+        runtime rule above; pinned here to call out the intent)."""
+        f = SRC / "runtime" / "url.py"
+        imports = _imports_in_file(f)
+        assert not _starts_with(imports, "langgraph"), (
+            f"{f.relative_to(SRC)} imports langgraph"
+        )
+
 
 class TestSchemaTerminology:
     """schema/ files must not use LangGraph-specific identifiers,

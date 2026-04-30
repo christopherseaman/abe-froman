@@ -134,6 +134,13 @@ class Settings(BaseModel):
     max_parallel_jobs: int = 4
     per_model_limits: dict[str, int] = {}
     max_subgraph_depth: int = 10  # cap on recursive subgraph nesting (Stage 4c)
+    # Stage 5b — execute.url remote URL gates
+    base_url: str | None = None  # default base for relative urls in execute.url
+    allow_remote_urls: bool = False  # master switch for non-file:// fetches
+    allow_remote_scripts: bool = False  # extra opt-in for remote .py/.js/.sh
+    allowed_url_hosts: list[str] = []  # fnmatch host patterns; [] = no filter
+    url_headers: dict[str, dict[str, str]] = {}  # prefix → headers; ${VAR} expands
+    max_remote_fetch_bytes: int = 5_000_000  # 5 MB cap
 
 
 class Node(BaseModel):
