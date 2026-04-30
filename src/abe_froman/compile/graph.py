@@ -7,12 +7,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
 from langgraph.graph import END, START, StateGraph
-from langgraph.types import Send
+from langgraph.types import Command, Send
 
 from abe_froman.compile.dynamic import _make_final_fan_out_node, _make_fan_out_node
 from abe_froman.compile.nodes import _make_evaluation_node, _make_execution_node
+from abe_froman.compile.route import build_route_namespace, evaluate_case
 from abe_froman.runtime.state import WorkflowState
-from abe_froman.schema.models import Node, Graph
+from abe_froman.schema.models import Node, Graph, RouteExecution
 
 if TYPE_CHECKING:
     from abe_froman.runtime.result import NodeExecutor
@@ -23,6 +24,37 @@ def _find_terminal_nodes(config: Graph) -> set[str]:
     for node in config.nodes:
         depended_on.update(node.depends_on)
     return {p.id for p in config.nodes if p.id not in depended_on}
+
+
+def _resolve_goto(target: str) -> str:
+    return END if target == "__end__" else target
+
+
+def _make_route_node(node: Node):
+    """Build the async fn for a route node — returns Command(goto=<id>).
+
+    Cases evaluate first-match-wins via simpleeval; broken `when:`
+    expressions raise loudly with route id + case context (no silent
+    fall-through).
+    """
+    route = node.execution
+    assert isinstance(route, RouteExecution)
+
+    async def node_fn(state: WorkflowState) -> Command:
+        ns = build_route_namespace(state, node.depends_on)
+        for case in route.cases:
+            try:
+                matched = evaluate_case(case.when, ns)
+            except Exception as e:
+                raise ValueError(
+                    f"Route '{node.id}' case {case.when!r}: {e}"
+                ) from e
+            if matched:
+                return Command(goto=_resolve_goto(case.goto))
+        return Command(goto=_resolve_goto(route.else_))
+
+    node_fn.__name__ = f"route_{node.id}"
+    return node_fn
 
 
 def _detect_cycles(config: Graph) -> None:
@@ -207,6 +239,7 @@ def build_workflow_graph(
     dynamic_fan_out_ids: set[str] = set()
     gated_fan_out_template_ids: set[str] = set()
     subgraph_node_ids: set[str] = set()
+    route_node_ids: set[str] = set()
 
     for node in config.nodes:
         if node.evaluation:
@@ -221,6 +254,8 @@ def build_workflow_graph(
             # see _depth>0 so they skip this and rely on the depth cap.
             if _depth == 0:
                 detect_config_cycle(node.config, base_dir=base_dir)
+        if isinstance(node.execution, RouteExecution):
+            route_node_ids.add(node.id)
 
     # ----- Node registration -----
 
@@ -237,6 +272,8 @@ def build_workflow_graph(
                 depth=_depth,
             )
             builder.add_node(node.id, wrapper)
+        elif node.id in route_node_ids:
+            builder.add_node(node.id, _make_route_node(node))
         else:
             builder.add_node(node.id, _make_execution_node(node, config, executor))
 
