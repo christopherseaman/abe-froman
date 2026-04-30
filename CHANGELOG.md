@@ -110,3 +110,36 @@ using `ruamel.yaml` (preserves comments, anchors, references, and
 - New: `docs/plans/stage-5a-route-node.md` — the next-stage plan for the
   `route` node primitive (simpleeval predicates, Command(goto), zero
   baked-in retry/halt semantics).
+- New: `docs/plans/stage-5b-execute-url.md` — proposed redesign that
+  collapses today's seven execution shapes (`prompt_file:` shorthand,
+  `execution: { type: prompt | command | gate_only | join }`, top-level
+  `config: + inputs: + outputs:`, `fan_out.template.prompt_file`) into a
+  single `execute: { url, params }` block dispatched by URL extension.
+
+### Notes on Stage 4c demo
+
+The original Stage-4 plan called for `reviewer_pool` (in `examples/
+absurd-paper/workflow.yaml`) to be carved into a per-child subgraph as
+the Stage 4c demo. After landing the carve, two things became clear:
+
+1. `reviewer_pool` is N-way parallelism over a manifest of single-prompt
+   reviewers — that's exactly what the existing fan-out already does;
+   wrapping each child in a subgraph reference adds nothing.
+2. `paper` (the multi-step reconcile → persist → check chain) is the
+   right shape for subgraph composition — multiple sequential nodes
+   that compose into one logical unit.
+
+Stage 4c therefore ships with `paper` as the canonical demo (top-level
+`Node.config:`). The fan-out path stays inline-prompt-only by design;
+when a real consumer needs multi-step per-child templates, that's the
+right time to extend `FanOutTemplate` (queued under Stage 5b's broader
+unified-execution-shape redesign).
+
+### Removed
+- Token usage tracking. The `tokens_used` field on `ExecutionResult`,
+  the `token_usage` channel on `WorkflowState`, the per-phase token
+  capture in `_ACPCallbacks`, the JSONL `tokens` field on
+  `node_completed` events, and the CLI `Tokens:` summary line are all
+  gone. Cost visibility was a documented backlog item that wasn't
+  pulling its weight; if it returns later, the dispatch path needs
+  redesign anyway under Stage 5b.
