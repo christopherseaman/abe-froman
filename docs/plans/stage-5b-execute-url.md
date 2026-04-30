@@ -42,15 +42,119 @@ handler. `params:` is mode-specific.
 
 ### Dispatch table
 
-| URL pattern | Mode | What it does | `params:` shape |
+Dispatch is **two-stage**: (1) URL resolution produces a *resolved
+URL* (with explicit protocol), (2) the resolved URL's protocol +
+extension picks a handler.
+
+| Resolved URL pattern | Mode | What it does | `params:` shape |
 |---|---|---|---|
-| `*.md`, `*.txt`, `*.prompt` | prompt | Renders file as Jinja template against context, sends to PromptBackend | `model`, `agent`, `timeout` (mode-specific overrides) |
-| `*.yaml`, `*.yml` | subgraph | Loads as a `Graph`, recursively compiles, invokes per call | `inputs: { var: "{{template}}" }`, `outputs: { key: "{{sub_node}}" }` |
-| `*.py` | python script | `python <url>` subprocess; stdin = nothing, stdout = output | `args: ["{{arg1}}"]`, `env: {KEY: "{{val}}"}` |
-| `*.js`, `*.mjs` | node script | `node <url>` subprocess | same as `*.py` |
-| `*.ts` | typescript | `tsx <url>` or `bun <url>` subprocess (configurable) | same as `*.py` |
-| `*.sh` | shell script | `bash <url>` subprocess | same as `*.py` |
-| `/abs/path/to/binary` or other | direct exec | Treats URL as a binary path; spawns subprocess | `args:`, `env:` |
+| `file://*.md`, `*.txt`, `*.prompt` | prompt | Reads the file, renders as Jinja template against context, sends to PromptBackend | `model`, `agent`, `timeout` (mode-specific overrides) |
+| `https://*.md`, etc. | prompt (remote) | Fetches over HTTPS, then same as file prompt | same as file prompt |
+| `file://*.yaml`, `*.yml` | subgraph | Loads as a `Graph`, recursively compiles, invokes per call | `inputs: { var: "{{template}}" }`, `outputs: { key: "{{sub_node}}" }` |
+| `https://*.yaml` | subgraph (remote) | Fetches over HTTPS, then same as file subgraph | same as file subgraph |
+| `file://*.py` | python script | `python <path>` subprocess; stdin = nothing, stdout = output | `args: ["{{arg1}}"]`, `env: {KEY: "{{val}}"}` |
+| `file://*.js`, `*.mjs` | node script | `node <path>` subprocess | same as `*.py` |
+| `file://*.ts` | typescript | `tsx <path>` or `bun <path>` subprocess (configurable) | same as `*.py` |
+| `file://*.sh` | shell script | `bash <path>` subprocess | same as `*.py` |
+| `https://*.{py,js,ts,sh}` | remote script | Fetches to a temp file, exec via interpreter, deletes temp on completion | same as file script |
+| `file:///abs/path/to/binary` or unrecognized extension | direct exec | Treats path as a binary; spawns subprocess | `args:`, `env:` |
+
+### URL resolution
+
+A URL goes through this resolution before reaching the dispatch table.
+Resolution is **deterministic** and runs at compile time so cycle
+detection and caching see canonical URLs.
+
+```
+def resolve_url(url: str, base_url: str | None, workdir: str) -> str:
+    # 1. Explicit protocol — pass through unchanged.
+    if "://" in url:
+        return url
+
+    # 2. Absolute path — wrap as file://.
+    if url.startswith("/"):
+        return f"file://{url}"
+
+    # 3. Relative path — resolve against base_url, else workdir.
+    if base_url:
+        # urllib.parse.urljoin handles both file:// and https:// bases.
+        return urljoin(base_url, url)
+    return f"file://{Path(workdir).resolve()}/{url}"
+```
+
+**Examples** with `settings.workdir = /home/me/proj` and various
+`settings.base_url` values:
+
+| `url:` value | `base_url:` | Resolved URL |
+|---|---|---|
+| `prompts/x.md` | (unset) | `file:///home/me/proj/prompts/x.md` |
+| `prompts/x.md` | `examples/foo/` | `file:///home/me/proj/examples/foo/prompts/x.md` |
+| `prompts/x.md` | `https://prompts.example.com/v1/` | `https://prompts.example.com/v1/prompts/x.md` |
+| `/etc/scripts/run.sh` | (any) | `file:///etc/scripts/run.sh` (absolute always wins) |
+| `https://x.com/y.yaml` | (any) | `https://x.com/y.yaml` (explicit protocol always wins) |
+| `file:///abs/x.md` | (any) | `file:///abs/x.md` (explicit protocol always wins) |
+
+`base_url` lives on `Settings` (top-level workflow setting). Subgraphs
+**inherit the parent's resolved base_url** by default but may override
+in their own `settings:` block — this lets a self-contained subgraph
+declare its own root for relative refs.
+
+### Remote URL support (http/https)
+
+Fetching artifacts over the network introduces three concerns; the
+implementation addresses each:
+
+**1. Opt-in by default (security).** `Settings.allow_remote_urls:
+bool = False`. With the default, any non-`file://` resolved URL raises
+`RemoteURLBlockedError` at compile time. Users who want remote fetch
+flip this on explicitly.
+
+**2. Allowlist (defense in depth).** `Settings.allowed_url_hosts:
+list[str] = []` — when non-empty, only URLs whose host matches one of
+these patterns (substring or glob) are permitted. Lets a workflow opt
+into "fetches from `*.internal.example.com` only" without flipping the
+broad allow-remote switch off.
+
+**3. Caching.** `_RemoteFetchCache` (a per-compile dict) caches
+fetched bodies keyed by resolved URL. A subgraph referenced 100 times
+in fan-out fetches once. Cache is per-compile, not persistent — keeps
+the model simple; if persistent caching is wanted later, it's a
+separate feature.
+
+**4. Auth headers.** `Settings.url_headers: dict[str, dict[str, str]] =
+{}` — keyed by URL prefix; first-prefix-wins. Example:
+```yaml
+settings:
+  base_url: "https://prompts.example.com/v1/"
+  allow_remote_urls: true
+  url_headers:
+    "https://prompts.example.com/":
+      Authorization: "Bearer ${PROMPTS_API_TOKEN}"
+```
+`${VAR}` expansion is environment-driven so secrets stay out of YAML.
+
+**5. Fetch errors.** Network failures during compile surface as
+`RemoteURLFetchError` with the URL, status code, and body excerpt —
+hard fail. We don't retry at compile time; a network blip should be
+visible, not silently re-attempted.
+
+**6. Cycle detection across protocols.** `detect_config_cycle` walks
+the resolved URL set. A subgraph at `https://x.com/a.yaml` whose
+`execute.url` ends up resolving back to `https://x.com/a.yaml`
+(directly or indirectly) raises `SubgraphCycleError`. URLs are
+compared as strings after resolution; canonical-URL form (no
+trailing-slash variance, lowercase host) is enforced via
+`urllib.parse.urlsplit` + reassembly.
+
+**7. Remote scripts (.py/.js/.sh) — extra opt-in.**
+`Settings.allow_remote_scripts: bool = False`. Remote prompts and
+subgraphs are one risk class; remote *executables* are a higher one.
+Even with `allow_remote_urls=True`, a remote script URL fails compile
+unless `allow_remote_scripts` is also explicitly set. Remote scripts
+are fetched to a temp dir, made executable, run via the interpreter,
+deleted on completion. The temp file path goes into the subprocess
+command line, not the URL — so the script sees its own filesystem
+location, not its origin URL.
 
 ### Special markers (no URL)
 
@@ -93,7 +197,7 @@ reverted) **falls out for free** under this shape.
 
 ## Implementation surface
 
-### Schema (`src/abe_froman/schema/models.py`) — ~50 LOC delta
+### Schema (`src/abe_froman/schema/models.py`) — ~80 LOC delta
 
 - Define `Execute(BaseModel)` with `url: str` and `params: dict[str, Any] = {}`.
 - Replace `Node.execution: Execution | None`, `Node.config: str | None`,
@@ -103,6 +207,22 @@ reverted) **falls out for free** under this shape.
   `CommandExecution`, `GateOnlyExecution`, `JoinExecution`).
 - Drop `_normalize_prompt_shorthand` (no shorthand any more).
 - `FanOutTemplate` becomes `{ execute: Execute, evaluation: Evaluation | None }`.
+- Extend `Settings`:
+  ```python
+  base_url: str | None = None
+  allow_remote_urls: bool = False
+  allow_remote_scripts: bool = False
+  allowed_url_hosts: list[str] = []
+  url_headers: dict[str, dict[str, str]] = {}
+  ```
+- Add a new module `src/abe_froman/runtime/url.py` (~80 LOC) with:
+  - `resolve_url(url, base_url, workdir) -> str` (per the resolution
+    rules above)
+  - `fetch_url(resolved_url, settings) -> bytes` (validates against
+    `allow_remote_urls` / `allowed_url_hosts` / `allow_remote_scripts`,
+    consults `_RemoteFetchCache`, applies `url_headers`)
+  - `RemoteURLBlockedError`, `RemoteURLFetchError` exception types
+  - `_RemoteFetchCache` (per-compile dict, threaded through compile)
 - `FanOutFinalNode` simplifies the same way.
 
 ### Dispatch (`src/abe_froman/runtime/executor/dispatch.py`) — ~100 LOC
@@ -217,6 +337,23 @@ place.
 4. **Migration of `inputs:` / `outputs:`**: currently top-level on
    Node; in the new shape they're nested under `execute.params`. The
    migrate tool needs to lift them in. (Mechanical.)
+5. **Remote fetch size cap**: should `fetch_url` enforce a max body
+   size (e.g. 5 MB) to bound memory on a misconfigured allowlist?
+   Recommend yes — `Settings.max_remote_fetch_bytes: int = 5_000_000`,
+   exceeded fetches raise `RemoteURLFetchError`.
+6. **Persistent remote cache**: keep `_RemoteFetchCache` per-compile
+   only, or persist to `<workdir>/.abe-froman-url-cache/`? Recommend
+   per-compile for Stage 5b; persistent caching is a separate
+   reproducibility feature (would need ETag / cache-control handling).
+7. **`${VAR}` expansion scope**: env-var expansion in `url_headers`
+   values is non-negotiable (secrets). Should it also apply to `url:`
+   itself (e.g. `url: "${PROMPTS_BASE}/x.md"`)? Recommend no — keeps
+   the resolution algorithm pure-string; users put base in
+   `Settings.base_url` instead.
+8. **Allowlist match semantics**: `allowed_url_hosts` patterns —
+   substring, glob, or regex? Recommend glob (`fnmatch.fnmatch`) on
+   the host component only; rejects path-injection tricks like
+   `https://attacker.com/?fake=trusted.example.com`.
 
 ## What this unlocks
 
@@ -244,6 +381,20 @@ place.
 
 - [ ] `Execute` schema landed; `Execution` union deleted.
 - [ ] Dispatch table operational; one handler per supported URL pattern.
+- [ ] `runtime/url.py::resolve_url` covers all six rows of the
+      examples table; unit tests pin each.
+- [ ] `runtime/url.py::fetch_url` enforces `allow_remote_urls`,
+      `allowed_url_hosts`, `allow_remote_scripts`, and
+      `max_remote_fetch_bytes`; each gate has a dedicated unit test
+      asserting the right exception type.
+- [ ] Cycle detection extended over resolved URL set (not just
+      `node.config` paths); test pins a cross-protocol cycle
+      (`file://a.yaml` → `https://x.com/b.yaml` → `file://a.yaml`).
+- [ ] `_RemoteFetchCache` exercised by an e2e that references the
+      same `https://` subgraph from 3 fan-out children; assert one
+      fetch attempt, three uses.
+- [ ] `${VAR}` expansion in `url_headers` honors process env;
+      missing var raises a clear error at compile time.
 - [ ] All examples migrated; all examples run via ACP.
 - [ ] Migrate tool extended to lift Stage 4 → Stage 5b shape.
 - [ ] Per-child subgraph fan-out works (the absurd-paper reviewer_pool
