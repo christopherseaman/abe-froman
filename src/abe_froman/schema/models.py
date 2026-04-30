@@ -69,34 +69,13 @@ class OutputContract(BaseModel):
 class FanOutTemplate(BaseModel):
     """Template for nodes spawned during fan-out over a manifest.
 
-    Each Send branch (one per manifest item) runs the template against
-    that item's context. The template is either a single prompt
-    (`prompt_file`) or a recursive subgraph reference (`config:`):
-
-    - `prompt_file`: legacy single-step template. The synthetic per-child
-      node executes the prompt against parent context + manifest item.
-    - `config`: per-child subgraph. The referenced YAML is loaded as a
-      Graph and recursively compiled. Each Send branch invokes that
-      subgraph in isolation, with `inputs:` rendered against parent
-      context + manifest item and projected into the subgraph's
-      node_inputs channel. The subgraph's terminal output becomes the
-      child's output.
-
-    Exactly one of {prompt_file, config} must be set.
+    Stage 4a keeps the legacy template/final-node structure under the
+    new `fan_out:` key. Stage 4c will collapse this — the parent Node
+    will reference a subgraph YAML directly via `config:`, and joins
+    will be authored as separate downstream Nodes.
     """
-    prompt_file: str | None = None
-    config: str | None = None  # subgraph reference (Stage 4c per-child)
-    inputs: dict[str, str] = {}  # parent + manifest item → subgraph context
+    prompt_file: str
     evaluation: Evaluation | None = None
-
-    @model_validator(mode="after")
-    def exactly_one_target(self) -> Self:
-        defs = sum(bool(x) for x in (self.prompt_file, self.config))
-        if defs != 1:
-            raise ValueError(
-                "FanOutTemplate: exactly one of prompt_file or config must be set"
-            )
-        return self
 
 
 class FanOutFinalNode(BaseModel):

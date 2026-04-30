@@ -313,30 +313,6 @@ class TestFanOut:
         config = FanOut()
         assert config.enabled is False
 
-    def test_template_config_subgraph_reference(self):
-        """Stage 4c: per-child template can reference a subgraph."""
-        config = FanOut(
-            enabled=True,
-            manifest_path="m.json",
-            template={
-                "config": "subgraphs/single_review.yaml",
-                "inputs": {"reviewer_id": "{{id}}"},
-            },
-        )
-        assert config.template.config == "subgraphs/single_review.yaml"
-        assert config.template.prompt_file is None
-        assert config.template.inputs == {"reviewer_id": "{{id}}"}
-
-    def test_template_xor_prompt_file_or_config_required(self):
-        """Exactly one of {prompt_file, config} must be set."""
-        with pytest.raises(ValidationError) as exc_info:
-            FanOut(enabled=True, template={"prompt_file": "t.md", "config": "s.yaml"})
-        assert "exactly one of prompt_file or config" in str(exc_info.value)
-
-        with pytest.raises(ValidationError) as exc_info:
-            FanOut(enabled=True, template={})
-        assert "exactly one of prompt_file or config" in str(exc_info.value)
-
 
 class TestFullExampleParse:
     def test_parse_example_yaml(self, example_workflow_path):

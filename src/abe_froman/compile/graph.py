@@ -221,16 +221,6 @@ def build_workflow_graph(
             # see _depth>0 so they skip this and rely on the depth cap.
             if _depth == 0:
                 detect_config_cycle(node.config, base_dir=base_dir)
-        if (
-            node.fan_out
-            and node.fan_out.enabled
-            and node.fan_out.template
-            and node.fan_out.template.config
-            and _depth == 0
-        ):
-            detect_config_cycle(
-                node.fan_out.template.config, base_dir=base_dir,
-            )
 
     # ----- Node registration -----
 
@@ -262,17 +252,7 @@ def build_workflow_graph(
     gated_final_ids: set[str] = set()
     for node_id in dynamic_fan_out_ids:
         node = node_map[node_id]
-        builder.add_node(
-            f"_sub_{node.id}",
-            _make_fan_out_node(
-                node, config, executor,
-                compile_fn=lambda c, executor=None, _depth=0: build_workflow_graph(
-                    c, executor=executor, _depth=_depth, _base_dir=base_dir,
-                ),
-                base_dir=base_dir,
-                depth=_depth,
-            ),
-        )
+        builder.add_node(f"_sub_{node.id}", _make_fan_out_node(node, config, executor))
 
         for idx, final_node in enumerate(node.fan_out.final_nodes):
             fid = f"_final_{node.id}_{final_node.id}"
