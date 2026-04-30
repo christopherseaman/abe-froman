@@ -60,6 +60,60 @@ Execution = Annotated[
 ]
 
 
+class Execute(BaseModel):
+    """Stage 5b unified execution shape.
+
+    Three orthogonal modes, exactly one of which is active per node:
+
+      1. URL mode (`url:` set, `type:` unset) — dispatched by URL
+         extension/scheme to one of: prompt, subgraph, script, exec.
+      2. Join sentinel (`type: "join"`) — no-op topology marker.
+      3. Route ladder (`type: "route"`, `cases:`, `else:`) — pure
+         Command(goto=...) dispatch over structured state.
+
+    Coexists with the legacy `Node.execution` / `Node.config` /
+    `Node.prompt_file` fields during Stage 5b's dual-mode transition;
+    Commit 8 deletes the legacy shape after fixtures migrate.
+    """
+    model_config = ConfigDict(populate_by_name=True)
+    url: str | None = None
+    type: Literal["join", "route"] | None = None
+    params: dict[str, Any] = Field(default_factory=dict)
+    cases: list[RouteCase] = []
+    else_: str | None = Field(default=None, alias="else")
+
+    @model_validator(mode="after")
+    def validate_shape(self) -> Self:
+        modes_set = sum([
+            self.url is not None,
+            self.type == "join",
+            self.type == "route",
+        ])
+        if modes_set != 1:
+            raise ValueError(
+                "Execute must set exactly one of: url, type=join, type=route "
+                f"(got url={self.url!r}, type={self.type!r})"
+            )
+        if self.type == "join":
+            if self.cases or self.else_ is not None or self.params:
+                raise ValueError(
+                    "Execute type=join takes no cases, else, or params"
+                )
+        elif self.type == "route":
+            if self.else_ is None:
+                raise ValueError("Execute type=route requires else: target")
+            if self.params:
+                raise ValueError(
+                    "Execute type=route takes no params (use cases / else)"
+                )
+        else:  # url mode
+            if self.cases or self.else_ is not None:
+                raise ValueError(
+                    "Execute url mode takes no cases or else (those are route-only)"
+                )
+        return self
+
+
 def _normalize_prompt_shorthand(instance: Any) -> Any:
     """Convert prompt_file shorthand to PromptExecution."""
     if instance.prompt_file and instance.execution is None:
@@ -150,6 +204,7 @@ class Node(BaseModel):
     model: str | None = None
     prompt_file: str | None = None
     execution: Execution | None = None
+    execute: Execute | None = None  # Stage 5b unified shape
     config: str | None = None  # path to another graph YAML (Stage 4c recursion)
     inputs: dict[str, str] = {}  # parent → subgraph context projection (Stage 4c)
     outputs: dict[str, str] = {}  # subgraph terminal → parent state projection (Stage 4c)
@@ -162,10 +217,14 @@ class Node(BaseModel):
     @model_validator(mode="after")
     def normalize_and_validate(self) -> Self:
         _normalize_prompt_shorthand(self)
-        defs = sum(bool(x) for x in (self.execution, self.config))
+        # Stage 5b dual-mode: exactly one of {execute, execution, config}
+        # may be set per node. The legacy shapes (execution, config) coexist
+        # with the new `execute:` until the cutover commit migrates fixtures.
+        defs = sum(bool(x) for x in (self.execute, self.execution, self.config))
         if defs > 1:
             raise ValueError(
-                f"Node '{self.id}': at most one of execution/prompt_file or config"
+                f"Node '{self.id}': at most one of execute/execution/config "
+                f"(or prompt_file shorthand)"
             )
         return self
 
