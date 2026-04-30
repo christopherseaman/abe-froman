@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal, Self
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class PromptExecution(BaseModel):
@@ -32,8 +32,30 @@ class JoinExecution(BaseModel):
     type: Literal["join"] = "join"
 
 
+class RouteCase(BaseModel):
+    when: str
+    goto: str
+
+
+class RouteExecution(BaseModel):
+    """Pure case ladder over structured state.
+
+    A Node with `execution: { type: route, cases: [...], else: ... }`
+    evaluates each `when:` expression in order and returns
+    `Command(goto=<target>)` for the first match. If no case matches,
+    `else_` fires. Targets are node ids in the same Graph or the
+    sentinel `__end__`. Routes have zero baked-in retry/halt semantics;
+    those are authored as cases.
+    """
+    model_config = ConfigDict(populate_by_name=True)
+    type: Literal["route"] = "route"
+    cases: list[RouteCase] = []
+    else_: str = Field(alias="else")
+
+
 Execution = Annotated[
-    PromptExecution | CommandExecution | GateOnlyExecution | JoinExecution,
+    PromptExecution | CommandExecution | GateOnlyExecution
+    | JoinExecution | RouteExecution,
     Field(discriminator="type"),
 ]
 
@@ -176,6 +198,39 @@ class Graph(BaseModel):
                     raise ValueError(
                         f"Node '{node.id}' depends on '{dep}' "
                         f"which references nonexistent node"
+                    )
+
+        # Route nodes: every goto must resolve to a real node id or
+        # __end__; routes must be leaves in the dep DAG (their
+        # Command(goto=) IS the dispatch — a static depends_on edge
+        # would double-trigger the goto target).
+        route_ids = {
+            n.id for n in self.nodes if isinstance(n.execution, RouteExecution)
+        }
+        for node in self.nodes:
+            if not isinstance(node.execution, RouteExecution):
+                continue
+            for case in node.execution.cases:
+                if case.goto != "__end__" and case.goto not in node_ids:
+                    raise ValueError(
+                        f"Route '{node.id}' case goto '{case.goto}' "
+                        f"references nonexistent node"
+                    )
+            if (
+                node.execution.else_ != "__end__"
+                and node.execution.else_ not in node_ids
+            ):
+                raise ValueError(
+                    f"Route '{node.id}' else goto '{node.execution.else_}' "
+                    f"references nonexistent node"
+                )
+        for node in self.nodes:
+            for dep in node.depends_on:
+                if dep in route_ids:
+                    raise ValueError(
+                        f"Node '{node.id}' depends on route '{dep}'; "
+                        f"routes dispatch via Command(goto=), so they "
+                        f"cannot appear in another node's depends_on"
                     )
 
         return self
