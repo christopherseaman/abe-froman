@@ -117,7 +117,57 @@ settings:                      # optional, all fields have defaults
 | `command` | Runs subprocess, captures stdout | Scripts, validators, data processing |
 | `gate_only` | No execution, just evaluation | Validation checkpoints |
 | `join` | No-op topology marker (Stage 4b) | Explicit fan-in synchronization |
+| `route` | Pure case ladder over state; returns Command(goto=…) (Stage 5a) | Conditional flow control |
 | (config:) | Recursively compile referenced graph | Subgraph composition (Stage 4c) |
+
+### Route nodes (Stage 5a)
+
+A `route` node is a pure case ladder over structured state. It carries
+**zero baked-in semantics** (no retry, no halt, no delay): each `when:`
+expression is evaluated in order against a sandboxed namespace, and the
+first match dispatches via `Command(goto=<node_id>)`. The `else:` branch
+is required as a catch-all.
+
+```yaml
+- id: decide
+  depends_on: [judge]
+  execution:
+    type: route
+    cases:
+      - when: "history['judge'][-1]['result']['score'] >= 0.8"
+        goto: ship
+      - when: "len(history['judge']) >= 3"
+        goto: __end__
+    else: produce
+  ship:
+    type: command
+    command: echo
+    args: ["shipped"]
+```
+
+**Namespace bound to `when:` expressions:**
+
+- Each dep's structured output (or raw output if no structured) by id
+- `history` — the full `state.evaluations` map (`{node_id: [records...]}`)
+- `state` — the full state dict
+- Safe functions: `len`, `any`, `all`, `min`, `max`, `sum`
+
+**Goto sentinels:** `__end__` halts the workflow (maps to LangGraph
+`END`). All other goto values must resolve to a real node id; the
+schema validator rejects unknown targets at compile time.
+
+**Routes are leaves in the depends_on DAG.** A node cannot
+`depends_on:` a route — routing is exclusively via `Command(goto=)`,
+not static edges. The schema validator rejects this at compile time.
+
+**Goto targets skip the START fallback.** A node that is reached only
+via a route's goto won't get an automatic START → node edge; it
+runs only when the route activates it.
+
+**Sandbox:** predicates are evaluated by `simpleeval`. Dunder access,
+imports, and statements are blocked. Workflow YAML is treated as
+author-checked-in code, not untrusted input — this is footgun
+prevention, not adversarial sandboxing.
 
 ### Recursive subgraphs (Stage 4c)
 

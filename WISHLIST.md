@@ -230,6 +230,50 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
 
 - [ ] **`RetryPolicy` for transport-level retries** — layer `RetryPolicy(max_attempts=N, retry_on=OverloadError)` on executor-invoking nodes. Complements our eval-score-driven semantic retries; separates infrastructure flakes (rate limits, ACP drops) from content judgment. Closely related to "LLM gates inherit PromptBackend flakiness" above — fixes the same class of bug from a different angle.
 
+## Stage 5a hooks (deferred from the route-node design)
+
+These are forward-looking items surfaced during Stage 5a planning;
+landed alongside or after Stage 5c's `evaluation:`-block desugaring
+unless flagged otherwise.
+
+- [ ] **Multi-target parallel fan-out as a general primitive** — `goto:
+  [a, b, c]` returns from any node that decides flow (LangGraph
+  supports list-return conditional edges natively). Not route-specific:
+  applies to evaluation routers too, and could subsume some `fan_out:`
+  cases. Compatible with the existing `Command(goto=...)` API.
+
+- [ ] **Output specification unification** — one `output:` field on
+  Node taking `schema` | `contract` | (none). Today `output_contract:`
+  is free-floating. Folding the three modes under one field makes them
+  symmetric and pairs with the `schema:` work below.
+
+- [ ] **Schema enforcement at backend boundary** — `ACPBackend` and
+  stub backends populate `ExecutionResult.structured_output` when a
+  Node has `schema:` set. The field exists end-to-end already; today
+  no backend writes to it. Unblocks Stage 5b-style "route on producer
+  output without going through an evaluate gate."
+
+- [ ] **Schema-first templates** — `{{judge.score}}` resolves against
+  structured outputs; `{{judge}}` falls back to raw string. Pairs with
+  schema enforcement above. Today templates are flat string
+  substitution.
+
+- [ ] **Schema sources** — inline JSON schema dict OR `schema_file:`
+  path OR `schema_class: my_module.GateScore` for Pydantic. Three
+  shapes for one concept; symmetric with how `validator:` accepts
+  .py/.js/.md.
+
+- [ ] **Per-node delay primitive** — wrapping concern (orthogonal to
+  route) for backoff between attempts when authoring retry-via-route
+  patterns. Today `settings.retry_backoff` is the only knob and it's
+  coupled to evaluation-driven retries.
+
+- [ ] **Goto-target reachability validation** — schema validator
+  rejects `route → ship` configurations where `ship` is also reached
+  by a static dep edge from somewhere else (silent double-firing). Lo
+  priority — currently the runtime simply double-runs the target,
+  which is observable but ugly.
+
 ## Reimplementation debt (drop in favor of native LangGraph)
 
 Audit of where we shadow LangGraph functionality. Most of our code is genuinely complementary (timeouts, semantic retries, concurrency caps, custom reducers) — these two items are not.
