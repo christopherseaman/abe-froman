@@ -46,12 +46,7 @@
     - Investigate: session lifecycle races, stdio buffering, stale `_session_id` on multi-prompt flows, Python 3.14 async-generator `aclose()` warning
     - Decide: fix root cause, or gate ACP tests behind a stricter pre-flight
 
-- [ ] **ACP process-tree leaks / zombie subprocesses under long runs**
-    - Symptoms: after repeated ACP phases (especially at `max_parallel_jobs > 1`), user-session RSS grows and `node` / `claude` PIDs linger after `ACPBackend.close()` — contributed to the OOM kill observed on host `carnac` 2026-04-16 06:51:33 (`user@1002.service: The kernel OOM killer killed some processes`) on a no-swap VM with `ManagedOOMMemoryPressureLimit=50%`
-    - Contributing factor: Python 3.14 `aclose()` warning from the ACP SDK — async-generator cleanup does not reliably reap the `npm exec → node → claude` child tree
-    - Investigate: teardown ordering in `ACPBackend.close()`; use a process group or `PR_SET_PDEATHSIG` so the whole tree dies when the Python parent exits; SIGTERM → wait → SIGKILL escalation
-    - Add a teardown assertion (test fixture or runtime check) that no ACP-spawned PIDs survive backend close
-    - Decide: fix in-backend, or ship host-level mitigation (swap + relaxed oomd) as the supported recommendation
+- [x] **ACP process-tree leaks / zombie subprocesses under long runs** — _initial fix landed in post-Stage-5b. `ACPBackend.close()` now captures descendants from `/proc/<pid>/task/<pid>/children` BEFORE `__aexit__` (so re-parented orphans stay tracked), runs graceful shutdown under a 5s `wait_for`, then SIGTERM→0.5s→SIGKILLs each captured PID. Teardown assertion `tests/acp/test_acp_cleanup.py::test_close_reaps_descendant_tree` watches a 15-PID descendant tree disappear within 3s of close. **Open: soak-test under load** — needs a multi-hour run with `max_parallel_jobs > 1` against the absurd-paper workflow before this can be fully ticked off._
 
 - [ ] **Worktree garbage collection**
     - Today: `ForemanExecutor` never removes trees under `<workdir>/.abe-foreman/` — disk + inodes accumulate indefinitely across runs
@@ -215,18 +210,9 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
 
 ### Backend-selection ergonomics (high priority)
 
-- [ ] **Scope-aware settings resolution (prerequisite for everything below)**
-    - Today, only the **outermost** `Graph.settings` is honored at runtime. A subgraph can author its own `settings:` block — and the YAML parses cleanly — but the executor is the parent's instance, so the subgraph's `default_model`, `default_timeout`, `preamble_file`, `retry_backoff`, etc. are silently ignored. This contradicts the graphs-and-subgraphs-are-definitionally-identical principle.
-    - **Symptom right now**: a subgraph YAML that says `settings.default_model: opus` does NOT actually use opus when invoked from a parent that defaults to sonnet.
-    - **Resolution order to land**: per-node > subgraph > parent graph > process default. Subgraph fields that are `None`-default fall through to the parent; fields the subgraph explicitly sets win for that subgraph's nodes. Nested subgraphs layer naturally — each level inherits from its enclosing scope.
-    - **Implementation seam**: cheapest approach is `NodeExecutor.execute(node, context, workdir=, settings_override=None)`. Subgraph wrappers pass their own `Settings` (merged with parent's via field-level None-fallback) when they `await sub_graph.ainvoke(...)`. `resolve_model`, `node.effective_timeout`, `apply_preamble`, the retry-backoff lookup, and the per-mode params resolver all consult `settings_override` when set, falling back to the executor's own `Settings` otherwise.
-    - **Why it's prerequisite**: every "configurable per workflow" item below (default executor, three-axis llm config, per-mode policies) needs scope semantics that work across subgraph boundaries. Locking the resolution order in once means every new field gets the same inheritance for free.
-    - Pairs with: any future "trunk/merge branch for synthesis merges" or other settings that meaningfully differ between an outer composition workflow and the inner unit it composes.
+- [x] **Scope-aware settings resolution (prerequisite for everything below)** — _landed post-Stage-5b. `runtime/settings_merge.merge_settings` uses Pydantic v2 `model_fields_set` so child YAML's explicit fields win, parent's flow through. `NodeExecutor.execute` Protocol gained `settings_override: Settings | None`; threaded through `DispatchExecutor` (every read site of `self._settings`), `ForemanExecutor` (per-model semaphore selection), and `PromptExecutor` (`apply_preamble`, `execute_rendered.model_downgrade_chain`). Compile layer: `build_workflow_graph(effective_settings=)`, `_make_execution_node`, `_make_evaluation_node`, `run_evaluation_and_outcome`, fan-out factories all take and propagate. `make_subgraph_node` and `make_fan_out_subgraph_invoker` accept `parent_settings` and call `compile_fn(..., effective_settings=merge_settings(parent, sub))`. Tested by 10 unit tests + 6 e2e (incl. real-subprocess `default_timeout` proof: subgraph override lets `sleep 1.5` pass under parent's 1s; reverse polarity kills `sleep 2`). Critical bug caught en route — the inner `compile_fn` closure was forwarding the OUTER scope's settings into recursive build calls instead of the inner scope's; the artifact-driven sleep test pinned it._
 
-- [ ] **Default executor should be real, not stub**
-    - Today: `settings.executor` defaults to `"stub"`, so a workflow with prompt nodes silently emits `[prompt-stub] {id}: {url}` placeholders unless the author either declares `executor: "acp"` in YAML OR passes `-e acp` on every CLI invocation. That's a footgun — running an absurd-paper or jokes workflow without `-e acp` produces convincing-looking output that is fake.
-    - Want: detect available backends at startup; default to the first real one (anthropic API key in env → anthropic; ACP adapter on PATH → ACP). Fall back to stub only when no real backend is available, and emit a warning when stub is selected. CLI flag stays as an explicit override.
-    - Companion change: rename or remove `--executor stub` since "fake responses" should require an opt-in like `--no-network` or `--dry-run`, not be the path of least resistance.
+- [x] **Default executor should be real, not stub** — _landed post-Stage-5b. `auto_detect_executor()` in `factory.py` walks `ANTHROPIC_API_KEY` (placeholder) → DeepSeek key (env or `~/.pi/agent/auth.json`) → `npx` on PATH → `stub` with a `UserWarning` naming concrete remediation. `Settings.executor: str | None = None` (was `"stub"`); the CLI does `executor or settings.executor or auto_detect_executor()`. Explicit `-e stub` or `executor: stub` in YAML never triggers the fallback warning — stub stays usable for offline testing, just no longer the default. Manual artifact gate: `abe-froman run examples/jokes/workflow.yaml` (no `-e` flag) now auto-picks DeepSeek (since the key is on disk) and produces real output (not `[prompt-stub]`)._
 
 - [ ] **Three orthogonal axes for LLM execution, configurable in YAML**
     - Depends on scope-aware settings resolution above — without it, a subgraph's `settings.llm:` block would silently lose to the parent's, which is exactly the footgun the resolution-order fix exists to close.
@@ -266,11 +252,7 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
     - Expose input/output token counts via `PromptBackendResult.tokens_used`
     - Selected by `settings.llm.protocol: api` + `settings.llm.provider: anthropic`
 
-- [ ] **OpenAI-compatible backend**
-    - `runtime/executor/backends/openai.py` using the `openai` SDK with configurable `base_url`
-    - Unlocks OpenAI, Azure OpenAI, Ollama, vLLM, llama.cpp, LM Studio, LiteLLM
-    - Separate model-downgrade chain
-    - Selected by `settings.llm.protocol: api` + `settings.llm.provider: openai` (+ optional `base_url`)
+- [x] **OpenAI-compatible backend** — _landed post-Stage-5b. `runtime/executor/backends/openai.py` (~105 LOC) implements the `PromptBackend` Protocol via the `openai` SDK with overridable `base_url`. Validated end-to-end against DeepSeek (`base_url=https://api.deepseek.com/v1`, model `deepseek-v4-flash`) — auto-detect picks it up via `~/.pi/agent/auth.json`. Maps 429/502/503/504/529 + `RateLimitError` + `APIConnectionError` → `OverloadError` (activates the existing model-downgrade chain). Optional dep — install with `uv sync --extra openai`. Three-axis LLM config sketch above is still TODO; this backend is the first concrete demo that decouples provider/model from the ACP transport. Unlocks OpenAI, Azure OpenAI, Ollama, vLLM, llama.cpp, LM Studio, LiteLLM via the same backend with `base_url` overrides._
 
 - [ ] **Wire `OverloadError` through `ACPBackend`**
     - Translate ACP 429 / 529 / overload codes so the existing downgrade path fires with ACP too

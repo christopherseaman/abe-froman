@@ -3,6 +3,62 @@
 All notable changes to abe-froman are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased] — Post-Stage-5b: defaults, scope, cleanup
+
+### Added
+
+- **OpenAI-compatible backend** (`runtime/executor/backends/openai.py`)
+  via the `openai` SDK with an overridable `base_url`. Validated
+  end-to-end against DeepSeek (`https://api.deepseek.com/v1`, model
+  `deepseek-v4-flash`). Maps 429/502/503/504/529 plus
+  `RateLimitError` / `APIConnectionError` to `OverloadError` so the
+  existing model-downgrade chain in `PromptExecutor` activates the
+  same way it does for ACP. Install with `uv sync --extra openai`.
+- **Auto-detect executor backend** at CLI dispatch
+  (`factory.auto_detect_executor()`). Resolution order: `ANTHROPIC_API_KEY`
+  (placeholder) → DeepSeek key (env or `~/.pi/agent/auth.json`) →
+  `npx` on PATH → `stub` with a `UserWarning` naming concrete
+  remediation. CLI: `executor or settings.executor or auto_detect()`.
+- **Scope-aware settings inheritance** for subgraphs
+  (`runtime/settings_merge.merge_settings`). Subgraph `settings:`
+  blocks now actually apply: child fields explicitly authored win,
+  parent's flow through. `NodeExecutor.execute` Protocol gained
+  `settings_override: Settings | None`; threaded through
+  DispatchExecutor, ForemanExecutor, PromptExecutor at every read
+  site. Compile layer: `build_workflow_graph(effective_settings=)`
+  threads merged settings into per-node closures.
+- **ACP process-tree teardown** in `ACPBackend.close()`. Captures
+  descendant PIDs from `/proc` *before* `__aexit__` so re-parented
+  orphans stay tracked, then SIGTERM → 0.5s grace → SIGKILLs each.
+  Test (`tests/acp/test_acp_cleanup.py`) observes a 15-PID descendant
+  tree disappear within 3s of close. Soak-test under load still
+  pending before the WISHLIST item fully closes.
+
+### Changed
+
+- **`Settings.executor` is now `str | None = None`** (was `"stub"`).
+  `None` triggers auto-detect at CLI dispatch. Explicit
+  `executor: stub` in YAML or `--executor stub` on the CLI still
+  works — just no longer the default. Workflows that rely on the
+  old default behavior need to either set `executor: stub` or rely
+  on auto-detect picking the right real backend.
+
+### Deprecated
+
+(none)
+
+### Removed
+
+(none)
+
+### Fixed
+
+- `compile_fn` recursive call in `build_workflow_graph` was
+  forwarding the OUTER scope's settings into nested subgraph
+  builds instead of the inner scope's. Caught by the artifact-driven
+  `default_timeout` inheritance test. Fix: the closure forwards
+  its own `effective_settings` parameter.
+
 ## [Unreleased] — Stage 5b: `execute: { url, params }` Schema Cutover
 
 ### ⚠️ Breaking changes
