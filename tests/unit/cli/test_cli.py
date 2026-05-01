@@ -39,7 +39,8 @@ class TestValidateCommand:
         config = tmp_path / "simple.yaml"
         config.write_text(
             "name: Test\nversion: '1.0'\nnodes:\n"
-            "  - id: p1\n    name: Node 1\n    prompt_file: t.md\n"
+            "  - id: p1\n    name: Node 1\n"
+            "    execute:\n      url: t.md\n"
         )
         result = runner.invoke(cli, ["validate", str(config)])
         assert result.exit_code == 0
@@ -97,11 +98,13 @@ class TestRunCommand:
 
     def test_run_simple_workflow(self, runner, tmp_path):
         """End-to-end: command node that actually runs."""
+        import shutil
+        echo_bin = shutil.which("echo") or "/bin/echo"
         config = tmp_path / "simple.yaml"
         config.write_text(
             "name: Simple\nversion: '1.0'\nnodes:\n"
             "  - id: echo\n    name: Echo Test\n"
-            "    execution:\n      type: command\n      command: echo\n      args: ['hello']\n"
+            f"    execute:\n      url: {echo_bin}\n      params:\n        args: ['hello']\n"
         )
         result = runner.invoke(cli, ["run", str(config), "--workdir", str(tmp_path)])
         assert result.exit_code == 0
@@ -109,11 +112,13 @@ class TestRunCommand:
 
     def test_run_failing_command_exits_nonzero(self, runner, tmp_path):
         """A failing command node should cause non-zero exit."""
+        import shutil
+        false_bin = shutil.which("false") or "/bin/false"
         config = tmp_path / "fail.yaml"
         config.write_text(
             "name: Fail\nversion: '1.0'\nnodes:\n"
             "  - id: fail\n    name: Fail Test\n"
-            "    execution:\n      type: command\n      command: 'false'\n"
+            f"    execute:\n      url: {false_bin}\n"
         )
         result = runner.invoke(cli, ["run", str(config), "--workdir", str(tmp_path)])
         assert result.exit_code != 0
@@ -122,11 +127,13 @@ class TestRunCommand:
 
 class TestRunOptions:
     def test_executor_unknown_raises(self, runner, tmp_path):
+        import shutil
+        echo_bin = shutil.which("echo") or "/bin/echo"
         config = tmp_path / "simple.yaml"
         config.write_text(
             "name: Test\nversion: '1.0'\nnodes:\n"
             "  - id: node-1\n    name: Node 1\n"
-            "    execution:\n      type: command\n      command: echo\n      args: ['hi']\n"
+            f"    execute:\n      url: {echo_bin}\n      params:\n        args: ['hi']\n"
         )
         result = runner.invoke(
             cli, ["run", str(config), "--executor", "bogus", "--workdir", str(tmp_path)]
@@ -136,11 +143,13 @@ class TestRunOptions:
 
 class TestResumeCommand:
     def _simple_config(self, tmp_path):
+        import shutil
+        echo_bin = shutil.which("echo") or "/bin/echo"
         config = tmp_path / "simple.yaml"
         config.write_text(
             "name: Test\nversion: '1.0'\nnodes:\n"
             "  - id: a\n    name: A\n"
-            "    execution:\n      type: command\n      command: echo\n      args: ['hi']\n"
+            f"    execute:\n      url: {echo_bin}\n      params:\n        args: ['hi']\n"
         )
         return config
 
@@ -188,7 +197,7 @@ class TestCliHelpers:
 
         config = Graph(
             name="test", version="1.0",
-            nodes=[{"id": "a", "name": "A", "prompt_file": "t.md"}],
+            nodes=[{"id": "a", "name": "A", "execute": {"url": "t.md"}}],
         )
         id1 = _thread_id_for(config, str(tmp_path))
         id2 = _thread_id_for(config, str(tmp_path))
@@ -201,7 +210,7 @@ class TestCliHelpers:
 
         config = Graph(
             name="test", version="1.0",
-            nodes=[{"id": "a", "name": "A", "prompt_file": "t.md"}],
+            nodes=[{"id": "a", "name": "A", "execute": {"url": "t.md"}}],
         )
         id_a = _thread_id_for(config, str(tmp_path / "a"))
         id_b = _thread_id_for(config, str(tmp_path / "b"))

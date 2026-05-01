@@ -116,63 +116,41 @@ class TestExecuteEmpty:
         assert "exactly one" in str(ei.value).lower()
 
 
-class TestNodeDualMode:
-    def test_node_with_execute_url_only(self):
+class TestNodeExecuteShape:
+    """After Stage-5b hard cutover, Node carries only `execute: Execute | None`.
+    Legacy `execution`/`config`/`prompt_file` fields no longer exist."""
+
+    def test_node_with_execute_url(self):
         n = Node(id="a", name="A", execute=Execute(url="x.md"))
         assert n.execute.url == "x.md"
-        assert n.execution is None
-        assert n.config is None
 
-    def test_node_with_execution_only(self):
-        n = Node(id="a", name="A", execution={"type": "command", "command": "echo"})
-        assert n.execute is None
-        assert n.execution is not None
+    def test_node_with_execute_join(self):
+        n = Node(id="a", name="A", execute=Execute(type="join"), depends_on=["x"])
+        assert n.execute.type == "join"
 
-    def test_node_with_config_only(self):
-        n = Node(id="a", name="A", config="sub.yaml")
-        assert n.execute is None
-        assert n.config == "sub.yaml"
+    def test_node_with_execute_subgraph_yaml(self):
+        n = Node(id="a", name="A", execute=Execute(url="sub.yaml"))
+        assert n.execute.url == "sub.yaml"
 
-    def test_rejects_execute_and_execution(self):
-        with pytest.raises(ValidationError) as ei:
-            Node(
-                id="a", name="A",
-                execute=Execute(url="x.md"),
-                execution={"type": "command", "command": "echo"},
-            )
-        assert "execute/execution/config" in str(ei.value)
-
-    def test_rejects_execute_and_config(self):
-        with pytest.raises(ValidationError) as ei:
-            Node(
-                id="a", name="A",
-                execute=Execute(url="x.md"),
-                config="sub.yaml",
-            )
-        assert "execute/execution/config" in str(ei.value)
-
-    def test_rejects_execution_and_config(self):
-        with pytest.raises(ValidationError) as ei:
-            Node(
-                id="a", name="A",
-                execution={"type": "command", "command": "echo"},
-                config="sub.yaml",
-            )
-        assert "execute/execution/config" in str(ei.value)
-
-    def test_rejects_prompt_file_and_execute(self):
+    def test_node_rejects_legacy_execution_field(self):
         with pytest.raises(ValidationError):
-            Node(
-                id="a", name="A",
-                prompt_file="x.md",     # normalized to execution at model_validator
-                execute=Execute(url="y.md"),
-            )
+            Node.model_validate({
+                "id": "a", "name": "A",
+                "execution": {"type": "command", "command": "echo"},
+            })
 
-    def test_node_with_no_execution_legal(self):
-        # A bare Node (no execute/execution/config) is gate-only-by-elision.
+    def test_node_rejects_legacy_config_field(self):
+        with pytest.raises(ValidationError):
+            Node(id="a", name="A", config="sub.yaml")
+
+    def test_node_rejects_legacy_prompt_file_field(self):
+        with pytest.raises(ValidationError):
+            Node(id="a", name="A", prompt_file="x.md")
+
+    def test_node_with_no_execute_is_gate_only(self):
+        # A bare Node (no execute) is gate-only-by-elision.
         n = Node(id="a", name="A")
         assert n.execute is None
-        assert n.execution is None
 
 
 class TestSettingsExtension:
@@ -214,7 +192,7 @@ class TestGraphValidatorOnExecuteRoutes:
         Graph(
             name="t", version="1.0",
             nodes=[
-                Node(id="a", name="A", execution={"type": "command", "command": "echo"}),
+                Node(id="a", name="A", execute=Execute(url="/usr/bin/echo")),
                 Node(
                     id="r", name="R", depends_on=["a"],
                     execute=Execute(
@@ -233,7 +211,7 @@ class TestGraphValidatorOnExecuteRoutes:
             Graph(
                 name="t", version="1.0",
                 nodes=[
-                    Node(id="a", name="A", execution={"type": "command", "command": "echo"}),
+                    Node(id="a", name="A", execute=Execute(url="/usr/bin/echo")),
                     Node(
                         id="r", name="R", depends_on=["a"],
                         execute=Execute(
@@ -254,7 +232,7 @@ class TestGraphValidatorOnExecuteRoutes:
             Graph(
                 name="t", version="1.0",
                 nodes=[
-                    Node(id="a", name="A", execution={"type": "command", "command": "echo"}),
+                    Node(id="a", name="A", execute=Execute(url="/usr/bin/echo")),
                     Node(
                         id="r", name="R", depends_on=["a"],
                         execute=Execute(
@@ -274,14 +252,14 @@ class TestGraphValidatorOnExecuteRoutes:
             Graph(
                 name="t", version="1.0",
                 nodes=[
-                    Node(id="a", name="A", execution={"type": "command", "command": "echo"}),
+                    Node(id="a", name="A", execute=Execute(url="/usr/bin/echo")),
                     Node(
                         id="r", name="R", depends_on=["a"],
                         execute=Execute(type="route", cases=[], else_="__end__"),
                     ),
                     Node(
                         id="downstream", name="D", depends_on=["r"],
-                        execution={"type": "command", "command": "echo"},
+                        execute=Execute(url="/usr/bin/echo"),
                     ),
                 ],
             )

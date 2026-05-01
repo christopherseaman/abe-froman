@@ -1,19 +1,24 @@
+import shutil
+from pathlib import Path
+
 import pytest
 import yaml
 from pydantic import ValidationError
 
 from abe_froman.schema.models import (
-    CommandExecution,
     DimensionCheck,
-    FanOut,
-    GateOnlyExecution,
-    OutputContract,
-    Node,
-    PromptExecution,
     Evaluation,
-    Settings,
+    Execute,
+    FanOut,
     Graph,
+    Node,
+    OutputContract,
+    RouteCase,
+    Settings,
 )
+
+ECHO_BIN = shutil.which("echo") or "/bin/echo"
+NODE_BIN = shutil.which("node") or "/usr/bin/node"
 
 
 class TestMinimalWorkflow:
@@ -36,79 +41,142 @@ class TestMinimalWorkflow:
         assert config.nodes == []
 
 
-class TestPromptFileShorthand:
-    """prompt_file at node level auto-converts to PromptExecution."""
+class TestExecuteUrl:
+    """Stage 5b: Node.execute is the single execution shape; URL mode."""
 
-    def test_prompt_file_creates_prompt_execution(self):
-        node = Node(id="p1", name="P1", prompt_file="test.md")
-        assert isinstance(node.execution, PromptExecution)
-        assert node.execution.prompt_file == "test.md"
+    def test_url_mode_basic(self):
+        node = Node(id="p1", name="P1", execute=Execute(url="test.md"))
+        assert node.execute is not None
+        assert node.execute.url == "test.md"
+        assert node.execute.type is None
+        assert node.execute.params == {}
 
-    def test_prompt_file_cleared_after_normalization(self):
-        node = Node(id="p1", name="P1", prompt_file="test.md")
-        assert node.prompt_file is None
-
-    def test_explicit_execution_takes_precedence(self):
+    def test_url_mode_from_dict(self):
         node = Node(
             id="p1",
             name="P1",
-            execution=CommandExecution(command="node", args=["test.js"]),
+            execute={"url": "test.md"},
         )
-        assert isinstance(node.execution, CommandExecution)
+        assert node.execute is not None
+        assert node.execute.url == "test.md"
 
-    def test_both_prompt_file_and_execution_keeps_execution(self):
-        """When both prompt_file and execution are set, execution wins."""
+    def test_url_mode_with_params(self):
         node = Node(
             id="p1",
             name="P1",
-            prompt_file="should-be-ignored.md",
-            execution=CommandExecution(command="node"),
+            execute=Execute(url=ECHO_BIN, params={"args": ["hello"]}),
         )
-        assert isinstance(node.execution, CommandExecution)
+        assert node.execute.url == ECHO_BIN
+        assert node.execute.params == {"args": ["hello"]}
 
-
-class TestExecutionTypes:
-    def test_prompt_execution(self):
-        ex = PromptExecution(prompt_file="test.md")
-        assert ex.type == "prompt"
-        assert ex.prompt_file == "test.md"
-
-    def test_command_execution(self):
-        ex = CommandExecution(command="node", args=["test.js"])
-        assert ex.type == "command"
-        assert ex.command == "node"
-        assert ex.args == ["test.js"]
-
-    def test_command_execution_no_args(self):
-        ex = CommandExecution(command="validate")
-        assert ex.args == []
-
-    def test_gate_only_execution(self):
-        ex = GateOnlyExecution()
-        assert ex.type == "gate_only"
-
-    def test_execution_discriminated_union_from_dict(self):
-        """Execution types parse correctly from raw dicts (YAML deserialization)."""
-        node_prompt = Node(
+    def test_url_mode_subgraph_with_inputs_outputs(self):
+        node = Node(
             id="p1",
             name="P1",
-            execution={"type": "prompt", "prompt_file": "test.md"},
+            execute=Execute(
+                url="sub.yaml",
+                params={
+                    "inputs": {"topic": "{{parent}}"},
+                    "outputs": {"result": "{{terminal}}"},
+                },
+            ),
         )
-        assert isinstance(node_prompt.execution, PromptExecution)
+        assert node.execute.url == "sub.yaml"
+        assert node.execute.params["inputs"] == {"topic": "{{parent}}"}
+        assert node.execute.params["outputs"] == {"result": "{{terminal}}"}
 
-        node_cmd = Node(
-            id="p2",
-            name="P2",
-            execution={"type": "command", "command": "node", "args": ["x.js"]},
-        )
-        assert isinstance(node_cmd.execution, CommandExecution)
+    def test_gate_only_by_elision(self):
+        """No execute= means gate-only-by-elision."""
+        node = Node(id="p1", name="P1")
+        assert node.execute is None
 
-        node_gate = Node(
-            id="p3",
-            name="P3",
-            execution={"type": "gate_only"},
+
+class TestExecuteJoin:
+    def test_join_mode(self):
+        ex = Execute(type="join")
+        assert ex.type == "join"
+        assert ex.url is None
+        assert ex.params == {}
+
+    def test_join_from_dict(self):
+        node = Node(id="p1", name="P1", execute={"type": "join"})
+        assert node.execute.type == "join"
+
+    def test_join_rejects_params(self):
+        with pytest.raises(ValidationError):
+            Execute(type="join", params={"foo": "bar"})
+
+    def test_join_rejects_cases(self):
+        with pytest.raises(ValidationError):
+            Execute(type="join", cases=[RouteCase(when="x", goto="y")])
+
+    def test_join_rejects_else(self):
+        with pytest.raises(ValidationError):
+            Execute.model_validate({"type": "join", "else": "fallback"})
+
+
+class TestExecuteRoute:
+    def test_route_basic(self):
+        ex = Execute.model_validate(
+            {
+                "type": "route",
+                "cases": [{"when": "x >= 0.8", "goto": "ship"}],
+                "else": "produce",
+            }
         )
-        assert isinstance(node_gate.execution, GateOnlyExecution)
+        assert ex.type == "route"
+        assert len(ex.cases) == 1
+        assert ex.cases[0].when == "x >= 0.8"
+        assert ex.cases[0].goto == "ship"
+        assert ex.else_ == "produce"
+
+    def test_route_requires_else(self):
+        with pytest.raises(ValidationError):
+            Execute(
+                type="route",
+                cases=[RouteCase(when="x", goto="ship")],
+            )
+
+    def test_route_rejects_params(self):
+        with pytest.raises(ValidationError):
+            Execute.model_validate(
+                {
+                    "type": "route",
+                    "params": {"foo": "bar"},
+                    "else": "fallback",
+                }
+            )
+
+    def test_route_else_only_is_valid(self):
+        ex = Execute.model_validate({"type": "route", "else": "fallback"})
+        assert ex.cases == []
+        assert ex.else_ == "fallback"
+
+
+class TestExecuteShapeValidator:
+    """Execute must set exactly one of: url, type=join, type=route."""
+
+    def test_no_modes_set_rejected(self):
+        with pytest.raises(ValidationError):
+            Execute()
+
+    def test_url_and_join_rejected(self):
+        with pytest.raises(ValidationError):
+            Execute(url="x.md", type="join")
+
+    def test_url_and_route_rejected(self):
+        with pytest.raises(ValidationError):
+            Execute.model_validate(
+                {"url": "x.md", "type": "route", "else": "z"}
+            )
+
+    def test_url_mode_rejects_cases(self):
+        with pytest.raises(ValidationError):
+            Execute(url="x.md", cases=[RouteCase(when="a", goto="b")])
+
+    def test_url_mode_rejects_else(self):
+        with pytest.raises(ValidationError):
+            Execute.model_validate({"url": "x.md", "else": "fallback"})
 
 
 class TestQualityGate:
@@ -117,7 +185,6 @@ class TestQualityGate:
         assert gate.validator == "gates/v.py"
         assert gate.threshold == 0.85
         assert gate.blocking is False
-        # max_retries defaults to None (defers to Settings.max_retries)
         assert gate.max_retries is None
 
     def test_blocking_gate(self):
@@ -169,7 +236,7 @@ class TestEffectiveMaxRetries:
 
     def test_no_gate_uses_settings(self):
         settings = Settings(max_retries=5)
-        node = Node(id="p1", name="P1", prompt_file="t.md")
+        node = Node(id="p1", name="P1", execute=Execute(url="t.md"))
         assert node.effective_max_retries(settings) == 5
 
     def test_gate_with_override(self):
@@ -177,7 +244,7 @@ class TestEffectiveMaxRetries:
         node = Node(
             id="p1",
             name="P1",
-            prompt_file="t.md",
+            execute=Execute(url="t.md"),
             evaluation=Evaluation(validator="v.md", threshold=0.8, max_retries=2),
         )
         assert node.effective_max_retries(settings) == 2
@@ -187,7 +254,7 @@ class TestEffectiveMaxRetries:
         node = Node(
             id="p1",
             name="P1",
-            prompt_file="t.md",
+            execute=Execute(url="t.md"),
             evaluation=Evaluation(validator="v.md", threshold=0.8),
         )
         assert node.effective_max_retries(settings) == 7
@@ -208,11 +275,13 @@ class TestOutputContract:
 
 class TestModelSelection:
     def test_phase_model(self):
-        node = Node(id="p1", name="P1", prompt_file="t.md", model="opus")
+        node = Node(
+            id="p1", name="P1", execute=Execute(url="t.md"), model="opus"
+        )
         assert node.model == "opus"
 
     def test_phase_model_default_none(self):
-        node = Node(id="p1", name="P1", prompt_file="t.md")
+        node = Node(id="p1", name="P1", execute=Execute(url="t.md"))
         assert node.model is None
 
     def test_settings_default_model(self):
@@ -222,6 +291,35 @@ class TestModelSelection:
     def test_settings_default_model_default_value(self):
         settings = Settings()
         assert settings.default_model == "sonnet"
+
+
+class TestSettingsRemoteUrlGates:
+    """Stage 5b: Settings extended for execute.url remote URL gates."""
+
+    def test_defaults_safe(self):
+        s = Settings()
+        assert s.base_url is None
+        assert s.allow_remote_urls is False
+        assert s.allow_remote_scripts is False
+        assert s.allowed_url_hosts == []
+        assert s.url_headers == {}
+        assert s.max_remote_fetch_bytes == 5_000_000
+
+    def test_remote_url_gates_configurable(self):
+        s = Settings(
+            base_url="https://example.com/",
+            allow_remote_urls=True,
+            allow_remote_scripts=True,
+            allowed_url_hosts=["*.example.com"],
+            url_headers={"https://api.example.com/": {"X-Auth": "${TOKEN}"}},
+            max_remote_fetch_bytes=10_000_000,
+        )
+        assert s.base_url == "https://example.com/"
+        assert s.allow_remote_urls is True
+        assert s.allow_remote_scripts is True
+        assert s.allowed_url_hosts == ["*.example.com"]
+        assert s.url_headers["https://api.example.com/"]["X-Auth"] == "${TOKEN}"
+        assert s.max_remote_fetch_bytes == 10_000_000
 
 
 class TestDependencyValidation:
@@ -235,11 +333,11 @@ class TestDependencyValidation:
                 name="Test",
                 version="1.0.0",
                 nodes=[
-                    {"id": "p1", "name": "P1", "prompt_file": "t.md"},
+                    {"id": "p1", "name": "P1", "execute": {"url": "t.md"}},
                     {
                         "id": "p2",
                         "name": "P2",
-                        "prompt_file": "t.md",
+                        "execute": {"url": "t.md"},
                         "depends_on": ["nonexistent"],
                     },
                 ],
@@ -251,8 +349,8 @@ class TestDependencyValidation:
                 name="Test",
                 version="1.0.0",
                 nodes=[
-                    {"id": "p1", "name": "P1", "prompt_file": "t.md"},
-                    {"id": "p1", "name": "P1 Again", "prompt_file": "t2.md"},
+                    {"id": "p1", "name": "P1", "execute": {"url": "t.md"}},
+                    {"id": "p1", "name": "P1 Again", "execute": {"url": "t2.md"}},
                 ],
             )
 
@@ -265,15 +363,85 @@ class TestDependencyValidation:
                     {
                         "id": "p1",
                         "name": "P1",
-                        "prompt_file": "t.md",
+                        "execute": {"url": "t.md"},
                         "depends_on": ["p1"],
                     }
                 ],
             )
 
     def test_no_dependencies(self):
-        node = Node(id="p1", name="P1", prompt_file="t.md")
+        node = Node(id="p1", name="P1", execute=Execute(url="t.md"))
         assert node.depends_on == []
+
+
+class TestRouteValidation:
+    """Graph-level route validation (Stage 5a, retained in Stage 5b)."""
+
+    def test_route_unknown_goto_rejected(self):
+        with pytest.raises(ValidationError, match="nonexistent"):
+            Graph(
+                name="T",
+                version="1.0.0",
+                nodes=[
+                    {"id": "a", "name": "A", "execute": {"url": "a.md"}},
+                    {
+                        "id": "r",
+                        "name": "R",
+                        "depends_on": ["a"],
+                        "execute": {
+                            "type": "route",
+                            "cases": [{"when": "True", "goto": "ghost"}],
+                            "else": "a",
+                        },
+                    },
+                ],
+            )
+
+    def test_route_cannot_be_dep_target(self):
+        with pytest.raises(ValidationError, match="route"):
+            Graph(
+                name="T",
+                version="1.0.0",
+                nodes=[
+                    {"id": "a", "name": "A", "execute": {"url": "a.md"}},
+                    {
+                        "id": "r",
+                        "name": "R",
+                        "depends_on": ["a"],
+                        "execute": {
+                            "type": "route",
+                            "cases": [],
+                            "else": "a",
+                        },
+                    },
+                    {
+                        "id": "b",
+                        "name": "B",
+                        "execute": {"url": "b.md"},
+                        "depends_on": ["r"],
+                    },
+                ],
+            )
+
+    def test_route_end_sentinel_accepted(self):
+        config = Graph(
+            name="T",
+            version="1.0.0",
+            nodes=[
+                {"id": "a", "name": "A", "execute": {"url": "a.md"}},
+                {
+                    "id": "r",
+                    "name": "R",
+                    "depends_on": ["a"],
+                    "execute": {
+                        "type": "route",
+                        "cases": [{"when": "True", "goto": "__end__"}],
+                        "else": "__end__",
+                    },
+                },
+            ],
+        )
+        assert config.nodes[1].execute.cases[0].goto == "__end__"
 
 
 class TestFanOut:
@@ -281,7 +449,7 @@ class TestFanOut:
         config = FanOut(
             enabled=True,
             manifest_path="manifest.json",
-            template={"prompt_file": "template.md"},
+            template={"execute": {"url": "template.md"}},
         )
         assert config.enabled is True
         assert config.manifest_path == "manifest.json"
@@ -291,7 +459,7 @@ class TestFanOut:
             enabled=True,
             manifest_path="m.json",
             template={
-                "prompt_file": "template.md",
+                "execute": {"url": "template.md"},
                 "evaluation": {"validator": "v.md", "threshold": 0.8},
             },
         )
@@ -301,13 +469,18 @@ class TestFanOut:
         config = FanOut(
             enabled=True,
             manifest_path="m.json",
-            template={"prompt_file": "t.md"},
+            template={"execute": {"url": "t.md"}},
             final_nodes=[
-                {"id": "summary", "name": "Summary", "prompt_file": "s.md"}
+                {
+                    "id": "summary",
+                    "name": "Summary",
+                    "execute": {"url": "s.md"},
+                }
             ],
         )
         assert len(config.final_nodes) == 1
         assert config.final_nodes[0].id == "summary"
+        assert config.final_nodes[0].execute.url == "s.md"
 
     def test_disabled_by_default(self):
         config = FanOut()
@@ -328,7 +501,6 @@ class TestFullExampleParse:
 
     def test_example_has_all_execution_types(self, example_workflow_path):
         """Example YAML exercises script, prompt, and gate-only-by-elision."""
-        from pathlib import Path
         with open(example_workflow_path) as f:
             raw = yaml.safe_load(f)
         config = Graph(**raw)
@@ -354,7 +526,6 @@ class TestFullExampleParse:
         assert ("script" in kinds) or ("binary" in kinds)
 
     def test_example_phase_types(self, example_workflow_path):
-        from pathlib import Path
         with open(example_workflow_path) as f:
             raw = yaml.safe_load(f)
         config = Graph(**raw)
@@ -391,7 +562,6 @@ class TestFullExampleParse:
 
         node_map = {p.id: p for p in config.nodes}
         node4 = node_map["node-4"]
-        # All node-3-* nodes should be in depends_on
         node3_ids = {p.id for p in config.nodes if p.id.startswith("node-3")}
         assert node3_ids == set(node4.depends_on)
 
@@ -432,4 +602,3 @@ class TestNodeTimeout:
         s = Settings()
         p = Node(id="a", name="A")
         assert p.effective_timeout(s) is None
-

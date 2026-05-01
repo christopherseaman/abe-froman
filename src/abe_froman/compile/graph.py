@@ -14,14 +14,7 @@ from abe_froman.compile.nodes import _make_evaluation_node, _make_execution_node
 from abe_froman.compile.route import build_route_namespace, evaluate_case
 from abe_froman.compile.subgraph import node_subgraph_path
 from abe_froman.runtime.state import WorkflowState
-from abe_froman.schema.models import (
-    Execute,
-    Graph,
-    JoinExecution,
-    Node,
-    RouteCase,
-    RouteExecution,
-)
+from abe_froman.schema.models import Graph, Node
 
 if TYPE_CHECKING:
     from abe_froman.runtime.result import NodeExecutor
@@ -38,39 +31,16 @@ def _resolve_goto(target: str) -> str:
     return END if target == "__end__" else target
 
 
-# ----- Shape-agnostic helpers (Stage 4 + Stage 5b) -----
-#
-# During the dual-mode window, a Node may carry either:
-#   - Stage 4 fields (node.execution, node.config), or
-#   - Stage 5b unified Execute (node.execute).
-#
-# These three helpers normalize the two shapes so the build loop and
-# downstream callers don't branch on field presence at every step.
-# `node_subgraph_path` lives in compile/subgraph.py (single source of
-# truth for subgraph URL extraction); the helpers below cover route
-# semantics that are local to compile-time graph construction.
+# Subgraph-ref + route detection helpers. `node_subgraph_path` lives
+# in compile/subgraph.py (single source of truth); _is_route is local
+# since route semantics are compile-time-only.
 
 def _is_subgraph_ref(node: Node) -> bool:
     return node_subgraph_path(node) is not None
 
 
-def _subgraph_path(node: Node) -> str | None:
-    return node_subgraph_path(node)
-
-
 def _is_route(node: Node) -> bool:
-    return isinstance(node.execution, RouteExecution) or (
-        node.execute is not None and node.execute.type == "route"
-    )
-
-
-def _route_cases_else(node: Node) -> tuple[list[RouteCase], str]:
-    """Extract (cases, else_target) from either schema shape."""
-    if isinstance(node.execution, RouteExecution):
-        return node.execution.cases, node.execution.else_
-    if node.execute and node.execute.type == "route":
-        return node.execute.cases, node.execute.else_  # type: ignore[return-value]
-    raise ValueError(f"Node '{node.id}' is not a route")
+    return node.execute is not None and node.execute.type == "route"
 
 
 def _make_route_node(node: Node):
@@ -80,7 +50,9 @@ def _make_route_node(node: Node):
     expressions raise loudly with route id + case context (no silent
     fall-through).
     """
-    cases, else_target = _route_cases_else(node)
+    assert node.execute is not None and node.execute.type == "route"
+    cases = node.execute.cases
+    else_target = node.execute.else_
 
     async def node_fn(state: WorkflowState) -> Command:
         ns = build_route_namespace(state, node.depends_on)
@@ -295,7 +267,7 @@ def build_workflow_graph(
             # Cycle detection happens once at top-level — nested calls
             # see _depth>0 so they skip this and rely on the depth cap.
             if _depth == 0:
-                detect_config_cycle(_subgraph_path(node), base_dir=base_dir)
+                detect_config_cycle(node_subgraph_path(node), base_dir=base_dir)
         if _is_route(node):
             route_node_ids.add(node.id)
 
@@ -304,7 +276,7 @@ def build_workflow_graph(
     # Execution nodes for every configured node.
     for node in config.nodes:
         if node.id in subgraph_node_ids:
-            sub_config = load_graph(_subgraph_path(node), base_dir=base_dir)
+            sub_config = load_graph(node_subgraph_path(node), base_dir=base_dir)
             wrapper = make_subgraph_node(
                 node, sub_config,
                 compile_fn=lambda c, executor=None, _depth=0: build_workflow_graph(
@@ -383,12 +355,11 @@ def build_workflow_graph(
     for node in config.nodes:
         if not _is_route(node):
             continue
-        cases, else_target = _route_cases_else(node)
-        for case in cases:
+        for case in node.execute.cases:
             if case.goto != "__end__":
                 route_goto_targets.add(case.goto)
-        if else_target != "__end__":
-            route_goto_targets.add(else_target)
+        if node.execute.else_ != "__end__":
+            route_goto_targets.add(node.execute.else_)
 
     has_incoming: set[str] = set()
 

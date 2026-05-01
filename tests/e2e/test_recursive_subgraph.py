@@ -20,6 +20,7 @@ artifacts (subgraph YAML files) drive concrete output assertions:
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
@@ -30,6 +31,9 @@ from abe_froman.compile.subgraph import SubgraphCycleError, SubgraphDepthError
 from abe_froman.runtime.executor.dispatch import DispatchExecutor
 from abe_froman.runtime.state import make_initial_state
 from abe_froman.schema.models import Graph
+
+_ECHO = shutil.which("echo") or "/bin/echo"
+_FALSE = shutil.which("false") or "/bin/false"
 
 
 def _yaml(path: Path, body: dict) -> None:
@@ -45,13 +49,13 @@ async def test_simple_recursive_subgraph(tmp_path):
             {
                 "id": "child_a",
                 "name": "Child A",
-                "execution": {"type": "command", "command": "echo", "args": ["-n", "from-child-a"]},
+                "execute": {"url": _ECHO, "params": {"args": ["-n", "from-child-a"]}},
             },
             {
                 "id": "child_b",
                 "name": "Child B",
                 "depends_on": ["child_a"],
-                "execution": {"type": "command", "command": "echo", "args": ["-n", "from-child-b"]},
+                "execute": {"url": _ECHO, "params": {"args": ["-n", "from-child-b"]}},
             },
         ],
     })
@@ -61,7 +65,7 @@ async def test_simple_recursive_subgraph(tmp_path):
             {
                 "id": "sub_node",
                 "name": "Subgraph Reference",
-                "config": "sub.yaml",
+                "execute": {"url": "sub.yaml"},
             },
         ],
     })
@@ -88,7 +92,7 @@ async def test_subgraph_inputs_projection(tmp_path):
         "name": "Research Sub", "version": "1.0",
         "nodes": [{
             "id": "research", "name": "Research",
-            "prompt_file": "research.md",
+            "execute": {"url": "research.md"},
         }],
     })
     _yaml(tmp_path / "parent.yaml", {
@@ -97,14 +101,16 @@ async def test_subgraph_inputs_projection(tmp_path):
             {
                 "id": "intake",
                 "name": "Intake",
-                "execution": {"type": "command", "command": "echo", "args": ["-n", "absurd nematodes"]},
+                "execute": {"url": _ECHO, "params": {"args": ["-n", "absurd nematodes"]}},
             },
             {
                 "id": "deep_research",
                 "name": "Deep Research",
-                "config": "sub.yaml",
+                "execute": {
+                    "url": "sub.yaml",
+                    "params": {"inputs": {"topic": "{{intake}}"}},
+                },
                 "depends_on": ["intake"],
-                "inputs": {"topic": "{{intake}}"},
             },
         ],
     })
@@ -136,13 +142,13 @@ async def test_subgraph_outputs_named_projection(tmp_path):
             {
                 "id": "compile",
                 "name": "Compile",
-                "execution": {"type": "command", "command": "echo", "args": ["-n", "compiled-output"]},
+                "execute": {"url": _ECHO, "params": {"args": ["-n", "compiled-output"]}},
             },
             {
                 "id": "summary",
                 "name": "Summary",
                 "depends_on": ["compile"],
-                "execution": {"type": "command", "command": "echo", "args": ["-n", "summary-output"]},
+                "execute": {"url": _ECHO, "params": {"args": ["-n", "summary-output"]}},
             },
         ],
     })
@@ -151,8 +157,12 @@ async def test_subgraph_outputs_named_projection(tmp_path):
         "nodes": [{
             "id": "sub_node",
             "name": "Sub Ref",
-            "config": "sub.yaml",
-            "outputs": {"compiled": "{{compile}}", "summed": "{{summary}}"},
+            "execute": {
+                "url": "sub.yaml",
+                "params": {
+                    "outputs": {"compiled": "{{compile}}", "summed": "{{summary}}"},
+                },
+            },
         }],
     })
 
@@ -179,7 +189,7 @@ async def test_subgraph_runnable_standalone(tmp_path):
         "nodes": [{
             "id": "work",
             "name": "Work",
-            "execution": {"type": "command", "command": "echo", "args": ["-n", "shared-work"]},
+            "execute": {"url": _ECHO, "params": {"args": ["-n", "shared-work"]}},
         }],
     })
 
@@ -194,7 +204,7 @@ async def test_subgraph_runnable_standalone(tmp_path):
     # As a subgraph reference
     _yaml(tmp_path / "wrapper.yaml", {
         "name": "Wrapper", "version": "1.0",
-        "nodes": [{"id": "ref", "name": "Ref", "config": "shared.yaml"}],
+        "nodes": [{"id": "ref", "name": "Ref", "execute": {"url": "shared.yaml"}}],
     })
     raw = yaml.safe_load((tmp_path / "wrapper.yaml").read_text())
     wrapper_config = Graph(**raw)
@@ -206,11 +216,11 @@ async def test_subgraph_runnable_standalone(tmp_path):
 def test_cycle_detected_at_compile_time(tmp_path):
     _yaml(tmp_path / "a.yaml", {
         "name": "A", "version": "1.0",
-        "nodes": [{"id": "x", "name": "X", "config": "b.yaml"}],
+        "nodes": [{"id": "x", "name": "X", "execute": {"url": "b.yaml"}}],
     })
     _yaml(tmp_path / "b.yaml", {
         "name": "B", "version": "1.0",
-        "nodes": [{"id": "y", "name": "Y", "config": "a.yaml"}],
+        "nodes": [{"id": "y", "name": "Y", "execute": {"url": "a.yaml"}}],
     })
 
     raw = yaml.safe_load((tmp_path / "a.yaml").read_text())
@@ -234,7 +244,7 @@ async def test_subgraph_internal_failure_surfaces_to_parent(tmp_path):
         "nodes": [{
             "id": "always_fails",
             "name": "Always Fails",
-            "execution": {"type": "command", "command": "false"},  # exit 1
+            "execute": {"url": _FALSE},  # exit 1
         }],
     })
     _yaml(tmp_path / "parent.yaml", {
@@ -242,7 +252,7 @@ async def test_subgraph_internal_failure_surfaces_to_parent(tmp_path):
         "nodes": [{
             "id": "sub_ref",
             "name": "Sub Ref",
-            "config": "sub.yaml",
+            "execute": {"url": "sub.yaml"},
         }],
     })
 
@@ -277,7 +287,7 @@ async def test_subgraph_isolation_no_parent_state_leak(tmp_path):
         "nodes": [{
             "id": "prober",
             "name": "Prober",
-            "prompt_file": "leaks.md",
+            "execute": {"url": "leaks.md"},
         }],
     })
     _yaml(tmp_path / "parent.yaml", {
@@ -286,14 +296,16 @@ async def test_subgraph_isolation_no_parent_state_leak(tmp_path):
             {
                 "id": "parent_only",
                 "name": "Parent Only",
-                "execution": {"type": "command", "command": "echo", "args": ["-n", "PARENT_VALUE"]},
+                "execute": {"url": _ECHO, "params": {"args": ["-n", "PARENT_VALUE"]}},
             },
             {
                 "id": "sub_ref",
                 "name": "Sub Ref",
-                "config": "sub.yaml",
+                "execute": {
+                    "url": "sub.yaml",
+                    "params": {"inputs": {"from_parent": "explicit-input"}},
+                },
                 "depends_on": ["parent_only"],
-                "inputs": {"from_parent": "explicit-input"},
             },
         ],
     })
@@ -333,9 +345,9 @@ def test_depth_limit_enforced(tmp_path):
         next_ref = f"link_{i+1}.yaml" if i + 1 < chain_len else None
         node = {"id": f"n{i}", "name": f"N{i}"}
         if next_ref:
-            node["config"] = next_ref
+            node["execute"] = {"url": next_ref}
         else:
-            node["execution"] = {"type": "command", "command": "echo", "args": ["-n", "leaf"]}
+            node["execute"] = {"url": _ECHO, "params": {"args": ["-n", "leaf"]}}
         _yaml(tmp_path / f"link_{i}.yaml", {
             "name": f"L{i}", "version": "1.0",
             "nodes": [node],
@@ -354,9 +366,9 @@ def test_depth_limit_enforced(tmp_path):
 
 @pytest.mark.asyncio
 async def test_absurd_paper_carve_compiles_with_subgraph(tmp_path):
-    """examples/absurd-paper/workflow.yaml uses config: + inputs: for the
+    """examples/absurd-paper/workflow.yaml uses a subgraph URL + inputs for the
     `paper` node. Asserts the carved workflow compiles, the `paper` node
-    is present, and its config: reference resolves to the subgraph file.
+    is present, and its execute.url resolves to the subgraph file.
     """
     repo_root = Path(__file__).resolve().parents[2]
     raw = yaml.safe_load(

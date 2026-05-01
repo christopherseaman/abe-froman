@@ -21,6 +21,7 @@ gates are real subprocess scripts under tests/fixtures/route/.
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
@@ -35,11 +36,13 @@ from mock_executor import MockExecutor
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures" / "route"
 
+_ECHO = shutil.which("echo") or "/bin/echo"
+
 
 def _route_node(id, depends_on, cases, else_target):
     return {
         "id": id, "name": id, "depends_on": depends_on,
-        "execution": {
+        "execute": {
             "type": "route",
             "cases": cases,
             "else": else_target,
@@ -48,9 +51,9 @@ def _route_node(id, depends_on, cases, else_target):
 
 
 def _gated_node(id, validator_path, depends_on=None, max_retries=0):
+    """Gate-only-by-elision: omit `execute`, supply `evaluation`."""
     return {
         "id": id, "name": id,
-        "execution": {"type": "gate_only"},
         "depends_on": depends_on or [],
         "evaluation": {
             "validator": str(validator_path),
@@ -172,7 +175,7 @@ class TestFlowCStructuredOutputRouting:
         config = make_config([
             {
                 "id": "produce", "name": "produce", "depends_on": [],
-                "execution": {"type": "command", "command": "echo", "args": ["produced"]},
+                "execute": {"url": _ECHO, "params": {"args": ["produced"]}},
             },
             _route_node(
                 "decide",
@@ -208,7 +211,7 @@ class TestFlowCStructuredOutputRouting:
         config = make_config([
             {
                 "id": "produce", "name": "produce", "depends_on": [],
-                "execution": {"type": "command", "command": "echo", "args": ["produced"]},
+                "execute": {"url": _ECHO, "params": {"args": ["produced"]}},
             },
             _route_node(
                 "decide",

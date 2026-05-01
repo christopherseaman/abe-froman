@@ -88,16 +88,17 @@ class TestScaffoldingIntegration:
 
     async def test_scaffold_before_contract_validation(self, tmp_path):
         """Full flow: scaffold -> execute (write file) -> validate contract."""
+        import shutil
+        bash_bin = shutil.which("bash") or "/bin/bash"
         outdir = tmp_path / "output"
         outfile = outdir / "result.txt"
 
         node = {
             "id": "produce",
             "name": "produce",
-            "execution": {
-                "type": "command",
-                "command": "bash",
-                "args": ["-c", f"echo -n done > {outfile}"],
+            "execute": {
+                "url": bash_bin,
+                "params": {"args": ["-c", f"echo -n done > {outfile}"]},
             },
             "output_contract": {
                 "base_directory": "output",

@@ -1,22 +1,25 @@
 """Unit tests for ForemanExecutor (queue + worktree pool + semaphores).
 
-Uses real git worktrees, real subprocesses via DispatchExecutor + CommandExecutor.
+Uses real git worktrees, real subprocesses via DispatchExecutor.
 No fakes, no mocks — concurrency tested via real asyncio primitives; worktree
 retention verified against the on-disk state of `git worktree list`.
 """
 from __future__ import annotations
 
 import asyncio
+import shutil
 import subprocess
 import time
 from pathlib import Path
 
 import pytest
 
-from abe_froman.runtime.executor.command import CommandExecutor
 from abe_froman.runtime.executor.dispatch import DispatchExecutor
 from abe_froman.runtime.foreman import ForemanExecutor
-from abe_froman.schema.models import Node, Settings
+from abe_froman.schema.models import Execute, Node, Settings
+
+_PWD = shutil.which("pwd") or "/bin/pwd"
+_SLEEP = shutil.which("sleep") or "/bin/sleep"
 
 
 def _init_git_repo(path: Path) -> None:
@@ -36,9 +39,14 @@ def _init_git_repo(path: Path) -> None:
 
 
 def _cmd_phase(node_id: str, command: str = "pwd", args=None) -> Node:
+    """Build a Stage-5b execute-URL node from a bare command name.
+
+    `command="pwd"` → `execute.url=/usr/bin/pwd`; args go in execute.params.args.
+    """
+    url = shutil.which(command) or f"/bin/{command}"
     return Node(
         id=node_id, name=node_id,
-        execution={"type": "command", "command": command, "args": args or []},
+        execute=Execute(url=url, params={"args": args or []}),
     )
 
 
@@ -336,10 +344,12 @@ class TestPerModelBackpressure:
         nodes = []
         for i in range(3):
             nodes.append(Node(
-                id=f"opus{i}", name=f"opus{i}", prompt_file="p.md", model="opus",
+                id=f"opus{i}", name=f"opus{i}",
+                execute=Execute(url="p.md"), model="opus",
             ))
             nodes.append(Node(
-                id=f"son{i}", name=f"son{i}", prompt_file="p.md", model="sonnet",
+                id=f"son{i}", name=f"son{i}",
+                execute=Execute(url="p.md"), model="sonnet",
             ))
 
         try:

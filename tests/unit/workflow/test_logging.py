@@ -1,6 +1,7 @@
 """Tests for structured JSONL logging."""
 
 import json
+import shutil
 from io import StringIO
 
 import pytest
@@ -12,6 +13,8 @@ from abe_froman.runtime.state import make_initial_state
 from abe_froman.runtime.executor.dispatch import DispatchExecutor
 
 from helpers import cmd_phase, fail_phase, make_config
+
+_ECHO = shutil.which("echo") or "/bin/echo"
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +200,7 @@ class TestRunWorkflowLogging:
             {
                 "id": "gated",
                 "name": "gated",
-                "execution": {"type": "command", "command": "echo", "args": ["-n", "output"]},
+                "execute": {"url": _ECHO, "params": {"args": ["-n", "output"]}},
                 "evaluation": {
                     "validator": str(validator),
                     "threshold": 0.9,
@@ -249,8 +252,8 @@ class TestCliLogFlag:
         config_path = tmp_path / "workflow.yaml"
         config_path.write_text(
             "name: Test\nversion: '1.0'\nnodes:\n"
-            "  - id: a\n    name: A\n    execution:\n"
-            "      type: command\n      command: echo\n      args: ['-n', 'hi']\n"
+            "  - id: a\n    name: A\n    execute:\n"
+            f"      url: {_ECHO}\n      params:\n        args: ['-n', 'hi']\n"
         )
         log_path = tmp_path / "events.jsonl"
 

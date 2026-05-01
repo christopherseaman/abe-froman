@@ -17,7 +17,7 @@ from abe_froman.compile.route import (
     build_route_namespace,
     evaluate_case,
 )
-from abe_froman.schema.models import Node, RouteCase, RouteExecution
+from abe_froman.schema.models import Execute, Node, RouteCase
 
 
 def _state(**overrides) -> dict:
@@ -120,7 +120,8 @@ def test_evaluate_case_unknown_name_raises():
 def _route_node(cases: list[tuple[str, str]], else_target: str, deps: list[str] = None) -> Node:
     return Node(
         id="r", name="R", depends_on=deps or [],
-        execution=RouteExecution(
+        execute=Execute(
+            type="route",
             cases=[RouteCase(when=w, goto=g) for w, g in cases],
             else_=else_target,
         ),

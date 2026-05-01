@@ -1,4 +1,5 @@
 import json
+import shutil
 
 import pytest
 
@@ -10,6 +11,10 @@ from abe_froman.runtime.executor.dispatch import DispatchExecutor
 from abe_froman.schema.models import Evaluation
 
 from helpers import make_config
+
+_ECHO = shutil.which("echo") or "/bin/echo"
+_CAT = shutil.which("cat") or "/bin/cat"
+_PYTHON = shutil.which("python3") or "/usr/bin/python3"
 
 
 # ---------------------------------------------------------------------------
@@ -150,7 +155,7 @@ class TestGateNodePassFail:
                 {
                     "id": "a",
                     "name": "A",
-                    "execution": {"type": "command", "command": "cat", "args": [str(payload)]},
+                    "execute": {"url": _CAT, "params": {"args": [str(payload)]}},
                     "evaluation": {
                         "validator": str(validator),
                         "threshold": 1.0,
@@ -160,7 +165,7 @@ class TestGateNodePassFail:
                 {
                     "id": "b",
                     "name": "B",
-                    "execution": {"type": "command", "command": "echo", "args": ["b done"]},
+                    "execute": {"url": _ECHO, "params": {"args": ["b done"]}},
                     "depends_on": ["a"],
                 },
             ]
@@ -184,7 +189,7 @@ class TestGateNodePassFail:
                 {
                     "id": "a",
                     "name": "A",
-                    "execution": {"type": "command", "command": "echo", "args": ["not json"]},
+                    "execute": {"url": _ECHO, "params": {"args": ["not json"]}},
                     "evaluation": {
                         "validator": str(validator),
                         "threshold": 1.0,
@@ -195,7 +200,7 @@ class TestGateNodePassFail:
                 {
                     "id": "b",
                     "name": "B",
-                    "execution": {"type": "command", "command": "echo", "args": ["b done"]},
+                    "execute": {"url": _ECHO, "params": {"args": ["b done"]}},
                     "depends_on": ["a"],
                 },
             ]
@@ -219,7 +224,7 @@ class TestGateNodePassFail:
                 {
                     "id": "a",
                     "name": "A",
-                    "execution": {"type": "command", "command": "echo", "args": ["bad"]},
+                    "execute": {"url": _ECHO, "params": {"args": ["bad"]}},
                     "evaluation": {
                         "validator": str(validator),
                         "threshold": 1.0,
@@ -230,7 +235,7 @@ class TestGateNodePassFail:
                 {
                     "id": "b",
                     "name": "B",
-                    "execution": {"type": "command", "command": "echo", "args": ["b done"]},
+                    "execute": {"url": _ECHO, "params": {"args": ["b done"]}},
                     "depends_on": ["a"],
                 },
             ]
@@ -342,10 +347,9 @@ class TestGateEnvironment:
                 {
                     "id": "a",
                     "name": "A",
-                    "execution": {
-                        "type": "command",
-                        "command": "python3",
-                        "args": [str(counter_script)],
+                    "execute": {
+                        "url": _PYTHON,
+                        "params": {"args": [str(counter_script)]},
                     },
                     "evaluation": {
                         "validator": str(validator),
@@ -410,10 +414,9 @@ class TestRetryBackoff:
                 {
                     "id": "a",
                     "name": "A",
-                    "execution": {
-                        "type": "command",
-                        "command": "python3",
-                        "args": [str(counter_script)],
+                    "execute": {
+                        "url": _PYTHON,
+                        "params": {"args": [str(counter_script)]},
                     },
                     "evaluation": {
                         "validator": str(validator),
@@ -479,7 +482,7 @@ class TestJokeWorkflowIntegration:
                 {
                     "id": "generate",
                     "name": "Generate Jokes",
-                    "prompt_file": "generate.md",
+                    "execute": {"url": "generate.md"},
                     "evaluation": {
                         "validator": str(validator),
                         "threshold": 1.0,
@@ -490,7 +493,7 @@ class TestJokeWorkflowIntegration:
                 {
                     "id": "select",
                     "name": "Select Best",
-                    "prompt_file": "select.md",
+                    "execute": {"url": "select.md"},
                     "depends_on": ["generate"],
                 },
             ],
@@ -786,7 +789,7 @@ class TestRetryWithFeedback:
             {
                 "id": "p",
                 "name": "P",
-                "execution": {"type": "command", "command": "echo", "args": ["out"]},
+                "execute": {"url": _ECHO, "params": {"args": ["out"]}},
                 "evaluation": {
                     "validator": str(validator),
                     "threshold": 0.5,
@@ -838,7 +841,7 @@ class TestRetryWithFeedback:
             {
                 "id": "p",
                 "name": "P",
-                "execution": {"type": "command", "command": "python3", "args": [str(runner)]},
+                "execute": {"url": _PYTHON, "params": {"args": [str(runner)]}},
                 "evaluation": {
                     "validator": str(validator),
                     "threshold": 0.8,

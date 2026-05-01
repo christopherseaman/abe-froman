@@ -1,63 +1,13 @@
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal, Self
+from typing import Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-
-
-class PromptExecution(BaseModel):
-    type: Literal["prompt"] = "prompt"
-    prompt_file: str
-
-
-class CommandExecution(BaseModel):
-    type: Literal["command"] = "command"
-    command: str
-    args: list[str] = []
-
-
-class GateOnlyExecution(BaseModel):
-    type: Literal["gate_only"] = "gate_only"
-
-
-class JoinExecution(BaseModel):
-    """No-op execution that exists purely as a topology marker.
-
-    A Node with `execution: { type: join }` runs no work — it dispatches
-    only after all `depends_on` predecessors complete and produces an
-    empty output. Useful for naming a synchronization point at fan-in.
-    Multi-predecessor nodes implicit-join automatically; this is the
-    explicit form for author readability.
-    """
-    type: Literal["join"] = "join"
 
 
 class RouteCase(BaseModel):
     when: str
     goto: str
-
-
-class RouteExecution(BaseModel):
-    """Pure case ladder over structured state.
-
-    A Node with `execution: { type: route, cases: [...], else: ... }`
-    evaluates each `when:` expression in order and returns
-    `Command(goto=<target>)` for the first match. If no case matches,
-    `else_` fires. Targets are node ids in the same Graph or the
-    sentinel `__end__`. Routes have zero baked-in retry/halt semantics;
-    those are authored as cases.
-    """
-    model_config = ConfigDict(populate_by_name=True)
-    type: Literal["route"] = "route"
-    cases: list[RouteCase] = []
-    else_: str = Field(alias="else")
-
-
-Execution = Annotated[
-    PromptExecution | CommandExecution | GateOnlyExecution
-    | JoinExecution | RouteExecution,
-    Field(discriminator="type"),
-]
 
 
 class Execute(BaseModel):
@@ -70,10 +20,6 @@ class Execute(BaseModel):
       2. Join sentinel (`type: "join"`) — no-op topology marker.
       3. Route ladder (`type: "route"`, `cases:`, `else:`) — pure
          Command(goto=...) dispatch over structured state.
-
-    Coexists with the legacy `Node.execution` / `Node.config` /
-    `Node.prompt_file` fields during Stage 5b's dual-mode transition;
-    Commit 8 deletes the legacy shape after fixtures migrate.
     """
     model_config = ConfigDict(populate_by_name=True)
     url: str | None = None
@@ -114,14 +60,6 @@ class Execute(BaseModel):
         return self
 
 
-def _normalize_prompt_shorthand(instance: Any) -> Any:
-    """Convert prompt_file shorthand to PromptExecution."""
-    if instance.prompt_file and instance.execution is None:
-        instance.execution = PromptExecution(prompt_file=instance.prompt_file)
-        instance.prompt_file = None
-    return instance
-
-
 class DimensionCheck(BaseModel):
     field: str
     min: float = Field(ge=0.0, le=1.0)
@@ -143,24 +81,9 @@ class OutputContract(BaseModel):
 
 
 class FanOutTemplate(BaseModel):
-    """Template for nodes spawned during fan-out over a manifest.
-
-    Stage 4a kept the legacy template/final-node structure under the
-    new `fan_out:` key. Stage 5b adds the `execute:` shape: either
-    `prompt_file:` (legacy) or `execute:` (new) — exactly one.
-    """
-    prompt_file: str | None = None
-    execute: Execute | None = None
+    """Template for nodes spawned during fan-out over a manifest."""
+    execute: Execute
     evaluation: Evaluation | None = None
-
-    @model_validator(mode="after")
-    def validate_one_executable(self) -> Self:
-        defs = sum(bool(x) for x in (self.prompt_file, self.execute))
-        if defs > 1:
-            raise ValueError(
-                "FanOutTemplate: at most one of prompt_file or execute"
-            )
-        return self
 
 
 class FanOutFinalNode(BaseModel):
@@ -168,20 +91,8 @@ class FanOutFinalNode(BaseModel):
     id: str
     name: str
     description: str | None = None
-    prompt_file: str | None = None
-    execution: Execution | None = None
     execute: Execute | None = None
     evaluation: Evaluation | None = None
-
-    @model_validator(mode="after")
-    def normalize_prompt_file(self) -> Self:
-        _normalize_prompt_shorthand(self)
-        defs = sum(bool(x) for x in (self.execute, self.execution))
-        if defs > 1:
-            raise ValueError(
-                f"FanOutFinalNode '{self.id}': at most one of execute/execution"
-            )
-        return self
 
 
 class FanOut(BaseModel):
@@ -214,35 +125,25 @@ class Settings(BaseModel):
 
 
 class Node(BaseModel):
+    """Stage-5b node: execution is described by a single optional `execute:` block.
+
+    Legacy fields (`prompt_file`, `execution`, `config`, `inputs`, `outputs`)
+    were removed in the hard cutover. `extra="forbid"` makes that loud:
+    users on pre-Stage-5b YAML get a clear ValidationError pointing at the
+    unsupported key, instead of silent drop-on-the-floor.
+    """
+    model_config = ConfigDict(extra="forbid")
+
     id: str
     name: str
     description: str | None = None
     model: str | None = None
-    prompt_file: str | None = None
-    execution: Execution | None = None
-    execute: Execute | None = None  # Stage 5b unified shape
-    config: str | None = None  # path to another graph YAML (Stage 4c recursion)
-    inputs: dict[str, str] = {}  # parent → subgraph context projection (Stage 4c)
-    outputs: dict[str, str] = {}  # subgraph terminal → parent state projection (Stage 4c)
+    execute: Execute | None = None
     depends_on: list[str] = []
     evaluation: Evaluation | None = None
     output_contract: OutputContract | None = None
     fan_out: FanOut | None = None
     timeout: float | None = None
-
-    @model_validator(mode="after")
-    def normalize_and_validate(self) -> Self:
-        _normalize_prompt_shorthand(self)
-        # Stage 5b dual-mode: exactly one of {execute, execution, config}
-        # may be set per node. The legacy shapes (execution, config) coexist
-        # with the new `execute:` until the cutover commit migrates fixtures.
-        defs = sum(bool(x) for x in (self.execute, self.execution, self.config))
-        if defs > 1:
-            raise ValueError(
-                f"Node '{self.id}': at most one of execute/execution/config "
-                f"(or prompt_file shorthand)"
-            )
-        return self
 
     def effective_timeout(self, settings: Settings) -> float | None:
         if self.timeout is not None:
@@ -285,32 +186,21 @@ class Graph(BaseModel):
         # Route nodes: every goto must resolve to a real node id or
         # __end__; routes must be leaves in the dep DAG (their
         # Command(goto=) IS the dispatch — a static depends_on edge
-        # would double-trigger the goto target). Validation walks both
-        # legacy `execution: { type: route, ... }` and Stage-5b
-        # `execute: { type: route, ... }` schema shapes.
-        def _route_payload(n: "Node") -> tuple[list[RouteCase], str] | None:
-            if isinstance(n.execution, RouteExecution):
-                return n.execution.cases, n.execution.else_
-            if n.execute is not None and n.execute.type == "route":
-                return n.execute.cases, n.execute.else_  # else_ guaranteed non-None
-            return None
-
-        route_ids: set[str] = set()
-        for n in self.nodes:
-            if _route_payload(n) is not None:
-                route_ids.add(n.id)
-
+        # would double-trigger the goto target).
+        route_ids: set[str] = {
+            n.id for n in self.nodes
+            if n.execute is not None and n.execute.type == "route"
+        }
         for node in self.nodes:
-            payload = _route_payload(node)
-            if payload is None:
+            if node.execute is None or node.execute.type != "route":
                 continue
-            cases, else_target = payload
-            for case in cases:
+            for case in node.execute.cases:
                 if case.goto != "__end__" and case.goto not in node_ids:
                     raise ValueError(
                         f"Route '{node.id}' case goto '{case.goto}' "
                         f"references nonexistent node"
                     )
+            else_target = node.execute.else_
             if else_target != "__end__" and else_target not in node_ids:
                 raise ValueError(
                     f"Route '{node.id}' else goto '{else_target}' "

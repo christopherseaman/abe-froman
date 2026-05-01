@@ -66,7 +66,7 @@ def minimal_config_dict():
             {
                 "id": "node-1",
                 "name": "First Node",
-                "prompt_file": "nodes/node-1.md",
+                "execute": {"url": "nodes/node-1.md"},
             }
         ],
     }
@@ -81,12 +81,12 @@ def multi_phase_config_dict():
             {
                 "id": "node-1",
                 "name": "First",
-                "prompt_file": "nodes/node-1.md",
+                "execute": {"url": "nodes/node-1.md"},
             },
             {
                 "id": "node-2",
                 "name": "Second",
-                "prompt_file": "nodes/node-2.md",
+                "execute": {"url": "nodes/node-2.md"},
                 "depends_on": ["node-1"],
             },
         ],
@@ -100,13 +100,13 @@ def parallel_config_dict():
         "name": "Parallel Workflow",
         "version": "1.0.0",
         "nodes": [
-            {"id": "a", "name": "A", "prompt_file": "a.md"},
-            {"id": "b", "name": "B", "prompt_file": "b.md", "depends_on": ["a"]},
-            {"id": "c", "name": "C", "prompt_file": "c.md", "depends_on": ["a"]},
+            {"id": "a", "name": "A", "execute": {"url": "a.md"}},
+            {"id": "b", "name": "B", "execute": {"url": "b.md"}, "depends_on": ["a"]},
+            {"id": "c", "name": "C", "execute": {"url": "c.md"}, "depends_on": ["a"]},
             {
                 "id": "d",
                 "name": "D",
-                "prompt_file": "d.md",
+                "execute": {"url": "d.md"},
                 "depends_on": ["b", "c"],
             },
         ],

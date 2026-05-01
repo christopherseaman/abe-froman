@@ -3,14 +3,16 @@
 Multi-function flow tests:
     - Implicit join: any node with multiple deps auto-syncs (LangGraph default;
       already worked pre-Stage-4b — included as a control)
-    - Explicit join: execution: { type: join } parses, dispatches as no-op,
+    - Explicit join: execute: { type: join } parses, dispatches as no-op,
       and downstream nodes consume the join's empty output
     - Join with evaluation: a join node can be gated (gate runs against the
       empty join output) — sanity check that downstream eval-node wiring
-      doesn't choke on JoinExecution
+      doesn't choke on the join sentinel
 """
 
 from __future__ import annotations
+
+import shutil
 
 import pytest
 
@@ -20,9 +22,11 @@ from abe_froman.runtime.state import make_initial_state
 
 from helpers import cmd_phase, make_config
 
+_ECHO = shutil.which("echo") or "/bin/echo"
+
 
 class TestImplicitJoin:
-    """Control: multi-pred sync without explicit JoinExecution."""
+    """Control: multi-pred sync without explicit join sentinel."""
 
     @pytest.mark.asyncio
     async def test_implicit_join_via_multiple_deps(self, tmp_path):
@@ -47,7 +51,7 @@ class TestImplicitJoin:
 
 
 class TestExplicitJoin:
-    """Stage 4b: execution: { type: join } as authored topology marker."""
+    """Stage 5b: execute: { type: join } as authored topology marker."""
 
     @pytest.mark.asyncio
     async def test_explicit_join_dispatches_as_noop(self, tmp_path):
@@ -57,7 +61,7 @@ class TestExplicitJoin:
             {
                 "id": "checkpoint",
                 "name": "Checkpoint",
-                "execution": {"type": "join"},
+                "execute": {"type": "join"},
                 "depends_on": ["a", "b"],
             },
         ])
@@ -78,7 +82,7 @@ class TestExplicitJoin:
             {
                 "id": "sync",
                 "name": "Sync",
-                "execution": {"type": "join"},
+                "execute": {"type": "join"},
                 "depends_on": ["a", "b"],
             },
             cmd_phase("after", depends_on=["sync"], output="post-sync"),
@@ -104,19 +108,18 @@ class TestExplicitJoin:
             {
                 "id": "sync",
                 "name": "Sync",
-                "execution": {"type": "join"},
+                "execute": {"type": "join"},
                 "depends_on": ["a", "b"],
             },
             {
                 "id": "consumer",
                 "name": "Consumer",
-                "execution": {
-                    "type": "command",
-                    "command": "echo",
+                "execute": {
+                    "url": _ECHO,
                     # Templated args — each placeholder must resolve from
                     # the upstream's node_output. If join doesn't synthesize
                     # both predecessors into context, one or both renders empty.
-                    "args": ["-n", "{{a}}|{{b}}"],
+                    "params": {"args": ["-n", "{{a}}|{{b}}"]},
                 },
                 "depends_on": ["sync", "a", "b"],
             },
@@ -136,7 +139,7 @@ class TestExplicitJoin:
     async def test_join_with_evaluation_is_gated(self, tmp_path):
         """A join node with evaluation runs the gate against its empty output.
 
-        Validates that JoinExecution composes cleanly with the
+        Validates that the join sentinel composes cleanly with the
         Evaluation-node split — gate logic doesn't special-case execution
         type, it just reads the node's output and invokes the validator.
         """
@@ -149,7 +152,7 @@ class TestExplicitJoin:
             {
                 "id": "gated_join",
                 "name": "Gated Join",
-                "execution": {"type": "join"},
+                "execute": {"type": "join"},
                 "depends_on": ["a", "b"],
                 "evaluation": {"validator": str(validator), "threshold": 0.9},
             },

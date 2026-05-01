@@ -86,12 +86,8 @@ def make_subgraph_node(
     sub_graph = compile_fn(sub_config, executor=executor, _depth=depth + 1)
 
     parent_id = parent_node.id
-    # Subgraph inputs/outputs may live at the legacy top-level
-    # (Node.inputs / Node.outputs) or under the Stage-5b
-    # `execute.params.{inputs,outputs}`. Read the new shape when set;
-    # fall back to legacy.
-    inputs_decl: dict[str, str] = dict(parent_node.inputs)
-    outputs_decl: dict[str, str] = dict(parent_node.outputs)
+    inputs_decl: dict[str, str] = {}
+    outputs_decl: dict[str, str] = {}
     if parent_node.execute is not None and parent_node.execute.params:
         params = parent_node.execute.params
         if isinstance(params.get("inputs"), dict):
@@ -168,16 +164,10 @@ def make_subgraph_node(
 
 
 def node_subgraph_path(n: Node) -> str | None:
-    """Return the subgraph YAML path for either Stage-4 or Stage-5b shape.
-
-    Single source of truth for "is this node a subgraph reference and
-    where does it point?" Used by:
-      - compile/graph.py build loop (subgraph_node_ids detection)
-      - detect_config_cycle (DAG walk)
-      - cycle/depth tests
+    """Return the subgraph YAML path for a Stage-5b execute.url ending
+    in `.yaml` or `.yml`. Single source of truth for "is this node a
+    subgraph reference and where does it point?"
     """
-    if n.config:
-        return n.config
     if n.execute and n.execute.url:
         suffix = Path(n.execute.url).suffix.lower()
         if suffix in {".yaml", ".yml"}:
@@ -192,10 +182,10 @@ def detect_config_cycle(
 ) -> None:
     """Walk the config-reference DAG; raise on cycle.
 
-    Called at compile time for any subgraph reference (Stage 4
-    ``node.config:`` OR Stage 5b ``node.execute.url`` ending in
-    ``.yaml``). Visited paths are accumulated as the walker descends;
-    revisiting a path means the chain refers back to an ancestor.
+    Called at compile time for any subgraph reference (Stage 5b
+    ``node.execute.url`` ending in ``.yaml``). Visited paths are
+    accumulated as the walker descends; revisiting a path means the
+    chain refers back to an ancestor.
     """
     visited = list(visited or [])
     abs_path = str(Path(base_dir) / config_path)

@@ -19,7 +19,7 @@ def _conditional_edges(graph):
 class TestSingleNodeGraph:
     def test_single_prompt_node(self):
         config = make_config(
-            [{"id": "p1", "name": "P1", "prompt_file": "t.md"}]
+            [{"id": "p1", "name": "P1", "execute": {"url": "t.md"}}]
         )
         graph = build_workflow_graph(config)
         assert "p1" in graph.get_graph().nodes
@@ -31,10 +31,9 @@ class TestSingleNodeGraph:
                 {
                     "id": "c1",
                     "name": "C1",
-                    "execution": {
-                        "type": "command",
-                        "command": "echo",
-                        "args": ["hello"],
+                    "execute": {
+                        "url": "/usr/bin/echo",
+                        "params": {"args": ["hello"]},
                     },
                 }
             ]
@@ -49,7 +48,7 @@ class TestSingleNodeGraph:
                 {
                     "id": "g1",
                     "name": "G1",
-                    "execution": {"type": "gate_only"},
+                    # gate-only-by-elision: no execute: block
                     "evaluation": {"validator": "v.md", "threshold": 0.9},
                 }
             ]
@@ -58,10 +57,8 @@ class TestSingleNodeGraph:
         nodes = graph.get_graph().nodes
         assert "g1" in nodes and "_eval_g1" in nodes
         edges = _edges(graph)
-        # Gated node: execution → evaluation (plain), then eval fans conditional.
         assert (START, "g1") in edges
         assert ("g1", "_eval_g1") in edges
-        # Eval routes: pass → END, retry → g1 (re-execute), fail → END.
         assert {("_eval_g1", END), ("_eval_g1", "g1")} <= _conditional_edges(graph)
 
 
@@ -78,9 +75,9 @@ class TestLinearChain:
     def test_three_phase_chain(self):
         config = make_config(
             [
-                {"id": "a", "name": "A", "prompt_file": "a.md"},
-                {"id": "b", "name": "B", "prompt_file": "b.md", "depends_on": ["a"]},
-                {"id": "c", "name": "C", "prompt_file": "c.md", "depends_on": ["b"]},
+                {"id": "a", "name": "A", "execute": {"url": "a.md"}},
+                {"id": "b", "name": "B", "execute": {"url": "b.md"}, "depends_on": ["a"]},
+                {"id": "c", "name": "C", "execute": {"url": "c.md"}, "depends_on": ["b"]},
             ]
         )
         graph = build_workflow_graph(config)
@@ -107,11 +104,10 @@ class TestParallelNodes:
         }
 
     def test_multiple_roots(self):
-        """Roots both start from START and both reach END independently."""
         config = make_config(
             [
-                {"id": "a", "name": "A", "prompt_file": "a.md"},
-                {"id": "b", "name": "B", "prompt_file": "b.md"},
+                {"id": "a", "name": "A", "execute": {"url": "a.md"}},
+                {"id": "b", "name": "B", "execute": {"url": "b.md"}},
             ]
         )
         graph = build_workflow_graph(config)
@@ -125,13 +121,12 @@ class TestParallelNodes:
 
 class TestGateRouting:
     def test_terminal_gate_wiring(self):
-        """Terminal gated node: execution → eval (plain); eval → END (pass/fail) or p1 (retry)."""
         config = make_config(
             [
                 {
                     "id": "p1",
                     "name": "P1",
-                    "prompt_file": "t.md",
+                    "execute": {"url": "t.md"},
                     "evaluation": {"validator": "v.md", "threshold": 0.8},
                 }
             ]
@@ -142,23 +137,21 @@ class TestGateRouting:
         edges = _edges(graph)
         assert (START, "p1") in edges
         assert ("p1", "_eval_p1") in edges
-        # Conditional edge from eval node: retry → p1, fail → END, pass → END.
         assert _conditional_edges(graph) == {("_eval_p1", END), ("_eval_p1", "p1")}
 
     def test_non_terminal_gate_wiring(self):
-        """Gate with single dependent: a → _eval_a (plain); eval routes pass → b, retry → a, fail → END."""
         config = make_config(
             [
                 {
                     "id": "a",
                     "name": "A",
-                    "prompt_file": "a.md",
+                    "execute": {"url": "a.md"},
                     "evaluation": {"validator": "v.md", "threshold": 0.8},
                 },
                 {
                     "id": "b",
                     "name": "B",
-                    "prompt_file": "b.md",
+                    "execute": {"url": "b.md"},
                     "depends_on": ["a"],
                 },
             ]
@@ -175,17 +168,16 @@ class TestGateRouting:
         }
 
     def test_gate_with_multiple_dependents_fans_out(self):
-        """Gate with fan-out: eval node routes pass → b+c, retry → a, fail → END."""
         config = make_config(
             [
                 {
                     "id": "a",
                     "name": "A",
-                    "prompt_file": "a.md",
+                    "execute": {"url": "a.md"},
                     "evaluation": {"validator": "v.md", "threshold": 0.8},
                 },
-                {"id": "b", "name": "B", "prompt_file": "b.md", "depends_on": ["a"]},
-                {"id": "c", "name": "C", "prompt_file": "c.md", "depends_on": ["a"]},
+                {"id": "b", "name": "B", "execute": {"url": "b.md"}, "depends_on": ["a"]},
+                {"id": "c", "name": "C", "execute": {"url": "c.md"}, "depends_on": ["a"]},
             ]
         )
         graph = build_workflow_graph(config)
@@ -207,7 +199,7 @@ class TestGateRouting:
 class TestModelConfig:
     def test_model_passthrough_in_config(self):
         config = make_config(
-            [{"id": "p1", "name": "P1", "prompt_file": "t.md", "model": "opus"}],
+            [{"id": "p1", "name": "P1", "execute": {"url": "t.md"}, "model": "opus"}],
             default_model="haiku",
         )
         assert config.nodes[0].model == "opus"
@@ -215,11 +207,9 @@ class TestModelConfig:
 
 
 class TestEvaluationNodeShape:
-    """Stage 3b: gated nodes emit a distinct `_eval_{id}` node."""
-
     def test_ungated_phase_no_eval_node(self):
         config = make_config(
-            [{"id": "p1", "name": "P1", "prompt_file": "t.md"}]
+            [{"id": "p1", "name": "P1", "execute": {"url": "t.md"}}]
         )
         graph = build_workflow_graph(config)
         nodes = graph.get_graph().nodes
@@ -228,25 +218,24 @@ class TestEvaluationNodeShape:
 
 
 class TestDynamicGraphShape:
-    """Stage 3b: dynamic nodes with gated templates get a conditional
-    self-loop edge at `_sub_{parent}` (inline evaluation keeps per-branch
-    `_fan_out_item` state preserved across the Send-dispatched flow).
-    """
-
     def _dynamic_phase(self, template_evaluation=None):
+        template = {"execute": {"url": "template.md"}}
+        if template_evaluation is not None:
+            template["evaluation"] = template_evaluation
         dsc = {
             "enabled": True,
-            "template": {"prompt_file": "template.md"},
+            "template": template,
+            "final_nodes": [
+                {"id": "f0", "name": "F0", "execute": {"url": "f0.md"}},
+            ],
         }
-        if template_evaluation is not None:
-            dsc["template"]["evaluation"] = template_evaluation
-        dsc["final_nodes"] = [
-            {"id": "f0", "name": "F0", "prompt_file": "f0.md"},
-        ]
         return {
             "id": "p",
             "name": "P",
-            "execution": {"type": "command", "command": "echo", "args": ["manifest"]},
+            "execute": {
+                "url": "/usr/bin/echo",
+                "params": {"args": ["manifest"]},
+            },
             "fan_out": dsc,
         }
 
@@ -257,23 +246,12 @@ class TestDynamicGraphShape:
         assert "_sub_p" in nodes and "_final_p_f0" in nodes
 
     def test_gated_template_registers_nodes_and_parent_fanout(self):
-        """Gated template: `_sub_p` is registered, and the parent's
-        conditional fan-out router targets `_final_p_f0` for `no_items`
-        and `p` itself for retry (gated-parent path not exercised here).
-
-        The child's own inline-evaluation self-loop edges at `_sub_p`
-        are only reachable via Send-dispatch and are exercised by the
-        e2e `test_subphase_gate_triggers_retry` test, not graph-shape.
-        """
         config = make_config([self._dynamic_phase(
             template_evaluation={"validator": "v.md", "threshold": 0.8},
         )])
         graph = build_workflow_graph(config)
         nodes = graph.get_graph().nodes
         assert "_sub_p" in nodes
-        # Parent node-level conditional edges still include the retry
-        # self-loop (parent has no evaluation here; no_items / retry
-        # / fail branches stay in place).
         conditional = _conditional_edges(graph)
         assert ("p", "_final_p_f0") in conditional
 
@@ -286,7 +264,7 @@ class TestCycleDetection:
                     {
                         "id": "a",
                         "name": "A",
-                        "prompt_file": "a.md",
+                        "execute": {"url": "a.md"},
                         "depends_on": ["a"],
                     }
                 ]
@@ -296,8 +274,8 @@ class TestCycleDetection:
         with pytest.raises(ValueError, match="[Cc]ircular"):
             config = make_config(
                 [
-                    {"id": "a", "name": "A", "prompt_file": "a.md", "depends_on": ["b"]},
-                    {"id": "b", "name": "B", "prompt_file": "b.md", "depends_on": ["a"]},
+                    {"id": "a", "name": "A", "execute": {"url": "a.md"}, "depends_on": ["b"]},
+                    {"id": "b", "name": "B", "execute": {"url": "b.md"}, "depends_on": ["a"]},
                 ]
             )
             build_workflow_graph(config)
@@ -306,9 +284,9 @@ class TestCycleDetection:
         with pytest.raises(ValueError, match="[Cc]ircular"):
             config = make_config(
                 [
-                    {"id": "a", "name": "A", "prompt_file": "a.md", "depends_on": ["c"]},
-                    {"id": "b", "name": "B", "prompt_file": "b.md", "depends_on": ["a"]},
-                    {"id": "c", "name": "C", "prompt_file": "c.md", "depends_on": ["b"]},
+                    {"id": "a", "name": "A", "execute": {"url": "a.md"}, "depends_on": ["c"]},
+                    {"id": "b", "name": "B", "execute": {"url": "b.md"}, "depends_on": ["a"]},
+                    {"id": "c", "name": "C", "execute": {"url": "c.md"}, "depends_on": ["b"]},
                 ]
             )
             build_workflow_graph(config)

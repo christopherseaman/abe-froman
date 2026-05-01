@@ -1,23 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from abe_froman.runtime.executor.command import CommandExecutor
 from abe_froman.runtime.executor.prompt import PromptExecutor, render_template
 from abe_froman.runtime.result import ExecutionResult, PromptBackend
 from abe_froman.runtime.url import _RemoteFetchCache, fetch_url, resolve_url
-from abe_froman.schema.models import (
-    CommandExecution,
-    Execute,
-    GateOnlyExecution,
-    JoinExecution,
-    Node,
-    PromptExecution,
-    Settings,
-)
+from abe_froman.schema.models import Execute, Node, Settings
 from abe_froman.schema.params import coerce_params
 
 # Script extension → interpreter prefix. URL → subprocess args via map +
@@ -34,24 +26,15 @@ _PROMPT_EXTS = {".md", ".txt", ".prompt"}
 
 
 class DispatchExecutor:
-    """Routes execution to the appropriate executor.
+    """Routes execution by ``node.execute`` shape.
 
-    Stage-4 path (legacy ``node.execution`` discriminated union):
-        - CommandExecution → CommandExecutor (subprocess)
-        - GateOnlyExecution → no-op (gate evaluation happens downstream)
-        - JoinExecution → no-op (topology marker)
-        - PromptExecution → PromptExecutor with pluggable PromptBackend
-
-    Stage-5b path (new ``node.execute`` shape):
-        - execute.url with prompt extension → _dispatch_prompt
-        - execute.url with script extension → _dispatch_script
-        - execute.url else (binary path) → _dispatch_binary
-        - execute.type=join → no-op
-        - execute.type=route → never reached at runtime (compile-time only)
-        - execute.url with .yaml → never reached at runtime (compile-time only)
-
-    Both paths coexist during the dual-mode window; Commit 8 deletes the
-    Stage-4 path.
+    - execute.url with prompt extension → _dispatch_prompt
+    - execute.url with script extension → _dispatch_script
+    - execute.url else (binary path) → _dispatch_binary
+    - execute.type=join → no-op (topology marker)
+    - execute.type=route → never reached at runtime (compile-time only)
+    - execute.url with .yaml → never reached at runtime (compile-time only)
+    - execute=None → no-op (gate-only by elision)
     """
 
     def __init__(
@@ -60,7 +43,6 @@ class DispatchExecutor:
         prompt_backend: PromptBackend | None = None,
         settings: Settings | None = None,
     ):
-        self._command_executor = CommandExecutor(workdir=workdir)
         self._workdir = workdir
         self._settings = settings or Settings()
         self._fetch_cache = _RemoteFetchCache()
@@ -77,43 +59,12 @@ class DispatchExecutor:
     async def execute(
         self, node: Node, context: dict[str, Any], workdir: str | None = None
     ) -> ExecutionResult:
-        # Stage 5b path
-        if node.execute is not None:
-            return await self._dispatch_execute(node, context, workdir=workdir)
-
-        # Legacy Stage-4 path (deleted in Commit 8)
-        execution = node.execution
-        if isinstance(execution, CommandExecution):
-            return await self._command_executor.execute(node, context, workdir=workdir)
-        if isinstance(execution, GateOnlyExecution):
+        if node.execute is None:
+            # Gate-only-by-elision: a node with `evaluation:` and no
+            # `execute:` block runs the gate against an empty output.
             return ExecutionResult(success=True, output=f"[gate-only] {node.id}")
-        if isinstance(execution, JoinExecution):
-            return ExecutionResult(success=True, output="")
-        if isinstance(execution, PromptExecution):
-            if self._prompt_executor is not None:
-                return await self._prompt_executor.execute(
-                    node, context, workdir=workdir
-                )
-            return ExecutionResult(
-                success=True,
-                output=f"[prompt-stub] {node.id}: {execution.prompt_file}",
-            )
-        if execution is None:
-            return ExecutionResult(
-                success=False,
-                error=f"Node '{node.id}' has no execution configuration",
-            )
-        return ExecutionResult(
-            success=False,
-            error=f"Unknown execution type: {type(execution).__name__}",
-        )
 
-    async def _dispatch_execute(
-        self, node: Node, context: dict[str, Any], workdir: str | None = None
-    ) -> ExecutionResult:
-        """Stage-5b dispatch: walk handler table by URL extension/scheme."""
         execute = node.execute
-        assert execute is not None  # caller-guarded
 
         if execute.type == "join":
             return ExecutionResult(success=True, output="")
@@ -174,12 +125,7 @@ class DispatchExecutor:
         context: dict[str, Any],
         workdir: str,
     ) -> ExecutionResult:
-        """Read prompt body (file or remote), render Jinja, send to backend.
-
-        Delegates the preamble + downgrade-chain loop to PromptExecutor
-        helpers so both the legacy and Stage-5b paths share one
-        implementation of the overload-handling.
-        """
+        """Read prompt body (file or remote), render Jinja, send to backend."""
         if self._prompt_executor is None:
             return ExecutionResult(
                 success=True,
@@ -224,11 +170,10 @@ class DispatchExecutor:
         """Run a script under its interpreter (e.g. python3 / node / bash)."""
         ext = Path(urlsplit(resolved).path).suffix.lower()
         interpreter = _SCRIPT_INTERPRETERS[ext]
-        # Resolve to local path. Remote scripts: fetch_url validates +
-        # caches; for now, only file:// is supported runtime-side. Remote
-        # script handoff (write to temp + chmod) is wired in a future commit.
         scheme = urlsplit(resolved).scheme
         if scheme != "file":
+            # Remote script handoff (fetch → temp dir → chmod → run)
+            # is deferred to a separate commit; today only file:// works.
             return ExecutionResult(
                 success=False,
                 error=(
@@ -279,7 +224,6 @@ class DispatchExecutor:
         for k, v in params.env.items():
             rendered_env[k] = render_template(v, context)
 
-        import os
         env = {**os.environ, **rendered_env} if rendered_env else None
 
         try:

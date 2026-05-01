@@ -5,6 +5,7 @@ All tests use real subprocess execution via DispatchExecutor.
 """
 
 import json
+import shutil
 
 import pytest
 
@@ -13,6 +14,8 @@ from abe_froman.runtime.state import make_initial_state
 from abe_froman.runtime.executor.dispatch import DispatchExecutor
 
 from helpers import cmd_phase, make_config
+
+_ECHO = shutil.which("echo") or "/bin/echo"
 
 
 # ---------------------------------------------------------------------------
@@ -28,10 +31,10 @@ def dynamic_parent(id, manifest_items, *, template_prompt="template.md",
     node = {
         "id": id,
         "name": id,
-        "execution": {"type": "command", "command": "echo", "args": ["-n", manifest]},
+        "execute": {"url": _ECHO, "params": {"args": ["-n", manifest]}},
         "fan_out": {
             "enabled": True,
-            "template": {"prompt_file": template_prompt},
+            "template": {"execute": {"url": template_prompt}},
         },
         "depends_on": depends_on or [],
         **kwargs,
@@ -147,8 +150,7 @@ class TestFinalNodes:
 
         items = [{"id": "a"}, {"id": "b"}]
         finals = [{"id": "summary", "name": "Summary",
-                   "execution": {"type": "command", "command": "echo",
-                                 "args": ["-n", "summarized"]}}]
+                   "execute": {"url": _ECHO, "params": {"args": ["-n", "summarized"]}}}]
 
         config = make_config([dynamic_parent("p", items, final_nodes=finals)])
         executor = DispatchExecutor(workdir=str(tmp_path))
@@ -188,7 +190,7 @@ class TestFinalNodes:
         (tmp_path / "template.md").write_text("sub {{id}}")
         (tmp_path / "summary.md").write_text("aggregate {{parent_subphases}}")
 
-        finals = [{"id": "summary", "name": "Summary", "prompt_file": "summary.md"}]
+        finals = [{"id": "summary", "name": "Summary", "execute": {"url": "summary.md"}}]
         config = make_config([dynamic_parent("parent", manifest, final_nodes=finals)])
 
         graph = build_workflow_graph(config, mock)
@@ -224,23 +226,23 @@ class TestFinalNodes:
         """
         from abe_froman.compile.dynamic import _make_final_fan_out_node
         from abe_froman.runtime.state import make_initial_state
-        from abe_froman.schema.models import Node, FanOut
+        from abe_froman.schema.models import Execute, Node, FanOut
 
         parent = Node(
             id="p", name="P",
-            execution={"type": "command", "command": "echo", "args": ["x"]},
+            execute=Execute(url=_ECHO, params={"args": ["x"]}),
             fan_out=FanOut(enabled=True, manifest_path=None,
-                           template={"prompt_file": "t.md"}),
+                           template={"execute": {"url": "t.md"}}),
         )
         final = type("F", (), dict(
             id="summary", name="Summary",
-            description=None, prompt_file="s.md",
-            execution=None, execute=None, evaluation=None,
+            description=None,
+            execute=Execute(url="s.md"), evaluation=None,
         ))()
 
         from helpers import make_config
         config = make_config([{"id": "p", "name": "P",
-                               "execution": {"type": "command", "command": "echo", "args": ["x"]}}])
+                               "execute": {"url": _ECHO, "params": {"args": ["x"]}}}])
 
         node_fn = _make_final_fan_out_node(parent, final, config, executor=None, is_first=True)
         # Parent not completed AND no manifest output → barrier should defer.
@@ -258,11 +260,9 @@ class TestFinalNodes:
         items = [{"id": "a"}]
         finals = [
             {"id": "step1", "name": "Step 1",
-             "execution": {"type": "command", "command": "echo",
-                           "args": ["-n", "s1"]}},
+             "execute": {"url": _ECHO, "params": {"args": ["-n", "s1"]}}},
             {"id": "step2", "name": "Step 2",
-             "execution": {"type": "command", "command": "echo",
-                           "args": ["-n", "s2"]}},
+             "execute": {"url": _ECHO, "params": {"args": ["-n", "s2"]}}},
         ]
 
         config = make_config([dynamic_parent("p", items, final_nodes=finals)])
@@ -287,8 +287,7 @@ class TestDownstreamWiring:
 
         items = [{"id": "a"}, {"id": "b"}]
         finals = [{"id": "wrap", "name": "Wrap",
-                   "execution": {"type": "command", "command": "echo",
-                                 "args": ["-n", "wrapped"]}}]
+                   "execute": {"url": _ECHO, "params": {"args": ["-n", "wrapped"]}}}]
 
         config = make_config([
             dynamic_parent("dyn", items, final_nodes=finals),
@@ -380,12 +379,11 @@ class TestDynamicGates:
         config = make_config([{
             "id": "p",
             "name": "p",
-            "execution": {"type": "command", "command": "echo",
-                          "args": ["-n", json.dumps({"items": items})]},
+            "execute": {"url": _ECHO, "params": {"args": ["-n", json.dumps({"items": items})]}},
             "fan_out": {
                 "enabled": True,
                 "template": {
-                    "prompt_file": "template.md",
+                    "execute": {"url": "template.md"},
                     "evaluation": {
                         "validator": str(script),
                         "threshold": 0.5,
@@ -431,12 +429,11 @@ class TestDynamicGates:
         config = make_config([{
             "id": "p",
             "name": "p",
-            "execution": {"type": "command", "command": "echo",
-                          "args": ["-n", json.dumps({"items": items})]},
+            "execute": {"url": _ECHO, "params": {"args": ["-n", json.dumps({"items": items})]}},
             "fan_out": {
                 "enabled": True,
                 "template": {
-                    "prompt_file": "template.md",
+                    "execute": {"url": "template.md"},
                     "evaluation": {
                         "validator": str(validator),
                         "threshold": 0.5,
@@ -505,11 +502,10 @@ class TestDynamicEdgeCases:
         config = make_config([{
             "id": "p",
             "name": "P",
-            "execution": {"type": "command", "command": "echo",
-                          "args": ["-n", manifest]},
+            "execute": {"url": _ECHO, "params": {"args": ["-n", manifest]}},
             "fan_out": {
                 "enabled": False,
-                "template": {"prompt_file": "t.md"},
+                "template": {"execute": {"url": "t.md"}},
             },
         }])
         executor = DispatchExecutor(workdir=str(tmp_path))
@@ -530,12 +526,11 @@ class TestDynamicEdgeCases:
         config = make_config([{
             "id": "p",
             "name": "P",
-            "execution": {"type": "command", "command": "echo",
-                          "args": ["-n", "not json"]},
+            "execute": {"url": _ECHO, "params": {"args": ["-n", "not json"]}},
             "fan_out": {
                 "enabled": True,
                 "manifest_path": "manifest.json",
-                "template": {"prompt_file": "template.md"},
+                "template": {"execute": {"url": "template.md"}},
             },
         }])
         executor = DispatchExecutor(workdir=str(tmp_path))

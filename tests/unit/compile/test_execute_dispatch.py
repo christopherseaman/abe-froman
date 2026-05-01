@@ -4,7 +4,8 @@ Function-level tests cover compile-time recognition of:
     - execute.url=*.yaml → subgraph reference
     - execute.type=join → join sentinel
     - execute.type=route → route node
-    - cycle detection across mixed Stage-4 / Stage-5b refs
+    - cycle detection across execute.url refs
+    - subgraph state projection via execute.params.{inputs,outputs}
 
 Each test pairs a positive (compiles correctly) with a negative
 (cycle detected, malformed shape, etc.) where applicable.
@@ -12,18 +13,16 @@ Each test pairs a positive (compiles correctly) with a negative
 
 from __future__ import annotations
 
-from pathlib import Path
+import shutil
 
 import pytest
 
 from abe_froman.compile.graph import (
     _is_route,
     _is_subgraph_ref,
-    _route_cases_else,
-    _subgraph_path,
     build_workflow_graph,
 )
-from abe_froman.compile.subgraph import SubgraphCycleError
+from abe_froman.compile.subgraph import SubgraphCycleError, node_subgraph_path
 from abe_froman.runtime.executor.dispatch import DispatchExecutor
 from abe_froman.runtime.state import make_initial_state
 from abe_froman.schema.models import (
@@ -31,20 +30,16 @@ from abe_froman.schema.models import (
     Graph,
     Node,
     RouteCase,
-    RouteExecution,
 )
+
+_ECHO = shutil.which("echo") or "/bin/echo"
 
 
 class TestSubgraphRefDetection:
-    def test_legacy_config_recognized(self):
-        n = Node(id="a", name="A", config="sub.yaml")
-        assert _is_subgraph_ref(n) is True
-        assert _subgraph_path(n) == "sub.yaml"
-
     def test_execute_yaml_recognized(self):
         n = Node(id="a", name="A", execute=Execute(url="sub.yaml"))
         assert _is_subgraph_ref(n) is True
-        assert _subgraph_path(n) == "sub.yaml"
+        assert node_subgraph_path(n) == "sub.yaml"
 
     def test_execute_yml_recognized(self):
         n = Node(id="a", name="A", execute=Execute(url="sub.yml"))
@@ -53,27 +48,14 @@ class TestSubgraphRefDetection:
     def test_execute_md_not_subgraph(self):
         n = Node(id="a", name="A", execute=Execute(url="prompt.md"))
         assert _is_subgraph_ref(n) is False
-        assert _subgraph_path(n) is None
+        assert node_subgraph_path(n) is None
 
-    def test_no_execute_no_config_not_subgraph(self):
+    def test_no_execute_not_subgraph(self):
         n = Node(id="a", name="A")
         assert _is_subgraph_ref(n) is False
 
 
 class TestRouteDetection:
-    def test_legacy_route_execution_recognized(self):
-        n = Node(
-            id="r", name="R",
-            execution=RouteExecution(
-                cases=[RouteCase(when="True", goto="x")],
-                else_="__end__",
-            ),
-        )
-        assert _is_route(n) is True
-        cases, else_target = _route_cases_else(n)
-        assert len(cases) == 1
-        assert else_target == "__end__"
-
     def test_execute_route_recognized(self):
         n = Node(
             id="r", name="R",
@@ -84,15 +66,16 @@ class TestRouteDetection:
             ),
         )
         assert _is_route(n) is True
-        cases, else_target = _route_cases_else(n)
-        assert cases[0].when == "x > 0"
-        assert else_target == "produce"
+        assert n.execute.cases[0].when == "x > 0"
+        assert n.execute.else_ == "produce"
 
-    def test_non_route_node_returns_false(self):
+    def test_url_node_not_route(self):
         n = Node(id="a", name="A", execute=Execute(url="x.md"))
         assert _is_route(n) is False
-        with pytest.raises(ValueError, match="not a route"):
-            _route_cases_else(n)
+
+    def test_no_execute_not_route(self):
+        n = Node(id="a", name="A")
+        assert _is_route(n) is False
 
 
 class TestSubgraphCompileViaExecuteURL:
@@ -100,14 +83,13 @@ class TestSubgraphCompileViaExecuteURL:
 
     @pytest.mark.asyncio
     async def test_compiles_via_execute_url_yaml(self, tmp_path):
-        # Create a minimal subgraph YAML
         sub_yaml = tmp_path / "sub.yaml"
         sub_yaml.write_text(
             "name: sub\nversion: '1.0'\n"
             "nodes:\n"
             "  - id: inner\n    name: Inner\n"
-            "    execution:\n      type: command\n      command: echo\n"
-            "      args: ['from-sub']\n"
+            f"    execute:\n      url: {_ECHO}\n"
+            "      params:\n        args: ['from-sub']\n"
         )
         config = Graph(
             name="parent", version="1.0",
@@ -120,7 +102,6 @@ class TestSubgraphCompileViaExecuteURL:
             config, executor, _base_dir=tmp_path,
         )
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
-        # Subgraph terminal output projects as node_outputs[parent.id]
         assert "p" in result["completed_nodes"]
         assert "from-sub" in result["node_outputs"]["p"]
 
@@ -128,23 +109,21 @@ class TestSubgraphCompileViaExecuteURL:
     async def test_execute_params_inputs_outputs_project_through(self, tmp_path):
         """Stage-5b subgraph with execute.params.{inputs,outputs} actually
         projects state across the boundary (the HIGH 1 audit fix)."""
-        # Subgraph reads {{topic}} from node_inputs and emits its terminal output
         sub_yaml = tmp_path / "sub.yaml"
         sub_yaml.write_text(
             "name: sub\nversion: '1.0'\n"
             "nodes:\n"
             "  - id: step1\n    name: Step1\n"
-            "    execution:\n      type: command\n      command: echo\n"
-            "      args: ['{{topic}}']\n"
+            f"    execute:\n      url: {_ECHO}\n"
+            "      params:\n        args: ['{{topic}}']\n"
             "  - id: step2\n    name: Step2\n    depends_on: [step1]\n"
-            "    execution:\n      type: command\n      command: echo\n"
-            "      args: ['final-{{step1}}']\n"
+            f"    execute:\n      url: {_ECHO}\n"
+            "      params:\n        args: ['final-{{step1}}']\n"
         )
         producer = Node(
             id="producer", name="Producer",
-            execution={"type": "command", "command": "echo", "args": ["alpha"]},
+            execute=Execute(url=_ECHO, params={"args": ["alpha"]}),
         )
-        # Stage-5b shape: inputs/outputs nested inside execute.params
         wrapper = Node(
             id="p", name="P", depends_on=["producer"],
             execute=Execute(
@@ -160,36 +139,12 @@ class TestSubgraphCompileViaExecuteURL:
         graph = build_workflow_graph(config, executor, _base_dir=tmp_path)
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
 
-        # Subgraph saw producer's output as {{topic}} input, ran step1+step2,
-        # terminal output projects as node_outputs[p].
         assert "p" in result["completed_nodes"]
-        # outputs.second projection populates node_outputs["p.second"]
         assert "p.second" in result["node_outputs"]
         assert "final-alpha" in result["node_outputs"]["p.second"]
 
 
 class TestCycleDetectionAcrossShapes:
-    def test_legacy_to_legacy_cycle_detected(self, tmp_path):
-        # a.yaml references b.yaml references a.yaml
-        a = tmp_path / "a.yaml"
-        b = tmp_path / "b.yaml"
-        a.write_text(
-            "name: a\nversion: '1.0'\n"
-            "nodes:\n"
-            "  - id: ref\n    name: R\n    config: b.yaml\n"
-        )
-        b.write_text(
-            "name: b\nversion: '1.0'\n"
-            "nodes:\n"
-            "  - id: ref\n    name: R\n    config: a.yaml\n"
-        )
-        config = Graph(
-            name="parent", version="1.0",
-            nodes=[Node(id="p", name="P", config="a.yaml")],
-        )
-        with pytest.raises(SubgraphCycleError):
-            build_workflow_graph(config, executor=None, _base_dir=tmp_path)
-
     def test_execute_url_to_execute_url_cycle_detected(self, tmp_path):
         a = tmp_path / "a.yaml"
         b = tmp_path / "b.yaml"
@@ -212,32 +167,10 @@ class TestCycleDetectionAcrossShapes:
         with pytest.raises(SubgraphCycleError):
             build_workflow_graph(config, executor=None, _base_dir=tmp_path)
 
-    def test_mixed_shape_cycle_detected(self, tmp_path):
-        """Cycle through one legacy config: + one execute.url: in the chain."""
-        a = tmp_path / "a.yaml"
-        b = tmp_path / "b.yaml"
-        a.write_text(
-            "name: a\nversion: '1.0'\n"
-            "nodes:\n"
-            "  - id: ref\n    name: R\n    config: b.yaml\n"
-        )
-        b.write_text(
-            "name: b\nversion: '1.0'\n"
-            "nodes:\n"
-            "  - id: ref\n    name: R\n"
-            "    execute:\n      url: a.yaml\n"
-        )
-        config = Graph(
-            name="parent", version="1.0",
-            nodes=[Node(id="p", name="P", execute=Execute(url="a.yaml"))],
-        )
-        with pytest.raises(SubgraphCycleError):
-            build_workflow_graph(config, executor=None, _base_dir=tmp_path)
-
 
 class TestRouteCompileViaExecuteShape:
-    """A route authored in the new execute.{type:route, cases, else} shape
-    compiles and dispatches the same as the Stage-5a execution.{type:route}."""
+    """A route authored in execute.{type:route, cases, else} compiles and
+    dispatches via Command(goto=)."""
 
     @pytest.mark.asyncio
     async def test_route_via_execute_shape_dispatches(self, tmp_path):
@@ -246,7 +179,7 @@ class TestRouteCompileViaExecuteShape:
             nodes=[
                 Node(
                     id="produce", name="produce",
-                    execution={"type": "command", "command": "echo", "args": ["draft"]},
+                    execute=Execute(url=_ECHO, params={"args": ["draft"]}),
                 ),
                 Node(
                     id="decide", name="decide", depends_on=["produce"],
@@ -258,7 +191,7 @@ class TestRouteCompileViaExecuteShape:
                 ),
                 Node(
                     id="ship", name="ship",
-                    execution={"type": "command", "command": "echo", "args": ["shipped"]},
+                    execute=Execute(url=_ECHO, params={"args": ["shipped"]}),
                 ),
             ],
         )
@@ -267,3 +200,34 @@ class TestRouteCompileViaExecuteShape:
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
         assert "ship" in result["completed_nodes"]
         assert "shipped" in result["node_outputs"]["ship"]
+
+
+class TestJoinViaExecuteShape:
+    """execute.type=join is a no-op topology marker for fan-in."""
+
+    @pytest.mark.asyncio
+    async def test_join_runs_after_deps(self, tmp_path):
+        config = Graph(
+            name="t", version="1.0",
+            nodes=[
+                Node(
+                    id="a", name="A",
+                    execute=Execute(url=_ECHO, params={"args": ["alpha"]}),
+                ),
+                Node(
+                    id="b", name="B",
+                    execute=Execute(url=_ECHO, params={"args": ["beta"]}),
+                ),
+                Node(
+                    id="merge", name="Merge",
+                    depends_on=["a", "b"],
+                    execute=Execute(type="join"),
+                ),
+            ],
+        )
+        executor = DispatchExecutor(workdir=str(tmp_path))
+        graph = build_workflow_graph(config, executor, _base_dir=tmp_path)
+        result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
+        assert "merge" in result["completed_nodes"]
+        assert "a" in result["completed_nodes"]
+        assert "b" in result["completed_nodes"]
