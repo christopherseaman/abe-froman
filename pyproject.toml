@@ -17,6 +17,9 @@ dependencies = [
 [project.scripts]
 abe-froman = "abe_froman.cli.main:cli"
 
+[project.optional-dependencies]
+openai = ["openai>=1.40"]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
