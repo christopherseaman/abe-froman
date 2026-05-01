@@ -52,13 +52,31 @@ _SUBGRAPH_EXTS = {".yaml", ".yml"}
 SCRIPT_EXTS = {".py", ".js", ".mjs", ".ts", ".sh"}
 
 
-def params_for_url(resolved_url: str) -> type[_StrictParams]:
+# Mode-name → params dataclass. Used when ``execute.mode:`` is set,
+# overriding extension-driven routing in `params_for_url`.
+_MODE_TO_PARAMS: dict[str, type[_StrictParams]] = {
+    "prompt": PromptParams,
+    "subgraph": SubgraphParams,
+    "exec": SubprocessParams,
+    "python": SubprocessParams,
+    "node": SubprocessParams,
+    "tsx": SubprocessParams,
+    "bash": SubprocessParams,
+}
+
+
+def params_for_url(
+    resolved_url: str, mode: str | None = None,
+) -> type[_StrictParams]:
     """Pick the params dataclass that matches the resolved URL's mode.
 
-    Extension lookup is case-insensitive. Unknown extensions and bare
-    binary paths fall through to ``SubprocessParams`` — same shape as
-    script-mode (script + exec collapsed in Stage 5b cleanup).
+    When ``mode`` is set (from ``execute.mode:``), it overrides the
+    URL-extension lookup. Otherwise, extension lookup is case-insensitive;
+    unknown extensions and bare binary paths fall through to
+    ``SubprocessParams`` (script + exec collapsed in Stage 5b cleanup).
     """
+    if mode is not None:
+        return _MODE_TO_PARAMS[mode]
     parts = urlsplit(resolved_url)
     ext = Path(parts.path).suffix.lower()
     if ext in _PROMPT_EXTS:
@@ -68,9 +86,11 @@ def params_for_url(resolved_url: str) -> type[_StrictParams]:
     return SubprocessParams
 
 
-def coerce_params(resolved_url: str, raw: dict[str, Any]) -> _StrictParams:
+def coerce_params(
+    resolved_url: str, raw: dict[str, Any], mode: str | None = None,
+) -> _StrictParams:
     """Coerce a raw params dict into the matching mode's model.
 
     Raises pydantic.ValidationError on mode-mismatched keys.
     """
-    return params_for_url(resolved_url)(**raw)
+    return params_for_url(resolved_url, mode=mode)(**raw)

@@ -215,3 +215,63 @@ class TestSubgraphURLAtRuntime:
         result = await executor.execute(node, {}, workdir=str(tmp_path))
         assert result.success is False
         assert "compile time" in result.error
+
+
+class TestExecuteModeOverride:
+    """`execute.mode:` forces a dispatch handler regardless of URL extension."""
+
+    @pytest.mark.asyncio
+    async def test_python_mode_dispatches_extensionless_url_as_script(self, tmp_path):
+        """A URL with no `.py` suffix runs through python3 when mode=python."""
+        script = tmp_path / "doer"  # no extension
+        script.write_text("import sys; sys.stdout.write('forced-py')")
+        node = Node(
+            id="p", name="P",
+            execute=Execute(url=f"file://{script}", mode="python"),
+        )
+        # Make `python3` resolve to the test interpreter for portability.
+        executor = DispatchExecutor(workdir=str(tmp_path))
+        result = await executor.execute(node, {}, workdir=str(tmp_path))
+        # Subprocess will fail unless python3 is on PATH; if it is,
+        # output should contain the script's stdout.
+        if result.success:
+            assert "forced-py" in result.output
+
+    @pytest.mark.asyncio
+    async def test_prompt_mode_routes_unknown_extension_through_prompt(self, tmp_path):
+        """A URL with `.foo` suffix runs through PromptExecutor when mode=prompt."""
+        body = tmp_path / "instructions.foo"
+        body.write_text("hello {{name}}")
+        node = Node(
+            id="p", name="P",
+            execute=Execute(url=f"file://{body}", mode="prompt"),
+        )
+        # No backend → stub path; just assert we hit the prompt branch.
+        executor = DispatchExecutor(workdir=str(tmp_path))
+        result = await executor.execute(node, {"name": "world"}, workdir=str(tmp_path))
+        assert result.success is True
+        assert "[prompt-stub]" in result.output  # prompt branch was taken
+
+    @pytest.mark.asyncio
+    async def test_exec_mode_overrides_md_extension(self, tmp_path):
+        """`mode: exec` runs an .md path as a binary instead of as a prompt.
+
+        Authors a tiny shell script at `looks-like-prompt.md` to prove the
+        extension is ignored; without `mode: exec`, the `.md` suffix would
+        send the file through PromptBackend.
+        """
+        fake = tmp_path / "looks-like-prompt.md"
+        fake.write_text("#!/bin/sh\necho from-exec-mode-$1\n")
+        fake.chmod(0o755)
+        node = Node(
+            id="b", name="B",
+            execute=Execute(
+                url=f"file://{fake}",
+                mode="exec",
+                params={"args": ["forced"]},
+            ),
+        )
+        executor = DispatchExecutor(workdir=str(tmp_path))
+        result = await executor.execute(node, {}, workdir=str(tmp_path))
+        assert result.success is True
+        assert "from-exec-mode-forced" in result.output

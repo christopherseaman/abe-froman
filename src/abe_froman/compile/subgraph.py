@@ -235,13 +235,18 @@ def make_fan_out_subgraph_invoker(
 
 def execute_subgraph_path(execute: Any) -> str | None:
     """Return the subgraph YAML path for an Execute block whose `url`
-    ends in `.yaml` / `.yml`, else None. Used by callers that already
-    hold the Execute (fan-out templates) without a containing Node.
+    ends in `.yaml` / `.yml` OR which carries `mode: subgraph` to
+    force-route an extensionless URL through the subgraph compiler.
+    Used by callers that already hold the Execute (fan-out templates)
+    without a containing Node.
     """
-    if execute is not None and execute.url:
-        suffix = Path(execute.url).suffix.lower()
-        if suffix in {".yaml", ".yml"}:
-            return execute.url
+    if execute is None or not execute.url:
+        return None
+    if getattr(execute, "mode", None) == "subgraph":
+        return execute.url
+    suffix = Path(execute.url).suffix.lower()
+    if suffix in {".yaml", ".yml"}:
+        return execute.url
     return None
 
 

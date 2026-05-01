@@ -74,6 +74,16 @@ class TestResolveURL:
         result = resolve_url("file:///abs/x.md", base_url=None, workdir="/anywhere")
         assert result == "file:///abs/x.md"
 
+    def test_path_only_base_url_promoted_to_file_scheme(self):
+        """A `base_url:` without a scheme is treated as a file:// prefix
+        so downstream scheme inspection still works."""
+        result = resolve_url(
+            "x.md",
+            base_url="/projects/abe/",
+            workdir="/unused",
+        )
+        assert result == "file:///projects/abe/x.md"
+
 
 # ----- canonical: trailing-slash + case normalization -----
 

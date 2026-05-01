@@ -10,9 +10,7 @@ nodes:
       threshold: 0.8
 
     execute:
-      url: /home/christopher/.config/nvm/versions/node/v24.14.0/bin/node
-      params:
-        args: ["gates/gate-0-input-validator.js"]
+      url: "gates/gate-0-input-validator.js"
   - id: node-1
     name: "API & Comparative Research"
     description: "Research APIs, competitive analysis, and technical patterns"

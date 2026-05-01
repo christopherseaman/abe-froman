@@ -532,10 +532,11 @@ class TestFullExampleParse:
 
         node_map = {p.id: p for p in config.nodes}
 
-        # node-0 was a `command: node`, migrated to a binary url.
+        # node-0 dispatches a JS validator via URL-extension routing
+        # (Stage 5b) — no hardcoded interpreter path needed.
         n0 = node_map["node-0"]
         assert n0.execute is not None
-        assert n0.execute.url.endswith("/node")
+        assert n0.execute.url.endswith(".js")
 
         # node-1 uses a prompt URL with a model override on the Node itself.
         n1 = node_map["node-1"]

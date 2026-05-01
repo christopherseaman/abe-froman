@@ -27,10 +27,9 @@ nodes:
       base_directory: "output"
       required_files: ["paper.md"]
     execute:
-      url: /home/christopher/projects/abe-froman/.venv/bin/python3
+      url: "examples/absurd-paper/scripts/persist_paper.py"
       params:
         args:
-          - "examples/absurd-paper/scripts/persist_paper.py"
           - "{{reconcile}}"
           - "../../output/paper.md"
 

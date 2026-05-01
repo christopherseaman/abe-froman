@@ -116,6 +116,44 @@ class TestExecuteEmpty:
         assert "exactly one" in str(ei.value).lower()
 
 
+class TestExecuteModeOverride:
+    """`execute.mode:` forces dispatch routing when the URL extension
+    is missing or misleading. Only legal in URL mode."""
+
+    def test_url_mode_with_python_override_parses(self):
+        e = Execute(url="scripts/run-thing", mode="python")
+        assert e.mode == "python"
+
+    def test_url_mode_with_subgraph_override_parses(self):
+        e = Execute(url="subgraphs/registry-entry", mode="subgraph")
+        assert e.mode == "subgraph"
+
+    @pytest.mark.parametrize(
+        "mode", ["prompt", "subgraph", "exec", "python", "node", "tsx", "bash"],
+    )
+    def test_all_documented_modes_parse(self, mode):
+        Execute(url="x", mode=mode)
+
+    def test_unknown_mode_rejected(self):
+        with pytest.raises(ValidationError):
+            Execute(url="x", mode="ruby")
+
+    def test_mode_on_join_rejected(self):
+        with pytest.raises(ValidationError) as ei:
+            Execute(type="join", mode="prompt")
+        assert "join" in str(ei.value).lower()
+
+    def test_mode_on_route_rejected(self):
+        with pytest.raises(ValidationError) as ei:
+            Execute(
+                type="route",
+                cases=[{"when": "True", "goto": "x"}],
+                else_="y",
+                mode="prompt",
+            )
+        assert "route" in str(ei.value).lower()
+
+
 class TestNodeExecuteShape:
     """After Stage-5b hard cutover, Node carries only `execute: Execute | None`.
     Legacy `execution`/`config`/`prompt_file` fields no longer exist."""

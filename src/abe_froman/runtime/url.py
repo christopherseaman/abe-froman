@@ -76,8 +76,14 @@ def resolve_url(url: str, base_url: str | None, workdir: str) -> str:
 
     Rules (in order):
       1. Explicit protocol — pass through unchanged (after canonicalization).
-      2. Absolute path (starts with /) — wrap as file://.
-      3. Relative path — urljoin against base_url; else file:// + workdir.
+      2. Absolute path (starts with `/`) — wrap as ``file://`` from filesystem root.
+      3. Relative path — extend ``base_url`` if set, else extend ``workdir``.
+         A path-only ``base_url:`` (no scheme) is treated as a ``file://`` prefix
+         so downstream scheme inspection works uniformly.
+
+    The default behavior — bare relative path, no ``base_url`` set — produces
+    ``file://<workdir>/<url>``. Authors can think of this as "base_url
+    defaults to cwd."
     """
     if "://" in url:
         return canonical(url)
@@ -86,7 +92,9 @@ def resolve_url(url: str, base_url: str | None, workdir: str) -> str:
         return canonical(f"file://{url}")
 
     if base_url:
-        return canonical(urljoin(base_url, url))
+        # Promote a path-only base to file:// so urljoin produces a proper URL.
+        normalized_base = base_url if "://" in base_url else f"file://{base_url}"
+        return canonical(urljoin(normalized_base, url))
 
     abs_workdir = Path(workdir).resolve()
     return canonical(f"file://{abs_workdir}/{url}")

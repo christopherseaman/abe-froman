@@ -10,6 +10,12 @@ class RouteCase(BaseModel):
     goto: str
 
 
+ExecuteMode = Literal[
+    "prompt", "subgraph", "exec",
+    "python", "node", "tsx", "bash",
+]
+
+
 class Execute(BaseModel):
     """Stage 5b unified execution shape.
 
@@ -17,6 +23,9 @@ class Execute(BaseModel):
 
       1. URL mode (`url:` set, `type:` unset) — dispatched by URL
          extension/scheme to one of: prompt, subgraph, script, exec.
+         Authors can override the extension-driven choice with
+         ``mode:`` when the URL doesn't carry a recognizable extension
+         (or carries a misleading one).
       2. Join sentinel (`type: "join"`) — no-op topology marker.
       3. Route ladder (`type: "route"`, `cases:`, `else:`) — pure
          Command(goto=...) dispatch over structured state.
@@ -24,6 +33,7 @@ class Execute(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     url: str | None = None
     type: Literal["join", "route"] | None = None
+    mode: ExecuteMode | None = None
     params: dict[str, Any] = Field(default_factory=dict)
     cases: list[RouteCase] = []
     else_: str | None = Field(default=None, alias="else")
@@ -41,9 +51,9 @@ class Execute(BaseModel):
                 f"(got url={self.url!r}, type={self.type!r})"
             )
         if self.type == "join":
-            if self.cases or self.else_ is not None or self.params:
+            if self.cases or self.else_ is not None or self.params or self.mode:
                 raise ValueError(
-                    "Execute type=join takes no cases, else, or params"
+                    "Execute type=join takes no cases, else, params, or mode"
                 )
         elif self.type == "route":
             if self.else_ is None:
@@ -51,6 +61,10 @@ class Execute(BaseModel):
             if self.params:
                 raise ValueError(
                     "Execute type=route takes no params (use cases / else)"
+                )
+            if self.mode:
+                raise ValueError(
+                    "Execute type=route takes no mode (mode applies to URL mode only)"
                 )
         else:  # url mode
             if self.cases or self.else_ is not None:

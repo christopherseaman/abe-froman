@@ -22,6 +22,16 @@ _SCRIPT_INTERPRETERS: dict[str, list[str]] = {
     ".sh": ["bash"],
 }
 
+# Mode-name → interpreter prefix for `execute.mode:` overrides. Lets
+# authors force script dispatch when the URL has no extension or a
+# misleading one (e.g. `mode: python` on `scripts/run-thing`).
+_MODE_INTERPRETERS: dict[str, list[str]] = {
+    "python": ["python3"],
+    "node": ["node"],
+    "tsx": ["tsx"],
+    "bash": ["bash"],
+}
+
 _PROMPT_EXTS = {".md", ".txt", ".prompt"}
 
 
@@ -84,9 +94,9 @@ class DispatchExecutor:
         )
 
         # Subgraphs are dispatched at compile time (not here). If we see a
-        # .yaml URL, the compile layer failed to detect it.
+        # .yaml URL or a forced-subgraph mode, the compile layer missed it.
         ext = Path(urlsplit(resolved).path).suffix.lower()
-        if ext in {".yaml", ".yml"}:
+        if ext in {".yaml", ".yml"} or execute.mode == "subgraph":
             return ExecutionResult(
                 success=False,
                 error=(
@@ -96,23 +106,32 @@ class DispatchExecutor:
             )
 
         # Per-mode params validation: catches typos like `args:` on a prompt URL.
+        # Honors `execute.mode:` so a forced override picks the right params
+        # shape (e.g. `mode: exec` on an .md path → SubprocessParams, not
+        # PromptParams).
         try:
-            params = coerce_params(resolved, execute.params)
+            params = coerce_params(resolved, execute.params, mode=execute.mode)
         except Exception as e:
             return ExecutionResult(
                 success=False,
                 error=f"Node '{node.id}' params invalid for {resolved}: {e}",
             )
 
-        if ext in _PROMPT_EXTS:
+        # Mode override → forced dispatch. Otherwise route by URL extension.
+        if execute.mode == "prompt" or (execute.mode is None and ext in _PROMPT_EXTS):
             return await self._dispatch_prompt(
                 node, resolved, params, context, effective_workdir
             )
-        if ext in _SCRIPT_INTERPRETERS:
+        if execute.mode in _MODE_INTERPRETERS:
             return await self._dispatch_script(
-                node, resolved, params, context, effective_workdir
+                node, resolved, params, context, effective_workdir,
+                interpreter=_MODE_INTERPRETERS[execute.mode],
             )
-        # Bare binary or unrecognized extension
+        if execute.mode is None and ext in _SCRIPT_INTERPRETERS:
+            return await self._dispatch_script(
+                node, resolved, params, context, effective_workdir,
+            )
+        # mode=="exec" or extension-driven fallthrough.
         return await self._dispatch_binary(
             node, resolved, params, context, effective_workdir
         )
@@ -171,10 +190,17 @@ class DispatchExecutor:
         params: Any,
         context: dict[str, Any],
         workdir: str,
+        *,
+        interpreter: list[str] | None = None,
     ) -> ExecutionResult:
-        """Run a script under its interpreter (e.g. python3 / node / bash)."""
-        ext = Path(urlsplit(resolved).path).suffix.lower()
-        interpreter = _SCRIPT_INTERPRETERS[ext]
+        """Run a script under its interpreter (python3 / node / bash / tsx).
+
+        ``interpreter`` overrides the URL-extension lookup — used when
+        ``execute.mode:`` forces a specific interpreter regardless of suffix.
+        """
+        if interpreter is None:
+            ext = Path(urlsplit(resolved).path).suffix.lower()
+            interpreter = _SCRIPT_INTERPRETERS[ext]
         scheme = urlsplit(resolved).scheme
         if scheme != "file":
             # Remote script handoff (fetch → temp dir → chmod → run)
