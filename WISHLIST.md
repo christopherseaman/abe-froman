@@ -203,12 +203,21 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
 
 ### Backend-selection ergonomics (high priority)
 
+- [ ] **Scope-aware settings resolution (prerequisite for everything below)**
+    - Today, only the **outermost** `Graph.settings` is honored at runtime. A subgraph can author its own `settings:` block — and the YAML parses cleanly — but the executor is the parent's instance, so the subgraph's `default_model`, `default_timeout`, `preamble_file`, `retry_backoff`, etc. are silently ignored. This contradicts the graphs-and-subgraphs-are-definitionally-identical principle.
+    - **Symptom right now**: a subgraph YAML that says `settings.default_model: opus` does NOT actually use opus when invoked from a parent that defaults to sonnet.
+    - **Resolution order to land**: per-node > subgraph > parent graph > process default. Subgraph fields that are `None`-default fall through to the parent; fields the subgraph explicitly sets win for that subgraph's nodes. Nested subgraphs layer naturally — each level inherits from its enclosing scope.
+    - **Implementation seam**: cheapest approach is `NodeExecutor.execute(node, context, workdir=, settings_override=None)`. Subgraph wrappers pass their own `Settings` (merged with parent's via field-level None-fallback) when they `await sub_graph.ainvoke(...)`. `resolve_model`, `node.effective_timeout`, `apply_preamble`, the retry-backoff lookup, and the per-mode params resolver all consult `settings_override` when set, falling back to the executor's own `Settings` otherwise.
+    - **Why it's prerequisite**: every "configurable per workflow" item below (default executor, three-axis llm config, per-mode policies) needs scope semantics that work across subgraph boundaries. Locking the resolution order in once means every new field gets the same inheritance for free.
+    - Pairs with: any future "trunk/merge branch for synthesis merges" or other settings that meaningfully differ between an outer composition workflow and the inner unit it composes.
+
 - [ ] **Default executor should be real, not stub**
     - Today: `settings.executor` defaults to `"stub"`, so a workflow with prompt nodes silently emits `[prompt-stub] {id}: {url}` placeholders unless the author either declares `executor: "acp"` in YAML OR passes `-e acp` on every CLI invocation. That's a footgun — running an absurd-paper or jokes workflow without `-e acp` produces convincing-looking output that is fake.
     - Want: detect available backends at startup; default to the first real one (anthropic API key in env → anthropic; ACP adapter on PATH → ACP). Fall back to stub only when no real backend is available, and emit a warning when stub is selected. CLI flag stays as an explicit override.
     - Companion change: rename or remove `--executor stub` since "fake responses" should require an opt-in like `--no-network` or `--dry-run`, not be the path of least resistance.
 
 - [ ] **Three orthogonal axes for LLM execution, configurable in YAML**
+    - Depends on scope-aware settings resolution above — without it, a subgraph's `settings.llm:` block would silently lose to the parent's, which is exactly the footgun the resolution-order fix exists to close.
     - Today's `settings.executor: "stub" | "acp"` collapses three independent decisions into one enum. Splitting them lets workflows declare their interaction model at authoring time and lets per-node overrides exist.
     - **Axis 1 — Interaction mode**: `agent` (multi-turn, tool-using session like Claude Code via ACP) vs `prompt` (single-shot completion via API). Same `{{var}}` template; different runtime semantics — agents can read/write files, run tools, take multiple turns; prompts return one response and exit.
     - **Axis 2 — Protocol/transport**: `acp` (subprocess + stdio JSON-RPC), `api` (HTTP via SDK), `stub` (no network). Today this is conflated with axis 1 because the only `agent` option ships over ACP and the only `api` option is hypothetical.
