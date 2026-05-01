@@ -286,7 +286,12 @@ def run(
     if model:
         config.settings.default_model = model
 
-    executor_type = executor or config.settings.executor
+    # Resolution order: --executor flag > YAML settings.executor > auto-detect.
+    # auto_detect_executor warns when nothing is on disk and falls back to
+    # 'stub'; explicit choices never trigger that warning.
+    from abe_froman.runtime.executor.backends.factory import auto_detect_executor
+
+    executor_type = executor or config.settings.executor or auto_detect_executor()
 
     result = asyncio.run(
         _run_async(config, workdir, dry_run, executor_type, resume, log_file)

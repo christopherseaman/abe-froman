@@ -121,7 +121,7 @@ class Settings(BaseModel):
     output_directory: str = "output"
     max_retries: int = 3
     default_model: str = "sonnet"
-    executor: str = "stub"
+    executor: str | None = None  # None = auto-detect at CLI dispatch
     default_timeout: float | None = None
     preamble_file: str | None = None
     retry_backoff: list[float] = []

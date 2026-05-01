@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import warnings
 from pathlib import Path
 
 from abe_froman.runtime.result import PromptBackend
@@ -84,3 +86,38 @@ def create_prompt_backend(executor_type: str, **kwargs: object) -> PromptBackend
         f"Unknown executor type: {executor_type!r}. "
         f"Supported: stub, acp, deepseek, openai"
     )
+
+
+def auto_detect_executor() -> str:
+    """Pick the first available real backend; warn + return ``"stub"``
+    on miss.
+
+    Resolution order (first match wins):
+      1. ``ANTHROPIC_API_KEY`` env → ``"anthropic"`` (placeholder; the
+         backend itself is not yet wired and ``create_prompt_backend``
+         will raise ``ValueError`` on use. Listed first to document
+         intent for the eventual native backend.)
+      2. DeepSeek key on disk or env → ``"deepseek"``.
+      3. ``npx`` on PATH → ``"acp"``.
+      4. Nothing → ``"stub"`` with a UserWarning so the operator knows
+         prompt nodes will produce fake output.
+
+    Only called from the CLI as a *fallback* when neither ``--executor``
+    nor ``settings.executor`` was set. Explicit ``--executor stub`` or
+    ``executor: stub`` in YAML never triggers this function — and so
+    never emits the warning.
+    """
+    if os.getenv("ANTHROPIC_API_KEY"):
+        return "anthropic"
+    if _resolve_deepseek_key():
+        return "deepseek"
+    if shutil.which("npx"):
+        return "acp"
+    warnings.warn(
+        "No real backend detected (no ANTHROPIC_API_KEY, no "
+        "DEEPSEEK_API_KEY, no npx on PATH); falling back to stub. "
+        "Prompt nodes will produce fake output. Set DEEPSEEK_API_KEY "
+        "or install npx + @zed-industries/claude-code-acp.",
+        stacklevel=2,
+    )
+    return "stub"
