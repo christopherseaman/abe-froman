@@ -74,6 +74,7 @@ def make_subgraph_node(
     compile_fn: Any,
     executor: "NodeExecutor | None",
     depth: int,
+    logger: Any | None = None,
 ):
     """Create the wrapper async function added as the parent graph's node.
 
@@ -83,6 +84,11 @@ def make_subgraph_node(
       2. Builds a fresh subgraph initial state with rendered inputs.
       3. Invokes the compiled subgraph.
       4. Projects subgraph outputs back into parent state per `outputs:`.
+
+    When ``logger`` is supplied, the wrapper streams subgraph state
+    snapshots through a ``SubgraphLogger`` that prefixes node ids with
+    the parent's id, so subgraph-internal completions surface in the
+    parent JSONL keyed as ``parent_id::child_id``.
     """
     sub_graph = compile_fn(sub_config, executor=executor, _depth=depth + 1)
 
@@ -130,7 +136,19 @@ def make_subgraph_node(
         )
         sub_state["node_inputs"] = rendered_inputs
 
-        sub_result = await sub_graph.ainvoke(sub_state)
+        if logger is not None:
+            from abe_froman.runtime.logging import SubgraphLogger
+            sub_logger = SubgraphLogger(logger, prefix=parent_id)
+            sub_prev = sub_state
+            sub_result = sub_state
+            async for snapshot in sub_graph.astream(
+                sub_state, stream_mode="values"
+            ):
+                sub_logger.log_snapshot(sub_prev, snapshot)
+                sub_prev = snapshot
+                sub_result = snapshot
+        else:
+            sub_result = await sub_graph.ainvoke(sub_state)
 
         update: dict[str, Any] = {"completed_nodes": [parent_id]}
         sub_outputs = sub_result.get("node_outputs", {}) or {}
@@ -171,6 +189,7 @@ def make_fan_out_subgraph_invoker(
     base_dir: str | Path,
     depth: int,
     executor: "NodeExecutor | None",
+    logger: Any | None = None,
 ) -> Any:
     """Per-Send-branch subgraph invoker for fan-out templates.
 
@@ -198,7 +217,11 @@ def make_fan_out_subgraph_invoker(
 
     async def invoke(
         context: dict[str, Any], workdir: str, dry_run: bool,
+        prefix: str | None = None,
     ) -> ExecutionResult:
+        """``prefix`` (typically the per-Send child_id like
+        ``reviewer_pool::maverick``) names the per-branch subgraph in
+        the parent JSONL when ``logger`` is set."""
         rendered_inputs = {
             k: render_template(v, context) for k, v in inputs_decl.items()
         }
@@ -210,7 +233,19 @@ def make_fan_out_subgraph_invoker(
         sub_state["node_inputs"] = rendered_inputs
 
         try:
-            sub_result = await sub_compiled.ainvoke(sub_state)
+            if logger is not None and prefix is not None:
+                from abe_froman.runtime.logging import SubgraphLogger
+                sub_logger = SubgraphLogger(logger, prefix=prefix)
+                sub_prev = sub_state
+                sub_result = sub_state
+                async for snapshot in sub_compiled.astream(
+                    sub_state, stream_mode="values"
+                ):
+                    sub_logger.log_snapshot(sub_prev, snapshot)
+                    sub_prev = snapshot
+                    sub_result = snapshot
+            else:
+                sub_result = await sub_compiled.ainvoke(sub_state)
         except Exception as e:
             return ExecutionResult(
                 success=False,

@@ -215,6 +215,7 @@ def build_workflow_graph(
     executor: NodeExecutor | None = None,
     checkpointer: Any = None,
     *,
+    logger: Any | None = None,
     _depth: int = 0,
     _base_dir: Any = None,
 ) -> Any:
@@ -222,6 +223,12 @@ def build_workflow_graph(
 
     If `checkpointer` is provided, the compiled graph will persist state
     after each node via LangGraph's checkpointer protocol.
+
+    If `logger` (a JsonlLogger) is provided, subgraph wrappers will
+    stream their internal `astream(stream_mode="values")` output through
+    a SubgraphLogger that prefixes node ids with the parent node's id,
+    so subgraph-internal completions surface in the parent JSONL keyed
+    as `parent_id::child_id` (and nested as `parent::child::grandchild`).
 
     `_depth` and `_base_dir` are internal: subgraph wrappers pass
     `_depth+1` to enforce `settings.max_subgraph_depth` and propagate
@@ -276,9 +283,11 @@ def build_workflow_graph(
     # compile_fn is shared by recursive subgraph machinery and per-child
     # fan-out subgraphs: both compile a referenced YAML at parent build
     # time and invoke it later. Defined once so call sites don't drift.
+    # `logger` propagates so nested subgraphs keep emitting prefixed events.
     def compile_fn(c, executor=None, _depth=0):
         return build_workflow_graph(
-            c, executor=executor, _depth=_depth, _base_dir=base_dir,
+            c, executor=executor, _depth=_depth,
+            _base_dir=base_dir, logger=logger,
         )
 
     # Execution nodes for every configured node.
@@ -290,6 +299,7 @@ def build_workflow_graph(
                 compile_fn=compile_fn,
                 executor=executor,
                 depth=_depth,
+                logger=logger,
             )
             builder.add_node(node.id, wrapper)
         elif node.id in route_node_ids:
@@ -314,6 +324,7 @@ def build_workflow_graph(
             _make_fan_out_node(
                 node, config, executor,
                 compile_fn=compile_fn, base_dir=base_dir, depth=_depth,
+                logger=logger,
             ),
         )
 

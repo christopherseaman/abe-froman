@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from pathlib import Path
+from typing import Any
 
 import click
 import yaml
@@ -127,15 +128,64 @@ async def _run_async(
     resume: bool,
     log_file: str | None,
 ) -> dict:
-    """Inner async runner — wires checkpointer, executor, and state."""
+    """Inner async runner — wires checkpointer, executor, and state.
+
+    Logger lifecycle: constructed up front so the compile layer can hand
+    it to subgraph wrappers (subgraph-internal events project into the
+    same JSONL, prefixed with the parent node id). The runner itself
+    only handles the outer state stream; CLI owns workflow_start /
+    workflow_end / close().
+    """
+    from abe_froman.runtime.logging import JsonlLogger
+
     thread_id = _thread_id_for(config, workdir)
 
+    logger: JsonlLogger | None = None
+    if log_file is not None:
+        logger = JsonlLogger(log_file)
+        logger.emit({
+            "event": "workflow_start",
+            "workflow": config.name,
+            "version": config.version,
+        })
+
+    try:
+        result = await _execute_workflow(
+            config, workdir, dry_run, executor_type, resume,
+            thread_id=thread_id, logger=logger,
+        )
+        return result
+    finally:
+        if logger is not None:
+            # `result` may be undefined if _execute_workflow raised before
+            # returning; emit a workflow_end with whatever the last state
+            # looked like (zeros if nothing completed). The detailed error
+            # surfaces via Click already.
+            logger.emit({
+                "event": "workflow_end",
+                "completed": len(locals().get("result", {}).get("completed_nodes", [])),
+                "failed": len(locals().get("result", {}).get("failed_nodes", [])),
+            })
+            logger.close()
+
+
+async def _execute_workflow(
+    config: Graph,
+    workdir: str,
+    dry_run: bool,
+    executor_type: str,
+    resume: bool,
+    *,
+    thread_id: str,
+    logger: Any | None,
+) -> dict:
+    """Compile the graph, wire executors / checkpointer / state, then run."""
     if dry_run:
-        compiled = build_workflow_graph(config, None)
+        compiled = build_workflow_graph(config, None, logger=logger)
         state = make_initial_state(
             workflow_name=config.name, workdir=workdir, dry_run=True,
         )
-        return await run_workflow(compiled, state, config, log_file=log_file)
+        return await run_workflow(compiled, state, config, logger=logger)
 
     from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
@@ -192,11 +242,13 @@ async def _run_async(
             )
             executor_obj = dispatch
 
-        compiled = build_workflow_graph(config, executor_obj, checkpointer=cp)
+        compiled = build_workflow_graph(
+            config, executor_obj, checkpointer=cp, logger=logger,
+        )
         try:
             result = await run_workflow(
                 compiled, state, config,
-                thread_id=thread_id, log_file=log_file,
+                thread_id=thread_id, logger=logger,
             )
         finally:
             await executor_obj.close()

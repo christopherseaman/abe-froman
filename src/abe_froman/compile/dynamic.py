@@ -48,6 +48,7 @@ def _make_fan_out_node(
     compile_fn: Any,
     base_dir: Any,
     depth: int,
+    logger: Any | None = None,
 ):
     """Create a template node function for dynamic children.
 
@@ -87,6 +88,7 @@ def _make_fan_out_node(
             base_dir=base_dir,
             depth=depth,
             executor=executor,
+            logger=logger,
         )
 
     async def node_fn(state: WorkflowState) -> dict[str, Any]:
@@ -169,12 +171,16 @@ def _make_fan_out_node(
                 # the same way an executor would surface stdout / prompt
                 # text. Timeout enforcement on the per-child subgraph
                 # uses asyncio.wait_for at the same boundary as the
-                # executor case for symmetry.
+                # executor case for symmetry. The branch's child_id
+                # (e.g. ``reviewer_pool::maverick``) becomes the JSONL
+                # prefix so each per-Send subgraph's internals surface
+                # under their own namespace.
                 async def _run_sub() -> ExecutionResult:
                     return await sub_invoker(
                         context,
                         state.get("workdir", "."),
                         state.get("dry_run", False),
+                        prefix=child_id,
                     )
                 if timeout is not None:
                     try:

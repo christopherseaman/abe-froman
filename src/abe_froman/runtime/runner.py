@@ -19,25 +19,36 @@ async def run_workflow(
     config: Graph,
     thread_id: str | None = None,
     log_file: str | None = None,
+    logger: Any | None = None,
 ) -> dict[str, Any]:
     """Execute a compiled workflow graph, streaming state snapshots.
 
-    When ``log_file`` is provided, structured JSONL events are written for
-    each state transition (node completions, failures, gates, retries).
+    Two logger paths:
+      - ``log_file`` (convenience): the runner constructs a JsonlLogger,
+        emits workflow_start / workflow_end, and closes it. Subgraph-
+        internal events are NOT prefixed back into this log because the
+        compile layer was never handed the logger handle.
+      - ``logger`` (injection): caller owns lifecycle (workflow_start /
+        workflow_end / close). The compile layer can be given the same
+        handle so subgraph-internal events surface here, prefixed by
+        their parent node id (`paper::reconcile`).
+
+    CLI uses the injection path so subgraph events surface end-to-end;
+    direct test/standalone callers prefer the convenience path.
     """
     from abe_froman.runtime.logging import JsonlLogger
 
-    last_state = initial_state
-    logger: JsonlLogger | None = None
-
-    if log_file is not None:
+    owns_logger = False
+    if logger is None and log_file is not None:
         logger = JsonlLogger(log_file)
         logger.emit({
             "event": "workflow_start",
             "workflow": config.name,
             "version": config.version,
         })
+        owns_logger = True
 
+    last_state = initial_state
     prev_state = initial_state
     run_config = (
         {"configurable": {"thread_id": thread_id}} if thread_id else {}
@@ -51,7 +62,7 @@ async def run_workflow(
             logger.log_snapshot(prev_state, snapshot)
             prev_state = snapshot
 
-    if logger is not None:
+    if owns_logger:
         logger.emit({
             "event": "workflow_end",
             "completed": len(last_state.get("completed_nodes", [])),

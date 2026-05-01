@@ -270,3 +270,146 @@ class TestCliLogFlag:
         event_types = [e["event"] for e in events]
         assert "workflow_start" in event_types
         assert "workflow_end" in event_types
+
+
+class TestSubgraphLogger:
+    """Subgraph-internal events surface in the parent JSONL with the
+    subgraph's parent_id prefixed onto each node id. This closes the
+    Stage-4c observability gap where `make_subgraph_node` used
+    `ainvoke()` and emitted nothing for internal nodes."""
+
+    def test_prefix_is_applied_to_node_field(self):
+        from abe_froman.runtime.logging import SubgraphLogger
+
+        buf = StringIO()
+        base = JsonlLogger(buf)
+        sub = SubgraphLogger(base, prefix="paper")
+        sub.emit({"event": "node_completed", "node": "reconcile"})
+
+        record = json.loads(buf.getvalue())
+        assert record["node"] == "paper::reconcile"
+
+    def test_nested_prefixing_composes(self):
+        from abe_froman.runtime.logging import SubgraphLogger
+
+        buf = StringIO()
+        base = JsonlLogger(buf)
+        outer = SubgraphLogger(base, prefix="paper")
+        inner = SubgraphLogger(outer, prefix="reconcile")
+        inner.emit({"event": "node_completed", "node": "step1"})
+
+        record = json.loads(buf.getvalue())
+        assert record["node"] == "paper::reconcile::step1"
+
+    def test_log_snapshot_diffs_with_prefix(self):
+        from abe_froman.runtime.logging import SubgraphLogger
+
+        buf = StringIO()
+        base = JsonlLogger(buf)
+        sub = SubgraphLogger(base, prefix="paper")
+        sub.log_snapshot(
+            {"completed_nodes": []},
+            {"completed_nodes": ["step1", "step2"]},
+        )
+        records = [json.loads(l) for l in buf.getvalue().strip().split("\n")]
+        nodes = sorted(r["node"] for r in records)
+        assert nodes == ["paper::step1", "paper::step2"]
+        for r in records:
+            assert r["event"] == "node_completed"
+
+    def test_event_without_node_passes_through(self):
+        """Workflow-level events (workflow_start / workflow_end) carry no
+        `node` field and should pass through unmodified."""
+        from abe_froman.runtime.logging import SubgraphLogger
+
+        buf = StringIO()
+        base = JsonlLogger(buf)
+        sub = SubgraphLogger(base, prefix="paper")
+        sub.emit({"event": "workflow_start", "workflow": "x"})
+        record = json.loads(buf.getvalue())
+        assert "node" not in record
+        assert record["event"] == "workflow_start"
+
+
+class TestSubgraphEventsInParentLog:
+    """End-to-end: a parent workflow with a subgraph reference (`execute.url:
+    sub.yaml`) emits the subgraph's internal node_completed events into
+    the parent JSONL with the parent_id prefix."""
+
+    @pytest.mark.asyncio
+    async def test_subgraph_internal_events_surface_with_prefix(self, tmp_path):
+        # Two-node subgraph; both internal nodes complete during the run.
+        sub_yaml = tmp_path / "sub.yaml"
+        sub_yaml.write_text(
+            "name: sub\nversion: '1.0'\n"
+            "nodes:\n"
+            "  - id: step1\n    name: Step 1\n"
+            f"    execute:\n      url: {_ECHO}\n"
+            "      params: {args: ['s1']}\n"
+            "  - id: step2\n    name: Step 2\n    depends_on: [step1]\n"
+            f"    execute:\n      url: {_ECHO}\n"
+            "      params: {args: ['s2']}\n"
+        )
+
+        config = make_config([
+            {
+                "id": "paper",
+                "name": "Paper",
+                "execute": {"url": "sub.yaml"},
+            },
+        ])
+        executor = DispatchExecutor(workdir=str(tmp_path))
+
+        # Inject a logger so build_workflow_graph hands it to subgraph wrappers.
+        log_path = tmp_path / "events.jsonl"
+        logger = JsonlLogger(log_path)
+        logger.emit({"event": "workflow_start", "workflow": "parent", "version": "1.0"})
+
+        compiled = build_workflow_graph(
+            config, executor, _base_dir=tmp_path, logger=logger,
+        )
+        await run_workflow(
+            compiled,
+            make_initial_state(workdir=str(tmp_path)),
+            config,
+            logger=logger,
+        )
+        logger.emit({"event": "workflow_end", "completed": 1, "failed": 0})
+        logger.close()
+
+        records = [json.loads(l) for l in log_path.read_text().strip().split("\n")]
+        nodes_completed = sorted(
+            r["node"] for r in records if r.get("event") == "node_completed"
+        )
+        # Parent-level: `paper` itself completes when the subgraph wrapper
+        # returns. Subgraph internals appear with the `paper::` prefix.
+        assert "paper" in nodes_completed
+        assert "paper::step1" in nodes_completed
+        assert "paper::step2" in nodes_completed
+
+    @pytest.mark.asyncio
+    async def test_no_logger_means_no_subgraph_events(self, tmp_path):
+        """Backward compat: no logger argument = no astream cost, no events.
+        Confirms the event-streaming path is opt-in."""
+        sub_yaml = tmp_path / "sub.yaml"
+        sub_yaml.write_text(
+            "name: sub\nversion: '1.0'\n"
+            "nodes:\n"
+            f"  - id: only\n    name: Only\n    execute:\n      url: {_ECHO}\n"
+            "      params: {args: ['x']}\n"
+        )
+        config = make_config([
+            {
+                "id": "wrapper",
+                "name": "Wrapper",
+                "execute": {"url": "sub.yaml"},
+            },
+        ])
+        executor = DispatchExecutor(workdir=str(tmp_path))
+        # No logger anywhere — the subgraph wrapper should fall through to
+        # the ainvoke() path and complete without raising.
+        compiled = build_workflow_graph(config, executor, _base_dir=tmp_path)
+        result = await run_workflow(
+            compiled, make_initial_state(workdir=str(tmp_path)), config,
+        )
+        assert "wrapper" in result["completed_nodes"]
