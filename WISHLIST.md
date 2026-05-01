@@ -165,6 +165,18 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
   per reviewer via `subgraphs/single_review.yaml`. e2e coverage in
   `tests/e2e/test_fan_out_subgraph.py` (4 tests).
 
+- [ ] **Tournament pattern — divergent fan-out + synthesizing merge**
+    - Pattern: spawn N candidate solutions in parallel, each potentially with **different params/modes** (different model tier, different temperature, different persona/prompt, different provider), then synthesize: a judge picks one as the winning baseline, and a merger incorporates the strongest parts of the losing candidates into that baseline before returning the final result.
+    - Today's fan-out almost gets there: a `fan_out:` block already gives N parallel branches with shared template, and `final_nodes:` already sees the aggregate `{{parent_subphases}}` map. What's missing is **per-candidate execution config** — each branch needs to be able to override its own model, temperature, prompt, agent vs prompt mode, etc., not just receive different per-item context. Today the manifest can rename the persona via `{{style}}` template substitution but can't make candidate A run on opus while candidate B runs on haiku, because `fan_out.template.execute` is a single shape applied to every branch.
+    - **Schema gap to close**: let `fan_out.template.execute.params` reference manifest fields, e.g. `params.llm.model: "{{model}}"` so the manifest can supply per-candidate execution config alongside per-candidate context. Pairs with the three-axis llm config above — once `params.llm` is a recognized shape with extra="forbid", per-candidate llm config slots in cleanly.
+    - **Synthesis step shape** — two final_nodes:
+      1. **judge**: prompt that reads all `{{parent_subphases}}`, picks a winner, and emits structured output `{winner: "candidate_b", reasoning: "...", strengths_in_losers: [{candidate_a: "the conclusion is sharper"}, ...]}`.
+      2. **merger**: prompt that reads the winner output + the strengths_in_losers list and produces the merged final output. This is the chosen winner.
+    - **Why "tournament" is the right name**: the pattern fundamentally treats the divergent attempts as competing entries that get judged, not as items in a fixed manifest to process uniformly. A tournament implies a winner; fan-out is symmetric.
+    - **Iteration**: optional second round where the merged output competes against the original winner — refines until score plateaus. Wraps neatly with the existing route node pattern (`when: "history['judge'][-1]['score'] >= 0.9 → __end__; else: tournament"`).
+    - **Demo to deliver alongside**: a small `examples/tournament/` workflow generating 3 alternative drafts of the same paragraph (one with sonnet+formal, one with sonnet+playful, one with haiku+terse), judging which lead reads best, and merging the winning lead with the better-detail-paragraphs from the losers.
+    - **Pairs with**: per-node llm config (so per-candidate `params.llm` works); scope-aware settings (so a tournament-as-subgraph inherits sensibly); `add_messages` reducer (for in-phase refinement loops if iterating).
+
 - [ ] **Output caching / skip-if-unchanged**
     - Make-style incrementality (not provided by langgraph checkpointers)
     - Skip when `required_files` still exist and input fingerprint (dep outputs + prompt hash + vars) matches
