@@ -364,11 +364,12 @@ async def test_absurd_paper_carve_compiles_with_subgraph(tmp_path):
     )
     config = Graph(**raw)
 
-    # The carved `paper` node uses config: with inputs: projection.
+    # Stage 5b shape: subgraph URL + inputs/outputs nested in execute.params.
     paper = next(n for n in config.nodes if n.id == "paper")
-    assert paper.config == "examples/absurd-paper/subgraphs/compose_and_validate.yaml"
+    assert paper.execute is not None
+    assert paper.execute.url == "examples/absurd-paper/subgraphs/compose_and_validate.yaml"
     # Five upstream sections project into the subgraph context.
-    assert set(paper.inputs.keys()) == {
+    assert set(paper.execute.params["inputs"].keys()) == {
         "abstract", "intro", "methods", "results", "discussion"
     }
     # publish_verdict was lifted (still a final_node under reviewer_pool).

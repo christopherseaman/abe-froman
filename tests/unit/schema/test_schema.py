@@ -327,29 +327,50 @@ class TestFullExampleParse:
         assert config.settings.output_directory == "prd"
 
     def test_example_has_all_execution_types(self, example_workflow_path):
-        """Example YAML exercises command, prompt, and gate_only types."""
+        """Example YAML exercises script, prompt, and gate-only-by-elision."""
+        from pathlib import Path
         with open(example_workflow_path) as f:
             raw = yaml.safe_load(f)
         config = Graph(**raw)
 
-        exec_types = {type(p.execution).__name__ for p in config.nodes if p.execution}
-        assert "CommandExecution" in exec_types
-        assert "PromptExecution" in exec_types
+        # Stage 5b: classify by execute.url extension or by execute=None.
+        prompt_exts = {".md", ".txt", ".prompt"}
+        kinds: set[str] = set()
+        for n in config.nodes:
+            if n.execute is None:
+                kinds.add("gate_only")
+                continue
+            if n.execute.type:
+                kinds.add(n.execute.type)
+                continue
+            ext = Path(n.execute.url).suffix.lower()
+            if ext in prompt_exts:
+                kinds.add("prompt")
+            elif ext == "":
+                kinds.add("binary")
+            else:
+                kinds.add("script")
+        assert "prompt" in kinds
+        assert ("script" in kinds) or ("binary" in kinds)
 
     def test_example_phase_types(self, example_workflow_path):
+        from pathlib import Path
         with open(example_workflow_path) as f:
             raw = yaml.safe_load(f)
         config = Graph(**raw)
 
         node_map = {p.id: p for p in config.nodes}
 
-        # node-0 is a command execution
-        assert isinstance(node_map["node-0"].execution, CommandExecution)
-        assert node_map["node-0"].execution.command == "node"
+        # node-0 was a `command: node`, migrated to a binary url.
+        n0 = node_map["node-0"]
+        assert n0.execute is not None
+        assert n0.execute.url.endswith("/node")
 
-        # node-1 is a prompt execution (via shorthand) with model override
-        assert isinstance(node_map["node-1"].execution, PromptExecution)
-        assert node_map["node-1"].model == "sonnet"
+        # node-1 uses a prompt URL with a model override on the Node itself.
+        n1 = node_map["node-1"]
+        assert n1.execute is not None
+        assert Path(n1.execute.url).suffix == ".md"
+        assert n1.model == "sonnet"
 
     def test_example_dynamic_subphases(self, example_workflow_path):
         with open(example_workflow_path) as f:

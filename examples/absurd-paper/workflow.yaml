@@ -4,14 +4,13 @@ version: "0.1.0"
 nodes:
   - id: seed_inspiration
     name: "Gather Topic Inspirations"
-    execution:
-      type: command
-      command: python3
-      args: ["examples/absurd-paper/scripts/pick_topic.py"]
+    execute:
+      url: /home/christopher/projects/abe-froman/.venv/bin/python3
+      params:
+        args: ["examples/absurd-paper/scripts/pick_topic.py"]
 
   - id: choose_topic
     name: "Synthesize Absurd Research Domain"
-    prompt_file: "examples/absurd-paper/prompts/choose_topic.md"
     depends_on: [seed_inspiration]
     # LLM gate checks the synthesized topic against the journal's
     # deadpan-absurd brief. Multi-dim scoring rejects tech-industry
@@ -22,26 +21,28 @@ nodes:
       blocking: true
       max_retries: 2
       dimensions:
-        - {field: absurdity,           min: 0.7}
-        - {field: specificity,         min: 0.7}
+        - {field: absurdity, min: 0.7}
+        - {field: specificity, min: 0.7}
         - {field: methodological_hook, min: 0.6}
 
+    execute:
+      url: "examples/absurd-paper/prompts/choose_topic.md"
   - id: abstract
     name: "Write Abstract"
-    prompt_file: "examples/absurd-paper/prompts/abstract.md"
     depends_on: [choose_topic]
     evaluation:
       validator: "examples/absurd-paper/gates/abstract_multi_dim.md"
       blocking: false
       max_retries: 1
       dimensions:
-        - {field: rigor,     min: 0.7}
-        - {field: humor,     min: 0.6}
+        - {field: rigor, min: 0.7}
+        - {field: humor, min: 0.6}
         - {field: buzzwords, min: 0.5}
 
+    execute:
+      url: "examples/absurd-paper/prompts/abstract.md"
   - id: outline
     name: "Section Outline"
-    prompt_file: "examples/absurd-paper/prompts/outline.md"
     depends_on: [abstract]
     evaluation:
       validator: "examples/absurd-paper/gates/outline_json.py"
@@ -53,25 +54,31 @@ nodes:
   # the Stage 1 wait-check fix landed (reconcile fired prematurely when
   # abstract's gate routed to it). With that fix in place, the multi-pred
   # join is honored and this shape runs cleanly.
+    execute:
+      url: "examples/absurd-paper/prompts/outline.md"
   - id: intro
     name: "Introduction"
-    prompt_file: "examples/absurd-paper/prompts/intro.md"
     depends_on: [abstract, outline]
+    execute:
+      url: "examples/absurd-paper/prompts/intro.md"
 
   - id: methods
     name: "Methods"
-    prompt_file: "examples/absurd-paper/prompts/methods.md"
     depends_on: [abstract, outline]
+    execute:
+      url: "examples/absurd-paper/prompts/methods.md"
 
   - id: results
     name: "Results"
-    prompt_file: "examples/absurd-paper/prompts/results.md"
     depends_on: [abstract, outline]
+    execute:
+      url: "examples/absurd-paper/prompts/results.md"
 
   - id: discussion
     name: "Discussion"
-    prompt_file: "examples/absurd-paper/prompts/discussion.md"
     depends_on: [abstract, outline]
+    execute:
+      url: "examples/absurd-paper/prompts/discussion.md"
 
   # Stage 4c recursive subgraph carve: reconcile + persist + structural
   # check are now a multi-step subgraph runnable standalone. Inputs:
@@ -81,14 +88,16 @@ nodes:
   # at `node_outputs["paper"]` here.
   - id: paper
     name: "Compose & Validate Paper"
-    config: "examples/absurd-paper/subgraphs/compose_and_validate.yaml"
     depends_on: [abstract, intro, methods, results, discussion]
-    inputs:
-      abstract: "{{abstract}}"
-      intro: "{{intro}}"
-      methods: "{{methods}}"
-      results: "{{results}}"
-      discussion: "{{discussion}}"
+    execute:
+      url: "examples/absurd-paper/subgraphs/compose_and_validate.yaml"
+      params:
+        inputs:
+          abstract: "{{abstract}}"
+          intro: "{{intro}}"
+          methods: "{{methods}}"
+          results: "{{results}}"
+          discussion: "{{discussion}}"
 
   # Deterministic PDF render via `uv run --script` + PEP 723 inline
   # dependencies (markdown + weasyprint). No project-wide install — uv
@@ -97,44 +106,46 @@ nodes:
   - id: render_pdf
     name: "Render Paper to PDF"
     depends_on: [paper]
-    execution:
-      type: command
-      command: uv
-      args:
-        - "run"
-        - "--script"
-        - "examples/absurd-paper/scripts/render_pdf.py"
-        - "../../output/paper.md"
-        - "../../output/paper.pdf"
     output_contract:
       base_directory: "output"
       required_files: ["paper.pdf"]
+    execute:
+      url: /home/christopher/.local/bin/uv
+      params:
+        args:
+          - "run"
+          - "--script"
+          - "examples/absurd-paper/scripts/render_pdf.py"
+          - "../../output/paper.md"
+          - "../../output/paper.pdf"
 
   - id: reviewer_pool
     name: "Reviewer Pool Manifest"
-    prompt_file: "examples/absurd-paper/prompts/reviewer_pool.md"
     depends_on: [paper, render_pdf]
     fan_out:
       enabled: true
       template:
-        prompt_file: "examples/absurd-paper/prompts/reviewer_review.md"
         evaluation:
           validator: "examples/absurd-paper/gates/review_quality.py"
           threshold: 1.0
           blocking: false
+        execute:
+          url: "examples/absurd-paper/prompts/reviewer_review.md"
       final_nodes:
         - id: publish_verdict
           name: "Editorial Publication Verdict"
-          prompt_file: "examples/absurd-paper/prompts/publish_verdict.md"
-          # Editor-in-Chief deserves the top-tier model for tone.
           model: "opus"
           evaluation:
             validator: "examples/absurd-paper/gates/publish_verdict.md"
             blocking: true
             dimensions:
-              - {field: tone,      min: 0.7}
+              - {field: tone, min: 0.7}
               - {field: coherence, min: 0.6}
 
+          execute:
+            url: "examples/absurd-paper/prompts/publish_verdict.md"
+    execute:
+      url: "examples/absurd-paper/prompts/reviewer_pool.md"
 settings:
   default_model: "sonnet"
   executor: "acp"

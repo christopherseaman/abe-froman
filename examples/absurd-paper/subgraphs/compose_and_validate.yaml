@@ -16,28 +16,27 @@ version: "1.0.0"
 nodes:
   - id: reconcile
     name: "Compose Paper"
-    prompt_file: "examples/absurd-paper/prompts/reconcile.md"
     timeout: 240.0
 
+    execute:
+      url: "examples/absurd-paper/prompts/reconcile.md"
   - id: persist
     name: "Persist Paper to Disk"
     depends_on: [reconcile]
-    execution:
-      type: command
-      command: python3
-      args:
-        - "examples/absurd-paper/scripts/persist_paper.py"
-        - "{{reconcile}}"
-        - "../../output/paper.md"
     output_contract:
       base_directory: "output"
       required_files: ["paper.md"]
+    execute:
+      url: /home/christopher/projects/abe-froman/.venv/bin/python3
+      params:
+        args:
+          - "examples/absurd-paper/scripts/persist_paper.py"
+          - "{{reconcile}}"
+          - "../../output/paper.md"
 
   - id: submission_check
     name: "Submission Structural Check"
     depends_on: [persist]
-    execution:
-      type: gate_only
     evaluation:
       validator: "examples/absurd-paper/gates/submission_check.py"
       threshold: 1.0
