@@ -44,6 +44,10 @@ def _make_fan_out_node(
     parent_node: Node,
     config: Graph,
     executor: NodeExecutor | None = None,
+    *,
+    compile_fn: Any = None,
+    base_dir: Any = None,
+    depth: int = 0,
 ):
     """Create a template node function for dynamic children.
 
@@ -53,11 +57,48 @@ def _make_fan_out_node(
     conditional-edge boundary, which would strip per-branch
     ``_fan_out_item`` state and break graph-level retry self-loops.
     Inline retry preserves per-item state trivially.
+
+    When ``template.execute.url`` ends in ``.yaml`` / ``.yml`` the
+    template is a subgraph reference. The Stage-5b carve-out: each
+    Send branch invokes the compiled subgraph with the per-item context
+    rendered into ``inputs:``, and the subgraph's terminal output flows
+    back as if it were a single-node executor result. That lets gates,
+    retries, and aggregation all work uniformly across "template runs a
+    prompt" and "template runs a multi-step subgraph."
     """
     template = parent_node.fan_out.template
     timeout = parent_node.effective_timeout(config.settings)
     max_retries = parent_node.effective_max_retries(config.settings)
     retry_backoff = config.settings.retry_backoff
+
+    # Per-Send-branch subgraph invoker, lazily set if the template is
+    # a subgraph reference. compile_fn/base_dir come from the parent's
+    # build_workflow_graph call; for older callers that don't pass them
+    # in, subgraph templates are unsupported (and the dispatcher would
+    # error on the .yaml URL).
+    sub_invoker = None
+    from abe_froman.compile.subgraph import (
+        make_fan_out_subgraph_invoker,
+        node_subgraph_path,
+    )
+    template_subgraph_path = (
+        node_subgraph_path(
+            Node(
+                id="_fan_out_template", name="_template",
+                execute=template.execute,
+            )
+        )
+        if template.execute is not None else None
+    )
+    if template_subgraph_path is not None and compile_fn is not None:
+        sub_invoker = make_fan_out_subgraph_invoker(
+            template_subgraph_path,
+            template.execute.params,
+            compile_fn=compile_fn,
+            base_dir=base_dir if base_dir is not None else ".",
+            depth=depth,
+            executor=executor,
+        )
 
     async def node_fn(state: WorkflowState) -> dict[str, Any]:
         item = state.get("_fan_out_item", {})
@@ -133,9 +174,30 @@ def _make_fan_out_node(
                     max_retries, node_id=child_id,
                 )
 
-            exec_result = await execute_with_timeout(
-                executor, synthetic_node, context, timeout
-            )
+            if sub_invoker is not None:
+                # Subgraph template: each Send branch runs the subgraph
+                # with rendered inputs and surfaces its terminal output
+                # the same way an executor would surface stdout / prompt
+                # text. Timeout enforcement on the per-child subgraph
+                # uses asyncio.wait_for at the same boundary as the
+                # executor case for symmetry.
+                async def _run_sub() -> ExecutionResult:
+                    return await sub_invoker(
+                        context,
+                        state.get("workdir", "."),
+                        state.get("dry_run", False),
+                    )
+                if timeout is not None:
+                    try:
+                        exec_result = await asyncio.wait_for(_run_sub(), timeout=timeout)
+                    except asyncio.TimeoutError:
+                        exec_result = "timeout"
+                else:
+                    exec_result = await _run_sub()
+            else:
+                exec_result = await execute_with_timeout(
+                    executor, synthetic_node, context, timeout
+                )
             if exec_result == "timeout":
                 return _merge_updates(update, make_failure_update(
                     child_id, f"Node timed out after {timeout}s"

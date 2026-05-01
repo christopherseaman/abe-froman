@@ -27,6 +27,7 @@ import yaml
 
 from abe_froman.compile.nodes import build_context
 from abe_froman.runtime.executor.prompt import render_template
+from abe_froman.runtime.result import ExecutionResult
 from abe_froman.runtime.state import WorkflowState, make_initial_state
 from abe_froman.schema.models import Graph, Node
 
@@ -161,6 +162,75 @@ def make_subgraph_node(
 
     wrapper.__name__ = f"subgraph_{parent_id}"
     return wrapper
+
+
+def make_fan_out_subgraph_invoker(
+    template_url: str,
+    template_params: dict[str, Any],
+    compile_fn: Any,
+    base_dir: str | Path,
+    depth: int,
+    executor: "NodeExecutor | None",
+) -> Any:
+    """Per-Send-branch subgraph invoker for fan-out templates.
+
+    Compiles the subgraph **once** at parent-graph build time (same one-
+    shot model as `make_subgraph_node`). Returns an async callable
+    ``invoke(context, workdir, dry_run) -> ExecutionResult`` that the
+    fan-out node body calls in place of ``executor.execute(...)``.
+
+    Inputs (``template_params['inputs']``) render against the per-item
+    context; the rendered map seeds the sub-invocation's
+    ``node_inputs``. The subgraph's terminal-node output flows back as
+    ``ExecutionResult.output`` so downstream gate evaluation, retries,
+    and aggregation paths in dynamic.py stay unchanged.
+    """
+    # Cycle detection mirrors the recursive-subgraph path: only the
+    # outermost build runs it (depth=0 callers), so nested fan-out
+    # subgraphs don't re-walk the same chains.
+    if depth == 0:
+        detect_config_cycle(template_url, base_dir=base_dir)
+    sub_config = load_graph(template_url, base_dir=base_dir)
+    sub_compiled = compile_fn(sub_config, executor=executor, _depth=depth + 1)
+    inputs_decl: dict[str, str] = {}
+    if isinstance(template_params.get("inputs"), dict):
+        inputs_decl = dict(template_params["inputs"])
+
+    async def invoke(
+        context: dict[str, Any], workdir: str, dry_run: bool,
+    ) -> ExecutionResult:
+        rendered_inputs = {
+            k: render_template(v, context) for k, v in inputs_decl.items()
+        }
+        sub_state = make_initial_state(
+            workflow_name=sub_config.name,
+            workdir=workdir,
+            dry_run=dry_run,
+        )
+        sub_state["node_inputs"] = rendered_inputs
+
+        try:
+            sub_result = await sub_compiled.ainvoke(sub_state)
+        except Exception as e:
+            return ExecutionResult(
+                success=False,
+                error=f"subgraph '{sub_config.name}' raised: {e}",
+            )
+
+        if sub_result.get("failed_nodes"):
+            return ExecutionResult(
+                success=False,
+                error=(
+                    f"subgraph '{sub_config.name}' had failed nodes: "
+                    f"{sub_result['failed_nodes']}"
+                ),
+            )
+        return ExecutionResult(
+            success=True,
+            output=_terminal_node_output(sub_result, sub_config),
+        )
+
+    return invoke
 
 
 def node_subgraph_path(n: Node) -> str | None:

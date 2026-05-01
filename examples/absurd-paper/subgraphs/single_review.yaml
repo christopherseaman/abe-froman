@@ -1,0 +1,29 @@
+name: "Single Reviewer (draft + critique)"
+version: "1.0.0"
+
+# Standalone-runnable per-reviewer subgraph used by examples/absurd-
+# paper/workflow.yaml via `fan_out.template.execute.url:
+# subgraphs/single_review.yaml`. The parent (reviewer_pool fan-out)
+# projects per-reviewer manifest fields (`name`, `affiliation`, `style`,
+# `focus`, `paper_summary`) as `inputs:`; the subgraph drafts a review,
+# self-critiques it, and the terminal critique output flows back to the
+# parent as that reviewer's verdict.
+#
+# Demonstrates Stage 5b per-child subgraph fan-out:
+#   - Each reviewer runs draft → critique sequentially in its own
+#     LangGraph Send branch.
+#   - Cross-branch isolation: each reviewer's draft never bleeds into
+#     another's critique pass.
+#   - Terminal node's output (critique) is what the parent sees.
+
+nodes:
+  - id: draft
+    name: "Draft Review"
+    execute:
+      url: "examples/absurd-paper/prompts/reviewer_review.md"
+
+  - id: critique
+    name: "Self-Critique Pass"
+    depends_on: [draft]
+    execute:
+      url: "examples/absurd-paper/prompts/critique_review.md"

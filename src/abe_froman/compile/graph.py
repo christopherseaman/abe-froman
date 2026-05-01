@@ -273,15 +273,21 @@ def build_workflow_graph(
 
     # ----- Node registration -----
 
+    # compile_fn is shared by recursive subgraph machinery and per-child
+    # fan-out subgraphs: both compile a referenced YAML at parent build
+    # time and invoke it later. Defined once so call sites don't drift.
+    def compile_fn(c, executor=None, _depth=0):
+        return build_workflow_graph(
+            c, executor=executor, _depth=_depth, _base_dir=base_dir,
+        )
+
     # Execution nodes for every configured node.
     for node in config.nodes:
         if node.id in subgraph_node_ids:
             sub_config = load_graph(node_subgraph_path(node), base_dir=base_dir)
             wrapper = make_subgraph_node(
                 node, sub_config,
-                compile_fn=lambda c, executor=None, _depth=0: build_workflow_graph(
-                    c, executor=executor, _depth=_depth, _base_dir=base_dir,
-                ),
+                compile_fn=compile_fn,
                 executor=executor,
                 depth=_depth,
             )
@@ -303,7 +309,13 @@ def build_workflow_graph(
     gated_final_ids: set[str] = set()
     for node_id in dynamic_fan_out_ids:
         node = node_map[node_id]
-        builder.add_node(f"_sub_{node.id}", _make_fan_out_node(node, config, executor))
+        builder.add_node(
+            f"_sub_{node.id}",
+            _make_fan_out_node(
+                node, config, executor,
+                compile_fn=compile_fn, base_dir=base_dir, depth=_depth,
+            ),
+        )
 
         for idx, final_node in enumerate(node.fan_out.final_nodes):
             fid = f"_final_{node.id}_{final_node.id}"

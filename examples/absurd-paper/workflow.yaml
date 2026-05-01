@@ -122,6 +122,7 @@ nodes:
   - id: reviewer_pool
     name: "Reviewer Pool Manifest"
     depends_on: [paper, render_pdf]
+    timeout: 360.0
     fan_out:
       enabled: true
       template:
@@ -129,8 +130,18 @@ nodes:
           validator: "examples/absurd-paper/gates/review_quality.py"
           threshold: 1.0
           blocking: false
+        # Per-child subgraph: each reviewer drafts then self-critiques in
+        # its own Send branch (Stage 5b carve-out). Manifest fields
+        # (name/affiliation/style/focus/paper_summary) project as inputs.
         execute:
-          url: "examples/absurd-paper/prompts/reviewer_review.md"
+          url: "examples/absurd-paper/subgraphs/single_review.yaml"
+          params:
+            inputs:
+              name: "{{name}}"
+              affiliation: "{{affiliation}}"
+              style: "{{style}}"
+              focus: "{{focus}}"
+              paper_summary: "{{paper_summary}}"
       final_nodes:
         - id: publish_verdict
           name: "Editorial Publication Verdict"
