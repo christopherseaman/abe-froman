@@ -15,6 +15,7 @@ from abe_froman.compile.nodes import _make_evaluation_node
 from abe_froman.runtime.state import make_initial_state
 from abe_froman.schema.models import (
     DimensionCheck,
+    Execute,
     Node,
     Evaluation,
     Settings,
@@ -36,11 +37,16 @@ def _validator(tmp_path, name: str, score: str) -> str:
     return str(path)
 
 
+def _exec(url: str = "t.md") -> Execute:
+    """Stage-5b prompt-style execute block (URL points to a .md file)."""
+    return Execute(url=url)
+
+
 class TestEvaluationNodeBasics:
     @pytest.mark.asyncio
     async def test_writes_evaluation_record_on_pass(self, tmp_path):
         node = Node(
-            id="p1", name="P1", prompt_file="t.md",
+            id="p1", name="P1", execute=_exec(),
             evaluation=Evaluation(validator=_validator(tmp_path, "v.py", "0.9"), threshold=0.8),
         )
         node = _make_evaluation_node(node, _config_with(node))
@@ -57,7 +63,7 @@ class TestEvaluationNodeBasics:
     async def test_invocation_increments_with_retries_state(self, tmp_path):
         """State pre-populated with retries=2 yields invocation=2 on the record."""
         node = Node(
-            id="p1", name="P1", prompt_file="t.md",
+            id="p1", name="P1", execute=_exec(),
             evaluation=Evaluation(
                 validator=_validator(tmp_path, "v.py", "0.9"),
                 threshold=0.8,
@@ -74,7 +80,7 @@ class TestEvaluationNodeBasics:
     @pytest.mark.asyncio
     async def test_retry_when_below_threshold_and_budget_left(self, tmp_path):
         node = Node(
-            id="p1", name="P1", prompt_file="t.md",
+            id="p1", name="P1", execute=_exec(),
             evaluation=Evaluation(
                 validator=_validator(tmp_path, "v.py", "0.3"), threshold=0.8,
             ),
@@ -89,7 +95,7 @@ class TestEvaluationNodeBasics:
     @pytest.mark.asyncio
     async def test_fail_blocking_after_max_retries(self, tmp_path):
         node = Node(
-            id="p1", name="P1", prompt_file="t.md",
+            id="p1", name="P1", execute=_exec(),
             evaluation=Evaluation(
                 validator=_validator(tmp_path, "v.py", "0.3"),
                 threshold=0.8,
@@ -107,7 +113,7 @@ class TestEvaluationNodeBasics:
     @pytest.mark.asyncio
     async def test_warn_continue_after_max_retries_nonblocking(self, tmp_path):
         node = Node(
-            id="p1", name="P1", prompt_file="t.md",
+            id="p1", name="P1", execute=_exec(),
             evaluation=Evaluation(
                 validator=_validator(tmp_path, "v.py", "0.3"),
                 threshold=0.8,
@@ -131,7 +137,7 @@ class TestEvaluationNodeHistoryAndDims:
         don't reference history beyond `invocation`, but the record written
         this call appends to the pre-existing list via the reducer."""
         node = Node(
-            id="p1", name="P1", prompt_file="t.md",
+            id="p1", name="P1", execute=_exec(),
             evaluation=Evaluation(
                 validator=_validator(tmp_path, "v.py", "0.9"), threshold=0.8,
             ),
@@ -160,7 +166,7 @@ class TestEvaluationNodeHistoryAndDims:
             '}))\n'
         )
         node = Node(
-            id="p1", name="P1", prompt_file="t.md",
+            id="p1", name="P1", execute=_exec(),
             evaluation=Evaluation(
                 validator=str(validator),
                 dimensions=[
@@ -182,7 +188,7 @@ class TestEvaluationNodeDryRun:
     @pytest.mark.asyncio
     async def test_dry_run_synthesizes_pass(self, tmp_path):
         node = Node(
-            id="p1", name="P1", prompt_file="t.md",
+            id="p1", name="P1", execute=_exec(),
             evaluation=Evaluation(validator="v.py", threshold=0.8),
         )
         node = _make_evaluation_node(node, _config_with(node))
@@ -198,7 +204,7 @@ class TestEvaluationNodeSkips:
     @pytest.mark.asyncio
     async def test_skips_when_already_completed(self, tmp_path):
         node = Node(
-            id="p1", name="P1", prompt_file="t.md",
+            id="p1", name="P1", execute=_exec(),
             evaluation=Evaluation(validator="v.py", threshold=0.8),
         )
         node = _make_evaluation_node(node, _config_with(node))
@@ -209,7 +215,7 @@ class TestEvaluationNodeSkips:
     @pytest.mark.asyncio
     async def test_skips_when_already_failed(self, tmp_path):
         node = Node(
-            id="p1", name="P1", prompt_file="t.md",
+            id="p1", name="P1", execute=_exec(),
             evaluation=Evaluation(validator="v.py", threshold=0.8),
         )
         node = _make_evaluation_node(node, _config_with(node))
@@ -230,11 +236,11 @@ class TestEvaluationNodeSkips:
         the gate scores empty content as 0.0/0.0 and burns the retry
         budget before the real fan-out children settle.
 
-        Key-absence (not empty-value) is the signal — JoinExecution
-        legitimately writes "" and must still be evaluated.
+        Key-absence (not empty-value) is the signal — a join-mode
+        Execute legitimately writes "" and must still be evaluated.
         """
         node = Node(
-            id="p1", name="P1", prompt_file="t.md",
+            id="p1", name="P1", execute=_exec(),
             evaluation=Evaluation(validator="v.py", threshold=0.8),
         )
         node_fn = _make_evaluation_node(node, _config_with(node))
@@ -248,11 +254,11 @@ class TestEvaluationNodeSkips:
     @pytest.mark.asyncio
     async def test_evaluates_when_upstream_writes_empty_string(self, tmp_path):
         """Companion to defers_when_upstream_output_absent: when the
-        upstream wrote "" (e.g. JoinExecution's no-op output), eval MUST
-        proceed — empty value is distinct from absent key.
+        upstream wrote "" (e.g. join-mode Execute's no-op output), eval
+        MUST proceed — empty value is distinct from absent key.
         """
         node = Node(
-            id="p1", name="P1", prompt_file="t.md",
+            id="p1", name="P1", execute=_exec(),
             evaluation=Evaluation(
                 validator=_validator(tmp_path, "v.py", "0.9"), threshold=0.8,
             ),
@@ -272,7 +278,7 @@ class TestEvaluationNodeSubphaseResolver:
         """Subphase-style resolver derives node_id from _fan_out_item,
         so per-branch evaluation writes to distinct keys."""
         node = Node(
-            id="_eval_sub_p", name="sub gate", prompt_file="t.md",
+            id="_eval_sub_p", name="sub gate", execute=_exec(),
             evaluation=Evaluation(
                 validator=_validator(tmp_path, "v.py", "0.9"), threshold=0.8,
             ),

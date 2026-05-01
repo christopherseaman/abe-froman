@@ -43,7 +43,12 @@ def _merge_updates(base: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any
 def _make_fan_out_node(
     parent_node: Node,
     config: Graph,
-    executor: NodeExecutor | None = None,
+    executor: NodeExecutor | None,
+    *,
+    compile_fn: Any,
+    base_dir: Any,
+    depth: int,
+    logger: Any | None = None,
 ):
     """Create a template node function for dynamic children.
 
@@ -53,11 +58,38 @@ def _make_fan_out_node(
     conditional-edge boundary, which would strip per-branch
     ``_fan_out_item`` state and break graph-level retry self-loops.
     Inline retry preserves per-item state trivially.
+
+    When ``template.execute.url`` ends in ``.yaml`` / ``.yml`` the
+    template is a subgraph reference. The Stage-5b carve-out: each
+    Send branch invokes the compiled subgraph with the per-item context
+    rendered into ``inputs:``, and the subgraph's terminal output flows
+    back as if it were a single-node executor result. That lets gates,
+    retries, and aggregation all work uniformly across "template runs a
+    prompt" and "template runs a multi-step subgraph."
     """
     template = parent_node.fan_out.template
     timeout = parent_node.effective_timeout(config.settings)
     max_retries = parent_node.effective_max_retries(config.settings)
     retry_backoff = config.settings.retry_backoff
+
+    # Per-Send-branch subgraph invoker — set when the template references
+    # a `.yaml`/`.yml` URL, else the fan-out body uses the executor path.
+    from abe_froman.compile.subgraph import (
+        execute_subgraph_path,
+        make_fan_out_subgraph_invoker,
+    )
+    sub_invoker = None
+    template_subgraph_path = execute_subgraph_path(template.execute)
+    if template_subgraph_path is not None:
+        sub_invoker = make_fan_out_subgraph_invoker(
+            template_subgraph_path,
+            template.execute.params,
+            compile_fn=compile_fn,
+            base_dir=base_dir,
+            depth=depth,
+            executor=executor,
+            logger=logger,
+        )
 
     async def node_fn(state: WorkflowState) -> dict[str, Any]:
         item = state.get("_fan_out_item", {})
@@ -90,9 +122,9 @@ def _make_fan_out_node(
         synthetic_node = Node(
             id=child_id,
             name=f"{parent_node.name} - {item.get('name', item_id)}",
-            prompt_file=template.prompt_file,
             evaluation=template.evaluation,
             model=parent_node.model,
+            execute=template.execute,
         )
 
         # Build context up front — dep outputs + per-item manifest fields
@@ -133,9 +165,34 @@ def _make_fan_out_node(
                     max_retries, node_id=child_id,
                 )
 
-            exec_result = await execute_with_timeout(
-                executor, synthetic_node, context, timeout
-            )
+            if sub_invoker is not None:
+                # Subgraph template: each Send branch runs the subgraph
+                # with rendered inputs and surfaces its terminal output
+                # the same way an executor would surface stdout / prompt
+                # text. Timeout enforcement on the per-child subgraph
+                # uses asyncio.wait_for at the same boundary as the
+                # executor case for symmetry. The branch's child_id
+                # (e.g. ``reviewer_pool::maverick``) becomes the JSONL
+                # prefix so each per-Send subgraph's internals surface
+                # under their own namespace.
+                async def _run_sub() -> ExecutionResult:
+                    return await sub_invoker(
+                        context,
+                        state.get("workdir", "."),
+                        state.get("dry_run", False),
+                        prefix=child_id,
+                    )
+                if timeout is not None:
+                    try:
+                        exec_result = await asyncio.wait_for(_run_sub(), timeout=timeout)
+                    except asyncio.TimeoutError:
+                        exec_result = "timeout"
+                else:
+                    exec_result = await _run_sub()
+            else:
+                exec_result = await execute_with_timeout(
+                    executor, synthetic_node, context, timeout
+                )
             if exec_result == "timeout":
                 return _merge_updates(update, make_failure_update(
                     child_id, f"Node timed out after {timeout}s"
@@ -237,11 +294,10 @@ def _make_final_fan_out_node(
         id=node_id,
         name=final_node.name,
         description=final_node.description,
-        prompt_file=final_node.prompt_file,
-        execution=final_node.execution,
         evaluation=final_node.evaluation,
         model=parent_node.model,
         depends_on=[parent_node.id],
+        execute=final_node.execute,
     )
 
     inner = _make_execution_node(synthetic, config, executor)

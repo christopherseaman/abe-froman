@@ -5,14 +5,19 @@ MockExecutor is used only where the thing under test is wiring/context
 propagation rather than executor semantics.
 """
 
+import shutil
+
 import pytest
 
 from abe_froman.compile.graph import build_workflow_graph
 from abe_froman.runtime.state import make_initial_state
 from abe_froman.runtime.executor.dispatch import DispatchExecutor
-from abe_froman.schema.models import Node
+from abe_froman.schema.models import Execute, Node
 
 from helpers import cmd_phase, fail_phase, make_config
+
+_ECHO = shutil.which("echo") or "/bin/echo"
+_FALSE = shutil.which("false") or "/bin/false"
 
 
 # ---------------------------------------------------------------------------
@@ -341,7 +346,7 @@ class TestDispatchExecutor:
         executor = DispatchExecutor()
         node = Node(
             id="c1", name="C1",
-            execution={"type": "command", "command": "echo", "args": ["hello"]},
+            execute=Execute(url=_ECHO, params={"args": ["hello"]}),
         )
         result = await executor.execute(node, {})
         assert result.success is True
@@ -349,8 +354,9 @@ class TestDispatchExecutor:
 
     @pytest.mark.asyncio
     async def test_gate_only_phase(self):
+        """Gate-only-by-elision: no execute= → executor returns gate-only marker."""
         executor = DispatchExecutor()
-        node = Node(id="g1", name="G1", execution={"type": "gate_only"})
+        node = Node(id="g1", name="G1")
         result = await executor.execute(node, {})
         assert result.success is True
         assert "gate-only" in result.output
@@ -360,24 +366,25 @@ class TestDispatchExecutor:
         executor = DispatchExecutor()
         node = Node(
             id="c1", name="C1",
-            execution={"type": "command", "command": "false"},
+            execute=Execute(url=_FALSE),
         )
         result = await executor.execute(node, {})
         assert result.success is False
 
     @pytest.mark.asyncio
-    async def test_no_execution_returns_error(self):
+    async def test_no_execution_returns_gate_only(self):
+        """Stage 5b: a node with no `execute:` block is gate-only-by-elision."""
         executor = DispatchExecutor()
         node = Node(id="p1", name="P1")
         result = await executor.execute(node, {})
-        assert result.success is False
-        assert "no execution" in result.error.lower()
+        assert result.success is True
+        assert "gate-only" in result.output
 
     @pytest.mark.asyncio
     async def test_prompt_without_backend_returns_stub(self):
         """DispatchExecutor with no backend returns inline stub for prompts."""
         executor = DispatchExecutor()
-        node = Node(id="p1", name="P1", prompt_file="t.md")
+        node = Node(id="p1", name="P1", execute=Execute(url="t.md"))
         result = await executor.execute(node, {})
         assert result.success is True
         assert "prompt-stub" in result.output
@@ -456,7 +463,7 @@ class TestRetryContextInjection:
             {
                 "id": "p1",
                 "name": "P1",
-                "prompt_file": "t.md",
+                "execute": {"url": "t.md"},
                 "evaluation": {
                     "validator": str(validator),
                     "threshold": 1.0,
@@ -501,7 +508,7 @@ class TestRetryContextInjection:
             {
                 "id": "p1",
                 "name": "P1",
-                "prompt_file": "t.md",
+                "execute": {"url": "t.md"},
                 "evaluation": {
                     "validator": str(validator),
                     "threshold": 1.0,
@@ -537,7 +544,7 @@ class TestRetryContextInjection:
             {
                 "id": "p1",
                 "name": "P1",
-                "prompt_file": "t.md",
+                "execute": {"url": "t.md"},
                 "evaluation": {
                     "validator": str(script),
                     "threshold": 0.8,
@@ -570,8 +577,8 @@ class TestContextPropagation:
             "a": ExecutionResult(success=True, output="a-output"),
         })
         config = make_config([
-            {"id": "a", "name": "A", "prompt_file": "t.md"},
-            {"id": "b", "name": "B", "prompt_file": "t.md", "depends_on": ["a"]},
+            {"id": "a", "name": "A", "execute": {"url": "t.md"}},
+            {"id": "b", "name": "B", "execute": {"url": "t.md"}, "depends_on": ["a"]},
         ])
         graph = build_workflow_graph(config, mock)
         result = await graph.ainvoke(make_initial_state())
@@ -592,8 +599,8 @@ class TestContextPropagation:
             ),
         })
         config = make_config([
-            {"id": "a", "name": "A", "prompt_file": "t.md"},
-            {"id": "b", "name": "B", "prompt_file": "t.md", "depends_on": ["a"]},
+            {"id": "a", "name": "A", "execute": {"url": "t.md"}},
+            {"id": "b", "name": "B", "execute": {"url": "t.md"}, "depends_on": ["a"]},
         ])
         graph = build_workflow_graph(config, mock)
         result = await graph.ainvoke(make_initial_state())
@@ -765,5 +772,3 @@ class TestOutputContract:
         result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
         assert "p1" in result["failed_nodes"]
         assert result.get("retries", {}).get("p1", 0) == 0
-
-

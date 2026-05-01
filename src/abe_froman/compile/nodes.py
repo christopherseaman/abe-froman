@@ -498,9 +498,9 @@ def _make_evaluation_node(
 
         history = list(state.get("evaluations", {}).get(node_id, []))
         outputs = state.get("node_outputs", {})
-        # Defer until upstream Execution wrote node_outputs[node_id]. Key-
-        # absence rather than empty-value because JoinExecution legitimately
-        # writes "". See test_defers_when_upstream_output_absent.
+        # Defer until upstream wrote node_outputs[node_id]. Key-absence
+        # rather than empty-value because join nodes (Execute(type="join"))
+        # legitimately write "". See test_defers_when_upstream_output_absent.
         if node_id not in outputs:
             return {}
         output = outputs[node_id]

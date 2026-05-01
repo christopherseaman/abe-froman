@@ -30,7 +30,7 @@ class TestLoadGraph:
         rel = _write_yaml(tmp_path, "ok.yaml", {
             "name": "G",
             "version": "1.0.0",
-            "nodes": [{"id": "x", "name": "X", "prompt_file": "x.md"}],
+            "nodes": [{"id": "x", "name": "X", "execute": {"url": "x.md"}}],
         })
         g = load_graph(rel, base_dir=tmp_path)
         assert isinstance(g, Graph)
@@ -53,12 +53,12 @@ class TestDetectConfigCycle:
     def test_no_cycle_passes(self, tmp_path):
         _write_yaml(tmp_path, "leaf.yaml", {
             "name": "Leaf", "version": "1.0",
-            "nodes": [{"id": "x", "name": "X", "prompt_file": "x.md"}],
+            "nodes": [{"id": "x", "name": "X", "execute": {"url": "x.md"}}],
         })
         _write_yaml(tmp_path, "root.yaml", {
             "name": "Root", "version": "1.0",
             "nodes": [
-                {"id": "uses_leaf", "name": "Uses Leaf", "config": "leaf.yaml"}
+                {"id": "uses_leaf", "name": "Uses Leaf", "execute": {"url": "leaf.yaml"}}
             ],
         })
         # No exception
@@ -68,7 +68,7 @@ class TestDetectConfigCycle:
         _write_yaml(tmp_path, "loop.yaml", {
             "name": "Loop", "version": "1.0",
             "nodes": [
-                {"id": "self", "name": "Self", "config": "loop.yaml"}
+                {"id": "self", "name": "Self", "execute": {"url": "loop.yaml"}}
             ],
         })
         with pytest.raises(SubgraphCycleError) as exc:
@@ -78,11 +78,11 @@ class TestDetectConfigCycle:
     def test_two_step_cycle(self, tmp_path):
         _write_yaml(tmp_path, "a.yaml", {
             "name": "A", "version": "1.0",
-            "nodes": [{"id": "x", "name": "X", "config": "b.yaml"}],
+            "nodes": [{"id": "x", "name": "X", "execute": {"url": "b.yaml"}}],
         })
         _write_yaml(tmp_path, "b.yaml", {
             "name": "B", "version": "1.0",
-            "nodes": [{"id": "y", "name": "Y", "config": "a.yaml"}],
+            "nodes": [{"id": "y", "name": "Y", "execute": {"url": "a.yaml"}}],
         })
         with pytest.raises(SubgraphCycleError) as exc:
             detect_config_cycle("a.yaml", base_dir=tmp_path)
@@ -90,37 +90,43 @@ class TestDetectConfigCycle:
 
 
 class TestNodeFieldsForSubgraph:
-    """Schema validation for the new fields config/inputs/outputs."""
+    """Schema validation for the Stage-5b subgraph shape: `execute.url` points
+    at a `.yaml` file; `params.inputs` / `params.outputs` carry projection."""
 
-    def test_config_only(self):
+    def test_subgraph_url_only(self):
         g = Graph(
             name="P", version="1.0",
             nodes=[{
-                "id": "sub", "name": "Sub", "config": "child.yaml",
-                "inputs": {"topic": "{{intake}}"},
+                "id": "sub", "name": "Sub",
+                "execute": {
+                    "url": "child.yaml",
+                    "params": {"inputs": {"topic": "{{intake}}"}},
+                },
             }],
         )
         n = g.nodes[0]
-        assert n.config == "child.yaml"
-        assert n.inputs == {"topic": "{{intake}}"}
-        assert n.execution is None
+        assert n.execute is not None
+        assert n.execute.url == "child.yaml"
+        assert n.execute.params == {"inputs": {"topic": "{{intake}}"}}
 
-    def test_config_and_execution_mutually_exclusive(self):
-        from pydantic import ValidationError
-        with pytest.raises(ValidationError) as exc:
-            Graph(
-                name="P", version="1.0",
-                nodes=[{
-                    "id": "bad", "name": "Bad",
-                    "config": "child.yaml",
-                    "execution": {"type": "command", "command": "echo"},
-                }],
-            )
-        assert "at most one" in str(exc.value)
-
-    def test_outputs_default_empty(self):
+    def test_outputs_default_empty_when_omitted(self):
         g = Graph(
             name="P", version="1.0",
-            nodes=[{"id": "sub", "name": "Sub", "config": "child.yaml"}],
+            nodes=[{"id": "sub", "name": "Sub", "execute": {"url": "child.yaml"}}],
         )
-        assert g.nodes[0].outputs == {}
+        n = g.nodes[0]
+        # Default: no params at all → empty dict
+        assert n.execute.params == {}
+
+    def test_subgraph_with_explicit_outputs(self):
+        g = Graph(
+            name="P", version="1.0",
+            nodes=[{
+                "id": "sub", "name": "Sub",
+                "execute": {
+                    "url": "child.yaml",
+                    "params": {"outputs": {"key": "{{terminal}}"}},
+                },
+            }],
+        )
+        assert g.nodes[0].execute.params["outputs"] == {"key": "{{terminal}}"}

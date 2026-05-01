@@ -60,6 +60,15 @@ class TestCompileLayerIsolation:
                 f"{f.relative_to(SRC)} imports abe_froman.cli"
             )
 
+    def test_route_is_langgraph_free(self):
+        """compile/route.py is a pure state-shape utility — no langgraph
+        imports. Mirrors runtime/'s langgraph-free rule."""
+        f = SRC / "compile" / "route.py"
+        imports = _imports_in_file(f)
+        assert not _starts_with(imports, "langgraph"), (
+            f"{f.relative_to(SRC)} imports langgraph"
+        )
+
 
 class TestRuntimeLayerIsolation:
     def test_no_compile(self):
@@ -75,6 +84,16 @@ class TestRuntimeLayerIsolation:
             assert not _starts_with(imports, "langgraph"), (
                 f"{f.relative_to(SRC)} imports langgraph"
             )
+
+    def test_url_module_is_langgraph_free(self):
+        """runtime/url.py must stay langgraph-free so schema and compile
+        can import it across layer boundaries (covered by the broader
+        runtime rule above; pinned here to call out the intent)."""
+        f = SRC / "runtime" / "url.py"
+        imports = _imports_in_file(f)
+        assert not _starts_with(imports, "langgraph"), (
+            f"{f.relative_to(SRC)} imports langgraph"
+        )
 
 
 class TestSchemaTerminology:

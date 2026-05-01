@@ -27,6 +27,7 @@ import yaml
 
 from abe_froman.compile.nodes import build_context
 from abe_froman.runtime.executor.prompt import render_template
+from abe_froman.runtime.result import ExecutionResult
 from abe_froman.runtime.state import WorkflowState, make_initial_state
 from abe_froman.schema.models import Graph, Node
 
@@ -73,6 +74,7 @@ def make_subgraph_node(
     compile_fn: Any,
     executor: "NodeExecutor | None",
     depth: int,
+    logger: Any | None = None,
 ):
     """Create the wrapper async function added as the parent graph's node.
 
@@ -82,12 +84,23 @@ def make_subgraph_node(
       2. Builds a fresh subgraph initial state with rendered inputs.
       3. Invokes the compiled subgraph.
       4. Projects subgraph outputs back into parent state per `outputs:`.
+
+    When ``logger`` is supplied, the wrapper streams subgraph state
+    snapshots through a ``SubgraphLogger`` that prefixes node ids with
+    the parent's id, so subgraph-internal completions surface in the
+    parent JSONL keyed as ``parent_id::child_id``.
     """
     sub_graph = compile_fn(sub_config, executor=executor, _depth=depth + 1)
 
     parent_id = parent_node.id
-    inputs_decl = dict(parent_node.inputs)
-    outputs_decl = dict(parent_node.outputs)
+    inputs_decl: dict[str, str] = {}
+    outputs_decl: dict[str, str] = {}
+    if parent_node.execute is not None and parent_node.execute.params:
+        params = parent_node.execute.params
+        if isinstance(params.get("inputs"), dict):
+            inputs_decl = dict(params["inputs"])
+        if isinstance(params.get("outputs"), dict):
+            outputs_decl = dict(params["outputs"])
 
     async def wrapper(parent_state: WorkflowState) -> dict[str, Any]:
         # Skip if parent node already terminal (re-entry on dep updates).
@@ -123,7 +136,19 @@ def make_subgraph_node(
         )
         sub_state["node_inputs"] = rendered_inputs
 
-        sub_result = await sub_graph.ainvoke(sub_state)
+        if logger is not None:
+            from abe_froman.runtime.logging import SubgraphLogger
+            sub_logger = SubgraphLogger(logger, prefix=parent_id)
+            sub_prev = sub_state
+            sub_result = sub_state
+            async for snapshot in sub_graph.astream(
+                sub_state, stream_mode="values"
+            ):
+                sub_logger.log_snapshot(sub_prev, snapshot)
+                sub_prev = snapshot
+                sub_result = snapshot
+        else:
+            sub_result = await sub_graph.ainvoke(sub_state)
 
         update: dict[str, Any] = {"completed_nodes": [parent_id]}
         sub_outputs = sub_result.get("node_outputs", {}) or {}
@@ -157,6 +182,117 @@ def make_subgraph_node(
     return wrapper
 
 
+def make_fan_out_subgraph_invoker(
+    template_url: str,
+    template_params: dict[str, Any],
+    compile_fn: Any,
+    base_dir: str | Path,
+    depth: int,
+    executor: "NodeExecutor | None",
+    logger: Any | None = None,
+) -> Any:
+    """Per-Send-branch subgraph invoker for fan-out templates.
+
+    Compiles the subgraph **once** at parent-graph build time (same one-
+    shot model as `make_subgraph_node`). Returns an async callable
+    ``invoke(context, workdir, dry_run) -> ExecutionResult`` that the
+    fan-out node body calls in place of ``executor.execute(...)``.
+
+    Inputs (``template_params['inputs']``) render against the per-item
+    context; the rendered map seeds the sub-invocation's
+    ``node_inputs``. The subgraph's terminal-node output flows back as
+    ``ExecutionResult.output`` so downstream gate evaluation, retries,
+    and aggregation paths in dynamic.py stay unchanged.
+    """
+    # Cycle detection mirrors the recursive-subgraph path: only the
+    # outermost build runs it (depth=0 callers), so nested fan-out
+    # subgraphs don't re-walk the same chains.
+    if depth == 0:
+        detect_config_cycle(template_url, base_dir=base_dir)
+    sub_config = load_graph(template_url, base_dir=base_dir)
+    sub_compiled = compile_fn(sub_config, executor=executor, _depth=depth + 1)
+    inputs_decl: dict[str, str] = {}
+    if isinstance(template_params.get("inputs"), dict):
+        inputs_decl = dict(template_params["inputs"])
+
+    async def invoke(
+        context: dict[str, Any], workdir: str, dry_run: bool,
+        prefix: str | None = None,
+    ) -> ExecutionResult:
+        """``prefix`` (typically the per-Send child_id like
+        ``reviewer_pool::maverick``) names the per-branch subgraph in
+        the parent JSONL when ``logger`` is set."""
+        rendered_inputs = {
+            k: render_template(v, context) for k, v in inputs_decl.items()
+        }
+        sub_state = make_initial_state(
+            workflow_name=sub_config.name,
+            workdir=workdir,
+            dry_run=dry_run,
+        )
+        sub_state["node_inputs"] = rendered_inputs
+
+        try:
+            if logger is not None and prefix is not None:
+                from abe_froman.runtime.logging import SubgraphLogger
+                sub_logger = SubgraphLogger(logger, prefix=prefix)
+                sub_prev = sub_state
+                sub_result = sub_state
+                async for snapshot in sub_compiled.astream(
+                    sub_state, stream_mode="values"
+                ):
+                    sub_logger.log_snapshot(sub_prev, snapshot)
+                    sub_prev = snapshot
+                    sub_result = snapshot
+            else:
+                sub_result = await sub_compiled.ainvoke(sub_state)
+        except Exception as e:
+            return ExecutionResult(
+                success=False,
+                error=f"subgraph '{sub_config.name}' raised: {e}",
+            )
+
+        if sub_result.get("failed_nodes"):
+            return ExecutionResult(
+                success=False,
+                error=(
+                    f"subgraph '{sub_config.name}' had failed nodes: "
+                    f"{sub_result['failed_nodes']}"
+                ),
+            )
+        return ExecutionResult(
+            success=True,
+            output=_terminal_node_output(sub_result, sub_config),
+        )
+
+    return invoke
+
+
+def execute_subgraph_path(execute: Any) -> str | None:
+    """Return the subgraph YAML path for an Execute block whose `url`
+    ends in `.yaml` / `.yml` OR which carries `mode: subgraph` to
+    force-route an extensionless URL through the subgraph compiler.
+    Used by callers that already hold the Execute (fan-out templates)
+    without a containing Node.
+    """
+    if execute is None or not execute.url:
+        return None
+    if getattr(execute, "mode", None) == "subgraph":
+        return execute.url
+    suffix = Path(execute.url).suffix.lower()
+    if suffix in {".yaml", ".yml"}:
+        return execute.url
+    return None
+
+
+def node_subgraph_path(n: Node) -> str | None:
+    """Return the subgraph YAML path for a Stage-5b execute.url ending
+    in `.yaml` or `.yml`. Single source of truth for "is this node a
+    subgraph reference and where does it point?"
+    """
+    return execute_subgraph_path(n.execute)
+
+
 def detect_config_cycle(
     config_path: str,
     visited: list[str] | None = None,
@@ -164,7 +300,8 @@ def detect_config_cycle(
 ) -> None:
     """Walk the config-reference DAG; raise on cycle.
 
-    Called at compile time when a Node has `config:`. Visited paths are
+    Called at compile time for any subgraph reference (Stage 5b
+    ``node.execute.url`` ending in ``.yaml``). Visited paths are
     accumulated as the walker descends; revisiting a path means the
     chain refers back to an ancestor.
     """
@@ -176,5 +313,6 @@ def detect_config_cycle(
     visited.append(abs_path)
     sub = load_graph(config_path, base_dir=base_dir)
     for n in sub.nodes:
-        if n.config:
-            detect_config_cycle(n.config, visited=visited, base_dir=base_dir)
+        sub_path = node_subgraph_path(n)
+        if sub_path is not None:
+            detect_config_cycle(sub_path, visited=visited, base_dir=base_dir)

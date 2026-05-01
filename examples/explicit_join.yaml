@@ -1,0 +1,46 @@
+name: "Explicit Join"
+version: "0.1.0"
+
+# Stage 4b / 5b demo — `execute.type: join` as an explicit fan-in
+# topology marker. LangGraph already implicit-joins multi-predecessor
+# nodes; the `join` sentinel exists purely so authors can name the
+# synchronization point in YAML rather than relying on convention.
+# Composes with `evaluation:` like any other node — a join with a
+# gate runs the evaluator against an empty output (useful when the
+# value is simply "all upstream branches reached this point").
+#
+# Run:
+#   uv run abe-froman run examples/explicit_join.yaml
+
+nodes:
+  - id: branch_a
+    name: "Branch A"
+    execute:
+      url: /usr/bin/echo
+      params: { args: ["A done"] }
+
+  - id: branch_b
+    name: "Branch B"
+    execute:
+      url: /usr/bin/echo
+      params: { args: ["B done"] }
+
+  - id: branch_c
+    name: "Branch C"
+    execute:
+      url: /usr/bin/echo
+      params: { args: ["C done"] }
+
+  - id: sync
+    name: "Sync — all branches landed"
+    depends_on: [branch_a, branch_b, branch_c]
+    execute:
+      type: join
+
+  - id: report
+    name: "Report combined outputs"
+    depends_on: [sync]
+    execute:
+      url: /usr/bin/echo
+      params:
+        args: ["A={{branch_a}} | B={{branch_b}} | C={{branch_c}}"]

@@ -7,12 +7,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
 from langgraph.graph import END, START, StateGraph
-from langgraph.types import Send
+from langgraph.types import Command, Send
 
 from abe_froman.compile.dynamic import _make_final_fan_out_node, _make_fan_out_node
 from abe_froman.compile.nodes import _make_evaluation_node, _make_execution_node
+from abe_froman.compile.route import build_route_namespace, evaluate_case
+from abe_froman.compile.subgraph import node_subgraph_path
 from abe_froman.runtime.state import WorkflowState
-from abe_froman.schema.models import Node, Graph
+from abe_froman.schema.models import Graph, Node
 
 if TYPE_CHECKING:
     from abe_froman.runtime.result import NodeExecutor
@@ -23,6 +25,50 @@ def _find_terminal_nodes(config: Graph) -> set[str]:
     for node in config.nodes:
         depended_on.update(node.depends_on)
     return {p.id for p in config.nodes if p.id not in depended_on}
+
+
+def _resolve_goto(target: str) -> str:
+    return END if target == "__end__" else target
+
+
+# Subgraph-ref + route detection helpers. `node_subgraph_path` lives
+# in compile/subgraph.py (single source of truth); _is_route is local
+# since route semantics are compile-time-only.
+
+def _is_subgraph_ref(node: Node) -> bool:
+    return node_subgraph_path(node) is not None
+
+
+def _is_route(node: Node) -> bool:
+    return node.execute is not None and node.execute.type == "route"
+
+
+def _make_route_node(node: Node):
+    """Build the async fn for a route node — returns Command(goto=<id>).
+
+    Cases evaluate first-match-wins via simpleeval; broken `when:`
+    expressions raise loudly with route id + case context (no silent
+    fall-through).
+    """
+    assert node.execute is not None and node.execute.type == "route"
+    cases = node.execute.cases
+    else_target = node.execute.else_
+
+    async def node_fn(state: WorkflowState) -> Command:
+        ns = build_route_namespace(state, node.depends_on)
+        for case in cases:
+            try:
+                matched = evaluate_case(case.when, ns)
+            except Exception as e:
+                raise ValueError(
+                    f"Route '{node.id}' case {case.when!r}: {e}"
+                ) from e
+            if matched:
+                return Command(goto=_resolve_goto(case.goto))
+        return Command(goto=_resolve_goto(else_target))
+
+    node_fn.__name__ = f"route_{node.id}"
+    return node_fn
 
 
 def _detect_cycles(config: Graph) -> None:
@@ -169,6 +215,7 @@ def build_workflow_graph(
     executor: NodeExecutor | None = None,
     checkpointer: Any = None,
     *,
+    logger: Any | None = None,
     _depth: int = 0,
     _base_dir: Any = None,
 ) -> Any:
@@ -176,6 +223,12 @@ def build_workflow_graph(
 
     If `checkpointer` is provided, the compiled graph will persist state
     after each node via LangGraph's checkpointer protocol.
+
+    If `logger` (a JsonlLogger) is provided, subgraph wrappers will
+    stream their internal `astream(stream_mode="values")` output through
+    a SubgraphLogger that prefixes node ids with the parent node's id,
+    so subgraph-internal completions surface in the parent JSONL keyed
+    as `parent_id::child_id` (and nested as `parent::child::grandchild`).
 
     `_depth` and `_base_dir` are internal: subgraph wrappers pass
     `_depth+1` to enforce `settings.max_subgraph_depth` and propagate
@@ -207,6 +260,7 @@ def build_workflow_graph(
     dynamic_fan_out_ids: set[str] = set()
     gated_fan_out_template_ids: set[str] = set()
     subgraph_node_ids: set[str] = set()
+    route_node_ids: set[str] = set()
 
     for node in config.nodes:
         if node.evaluation:
@@ -215,28 +269,41 @@ def build_workflow_graph(
             dynamic_fan_out_ids.add(node.id)
             if node.fan_out.template.evaluation:
                 gated_fan_out_template_ids.add(node.id)
-        if node.config:
+        if _is_subgraph_ref(node):
             subgraph_node_ids.add(node.id)
             # Cycle detection happens once at top-level — nested calls
             # see _depth>0 so they skip this and rely on the depth cap.
             if _depth == 0:
-                detect_config_cycle(node.config, base_dir=base_dir)
+                detect_config_cycle(node_subgraph_path(node), base_dir=base_dir)
+        if _is_route(node):
+            route_node_ids.add(node.id)
 
     # ----- Node registration -----
+
+    # compile_fn is shared by recursive subgraph machinery and per-child
+    # fan-out subgraphs: both compile a referenced YAML at parent build
+    # time and invoke it later. Defined once so call sites don't drift.
+    # `logger` propagates so nested subgraphs keep emitting prefixed events.
+    def compile_fn(c, executor=None, _depth=0):
+        return build_workflow_graph(
+            c, executor=executor, _depth=_depth,
+            _base_dir=base_dir, logger=logger,
+        )
 
     # Execution nodes for every configured node.
     for node in config.nodes:
         if node.id in subgraph_node_ids:
-            sub_config = load_graph(node.config, base_dir=base_dir)
+            sub_config = load_graph(node_subgraph_path(node), base_dir=base_dir)
             wrapper = make_subgraph_node(
                 node, sub_config,
-                compile_fn=lambda c, executor=None, _depth=0: build_workflow_graph(
-                    c, executor=executor, _depth=_depth, _base_dir=base_dir,
-                ),
+                compile_fn=compile_fn,
                 executor=executor,
                 depth=_depth,
+                logger=logger,
             )
             builder.add_node(node.id, wrapper)
+        elif node.id in route_node_ids:
+            builder.add_node(node.id, _make_route_node(node))
         else:
             builder.add_node(node.id, _make_execution_node(node, config, executor))
 
@@ -252,7 +319,14 @@ def build_workflow_graph(
     gated_final_ids: set[str] = set()
     for node_id in dynamic_fan_out_ids:
         node = node_map[node_id]
-        builder.add_node(f"_sub_{node.id}", _make_fan_out_node(node, config, executor))
+        builder.add_node(
+            f"_sub_{node.id}",
+            _make_fan_out_node(
+                node, config, executor,
+                compile_fn=compile_fn, base_dir=base_dir, depth=_depth,
+                logger=logger,
+            ),
+        )
 
         for idx, final_node in enumerate(node.fan_out.final_nodes):
             fid = f"_final_{node.id}_{final_node.id}"
@@ -297,6 +371,19 @@ def build_workflow_graph(
 
     # ----- Plain edges: start + dep-to-node -----
 
+    # Goto targets of routes: a node reached only by Command(goto=) must
+    # not get a START → node fallback edge (would fire it unconditionally
+    # regardless of routing).
+    route_goto_targets: set[str] = set()
+    for node in config.nodes:
+        if not _is_route(node):
+            continue
+        for case in node.execute.cases:
+            if case.goto != "__end__":
+                route_goto_targets.add(case.goto)
+        if node.execute.else_ != "__end__":
+            route_goto_targets.add(node.execute.else_)
+
     has_incoming: set[str] = set()
 
     for node in config.nodes:
@@ -312,7 +399,7 @@ def build_workflow_graph(
             has_incoming.add(node.id)
 
     for node in config.nodes:
-        if node.id not in has_incoming:
+        if node.id not in has_incoming and node.id not in route_goto_targets:
             builder.add_edge(START, node.id)
 
     # ----- Top-level gated node wiring (non-dynamic) -----

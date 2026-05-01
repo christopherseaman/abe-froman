@@ -1,4 +1,5 @@
 import asyncio
+import shutil
 import time
 
 import pytest
@@ -9,6 +10,9 @@ from abe_froman.runtime.result import ExecutionResult
 from abe_froman.runtime.executor.dispatch import DispatchExecutor
 
 from helpers import cmd_phase, make_config
+
+_SLEEP = shutil.which("sleep") or "/bin/sleep"
+_ECHO = shutil.which("echo") or "/bin/echo"
 
 
 # ---------------------------------------------------------------------------
@@ -24,7 +28,7 @@ class TestTimeoutCommandNode:
                 {
                     "id": "slow",
                     "name": "Slow",
-                    "execution": {"type": "command", "command": "sleep", "args": ["10"]},
+                    "execute": {"url": _SLEEP, "params": {"args": ["10"]}},
                     "timeout": 0.5,
                 },
             ]
@@ -58,7 +62,7 @@ class TestTimeoutCommandNode:
                 {
                     "id": "slow",
                     "name": "Slow",
-                    "execution": {"type": "command", "command": "sleep", "args": ["10"]},
+                    "execute": {"url": _SLEEP, "params": {"args": ["10"]}},
                 },
             ],
             default_timeout=0.5,
@@ -90,7 +94,7 @@ class TestTimeoutGateValidator:
                 {
                     "id": "gated",
                     "name": "Gated",
-                    "execution": {"type": "command", "command": "echo", "args": ["-n", "ok"]},
+                    "execute": {"url": _ECHO, "params": {"args": ["-n", "ok"]}},
                     "evaluation": {
                         "validator": str(slow_validator),
                         "threshold": 0.8,
@@ -131,12 +135,14 @@ class SlowMockExecutor:
 class TestTimeoutPromptNode:
     @pytest.mark.asyncio
     async def test_timeout_on_slow_executor(self, tmp_path):
+        # Gate-only-by-elision: no execute= field; the slow executor still
+        # gets called by the orchestrator via the Node closure regardless
+        # of execute shape.
         config = make_config(
             [
                 {
                     "id": "slow_prompt",
                     "name": "Slow Prompt",
-                    "execution": {"type": "gate_only"},
                     "timeout": 0.3,
                 },
             ]
@@ -158,7 +164,6 @@ class TestTimeoutPromptNode:
                 {
                     "id": "fast_prompt",
                     "name": "Fast Prompt",
-                    "execution": {"type": "gate_only"},
                     "timeout": 5.0,
                 },
             ]
@@ -206,12 +211,12 @@ class TestSubphaseTimeout:
                 {
                     "id": "parent",
                     "name": "Parent",
-                    "execution": {"type": "command", "command": "echo", "args": ["-n", "ok"]},
+                    "execute": {"url": _ECHO, "params": {"args": ["-n", "ok"]}},
                     "timeout": 0.3,
                     "fan_out": {
                         "enabled": True,
                         "manifest_path": "manifest.json",
-                        "template": {"prompt_file": "template.md"},
+                        "template": {"execute": {"url": "template.md"}},
                     },
                 },
             ]

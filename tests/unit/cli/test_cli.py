@@ -19,11 +19,11 @@ def runner():
 
 
 class TestValidateCommand:
-    def test_validate_valid_config(self, runner, example_workflow_path):
-        result = runner.invoke(cli, ["validate", str(example_workflow_path)])
+    def test_validate_valid_config(self, runner, kitchen_sink_workflow_path):
+        result = runner.invoke(cli, ["validate", str(kitchen_sink_workflow_path)])
         assert result.exit_code == 0
         assert "Valid:" in result.output
-        assert "CFRA Default Workflow" in result.output
+        assert "Absurd Academic Paper" in result.output
 
     def test_validate_nonexistent_file(self, runner):
         result = runner.invoke(cli, ["validate", "nonexistent.yaml"])
@@ -39,7 +39,8 @@ class TestValidateCommand:
         config = tmp_path / "simple.yaml"
         config.write_text(
             "name: Test\nversion: '1.0'\nnodes:\n"
-            "  - id: p1\n    name: Node 1\n    prompt_file: t.md\n"
+            "  - id: p1\n    name: Node 1\n"
+            "    execute:\n      url: t.md\n"
         )
         result = runner.invoke(cli, ["validate", str(config)])
         assert result.exit_code == 0
@@ -47,37 +48,38 @@ class TestValidateCommand:
 
 
 class TestGraphCommand:
-    def test_graph_prints_phase_ids(self, runner, example_workflow_path):
-        result = runner.invoke(cli, ["graph", str(example_workflow_path)])
+    def test_graph_prints_phase_ids(self, runner, kitchen_sink_workflow_path):
+        result = runner.invoke(cli, ["graph", str(kitchen_sink_workflow_path)])
         assert result.exit_code == 0
-        assert "node-0" in result.output
-        assert "node-1" in result.output
-        assert "node-5" in result.output
+        # absurd-paper has these named nodes
+        assert "abstract" in result.output
+        assert "paper" in result.output
+        assert "reviewer_pool" in result.output
 
-    def test_graph_mermaid_format(self, runner, example_workflow_path):
+    def test_graph_mermaid_format(self, runner, kitchen_sink_workflow_path):
         """Default format is Mermaid — output should contain the header."""
-        result = runner.invoke(cli, ["graph", str(example_workflow_path)])
+        result = runner.invoke(cli, ["graph", str(kitchen_sink_workflow_path)])
         assert result.exit_code == 0
         assert "graph TD" in result.output
 
-    def test_graph_shows_gate_edges(self, runner, example_workflow_path):
+    def test_graph_shows_gate_edges(self, runner, kitchen_sink_workflow_path):
         """Gated nodes produce conditional (dotted) edges in mermaid output."""
-        result = runner.invoke(cli, ["graph", str(example_workflow_path)])
+        result = runner.invoke(cli, ["graph", str(kitchen_sink_workflow_path)])
         assert result.exit_code == 0
         assert "-.->" in result.output
 
-    def test_graph_shows_start_and_end(self, runner, example_workflow_path):
+    def test_graph_shows_start_and_end(self, runner, kitchen_sink_workflow_path):
         """Mermaid output contains LangGraph's start/end terminal nodes."""
-        result = runner.invoke(cli, ["graph", str(example_workflow_path)])
+        result = runner.invoke(cli, ["graph", str(kitchen_sink_workflow_path)])
         assert result.exit_code == 0
         assert "__start__" in result.output
         assert "__end__" in result.output
 
 
 class TestRunCommand:
-    def test_run_dry_run(self, runner, example_workflow_path):
+    def test_run_dry_run(self, runner, kitchen_sink_workflow_path):
         result = runner.invoke(
-            cli, ["run", str(example_workflow_path), "--dry-run"]
+            cli, ["run", str(kitchen_sink_workflow_path), "--dry-run"]
         )
         assert result.exit_code == 0
         assert "Dry run completed" in result.output
@@ -87,21 +89,23 @@ class TestRunCommand:
         result = runner.invoke(cli, ["run", "nonexistent.yaml"])
         assert result.exit_code != 0
 
-    def test_run_dry_run_lists_nodes(self, runner, example_workflow_path):
+    def test_run_dry_run_lists_nodes(self, runner, kitchen_sink_workflow_path):
         result = runner.invoke(
-            cli, ["run", str(example_workflow_path), "--dry-run"]
+            cli, ["run", str(kitchen_sink_workflow_path), "--dry-run"]
         )
         assert result.exit_code == 0
         assert "Nodes:" in result.output
-        assert "node-0" in result.output
+        assert "abstract" in result.output
 
     def test_run_simple_workflow(self, runner, tmp_path):
         """End-to-end: command node that actually runs."""
+        import shutil
+        echo_bin = shutil.which("echo") or "/bin/echo"
         config = tmp_path / "simple.yaml"
         config.write_text(
             "name: Simple\nversion: '1.0'\nnodes:\n"
             "  - id: echo\n    name: Echo Test\n"
-            "    execution:\n      type: command\n      command: echo\n      args: ['hello']\n"
+            f"    execute:\n      url: {echo_bin}\n      params:\n        args: ['hello']\n"
         )
         result = runner.invoke(cli, ["run", str(config), "--workdir", str(tmp_path)])
         assert result.exit_code == 0
@@ -109,11 +113,13 @@ class TestRunCommand:
 
     def test_run_failing_command_exits_nonzero(self, runner, tmp_path):
         """A failing command node should cause non-zero exit."""
+        import shutil
+        false_bin = shutil.which("false") or "/bin/false"
         config = tmp_path / "fail.yaml"
         config.write_text(
             "name: Fail\nversion: '1.0'\nnodes:\n"
             "  - id: fail\n    name: Fail Test\n"
-            "    execution:\n      type: command\n      command: 'false'\n"
+            f"    execute:\n      url: {false_bin}\n"
         )
         result = runner.invoke(cli, ["run", str(config), "--workdir", str(tmp_path)])
         assert result.exit_code != 0
@@ -122,11 +128,13 @@ class TestRunCommand:
 
 class TestRunOptions:
     def test_executor_unknown_raises(self, runner, tmp_path):
+        import shutil
+        echo_bin = shutil.which("echo") or "/bin/echo"
         config = tmp_path / "simple.yaml"
         config.write_text(
             "name: Test\nversion: '1.0'\nnodes:\n"
             "  - id: node-1\n    name: Node 1\n"
-            "    execution:\n      type: command\n      command: echo\n      args: ['hi']\n"
+            f"    execute:\n      url: {echo_bin}\n      params:\n        args: ['hi']\n"
         )
         result = runner.invoke(
             cli, ["run", str(config), "--executor", "bogus", "--workdir", str(tmp_path)]
@@ -136,11 +144,13 @@ class TestRunOptions:
 
 class TestResumeCommand:
     def _simple_config(self, tmp_path):
+        import shutil
+        echo_bin = shutil.which("echo") or "/bin/echo"
         config = tmp_path / "simple.yaml"
         config.write_text(
             "name: Test\nversion: '1.0'\nnodes:\n"
             "  - id: a\n    name: A\n"
-            "    execution:\n      type: command\n      command: echo\n      args: ['hi']\n"
+            f"    execute:\n      url: {echo_bin}\n      params:\n        args: ['hi']\n"
         )
         return config
 
@@ -188,7 +198,7 @@ class TestCliHelpers:
 
         config = Graph(
             name="test", version="1.0",
-            nodes=[{"id": "a", "name": "A", "prompt_file": "t.md"}],
+            nodes=[{"id": "a", "name": "A", "execute": {"url": "t.md"}}],
         )
         id1 = _thread_id_for(config, str(tmp_path))
         id2 = _thread_id_for(config, str(tmp_path))
@@ -201,7 +211,7 @@ class TestCliHelpers:
 
         config = Graph(
             name="test", version="1.0",
-            nodes=[{"id": "a", "name": "A", "prompt_file": "t.md"}],
+            nodes=[{"id": "a", "name": "A", "execute": {"url": "t.md"}}],
         )
         id_a = _thread_id_for(config, str(tmp_path / "a"))
         id_b = _thread_id_for(config, str(tmp_path / "b"))

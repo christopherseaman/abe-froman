@@ -1,0 +1,54 @@
+name: "Run All Examples (parallel)"
+version: "0.1.0"
+
+# Top-level harness that runs every shipped example as a subgraph in
+# parallel. Demonstrates two Stage 4-5b primitives at once:
+#
+#   - Subgraph composition via `execute.url: <path>.yaml` — each child
+#     reference compiles the target workflow as a subgraph and projects
+#     its terminal output up as `node_outputs[child_id]`.
+#   - Non-fan-out parallelization — child nodes have no `depends_on:`
+#     between them, so LangGraph's super-step semantics fire them all
+#     in the same step. `settings.max_parallel_jobs` (default 4) caps
+#     concurrency via foreman's asyncio.Semaphore.
+#
+# Subgraphs inherit the parent's executor — set `--executor acp` on
+# this file to run every demo through ACP, or omit for stub.
+#
+# Usage:
+#   uv run abe-froman run examples/run_all_examples.yaml             # stub
+#   uv run abe-froman run examples/run_all_examples.yaml -e acp     # real LLM
+#   uv run abe-froman run examples/run_all_examples.yaml --dry-run  # topology only
+
+nodes:
+  - id: smoke
+    name: "ACP smoke test"
+    execute:
+      url: "examples/smoke_test.yaml"
+
+  - id: jokes
+    name: "Joke generator"
+    execute:
+      url: "examples/jokes/workflow.yaml"
+
+  - id: route_classify
+    name: "Route classifier"
+    execute:
+      url: "examples/route_classify/workflow.yaml"
+
+  - id: explicit_join
+    name: "Explicit join"
+    execute:
+      url: "examples/explicit_join.yaml"
+
+  - id: absurd_paper
+    name: "Absurd academic paper"
+    execute:
+      url: "examples/absurd-paper/workflow.yaml"
+
+settings:
+  # Concurrency cap of 5 lets all five subgraphs start in the same
+  # super-step. Drop this if rate limits matter.
+  max_parallel_jobs: 5
+  default_model: "sonnet"
+  default_timeout: 600.0

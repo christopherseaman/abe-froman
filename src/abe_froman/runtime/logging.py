@@ -74,3 +74,54 @@ class JsonlLogger:
         for node, count in curr_retries.items():
             if count > prev_retries.get(node, 0):
                 self.emit({"event": "node_retried", "node": node, "attempt": count})
+
+
+class SubgraphLogger:
+    """Decorate a JsonlLogger with a node-id prefix for subgraph events.
+
+    A subgraph wrapper streams its inner `astream(stream_mode="values")`
+    snapshots through this decorator: the inner state's node ids get
+    rewritten with `{prefix}::` before reaching the underlying JSONL,
+    so subgraph-internal completions appear in the parent log keyed as
+    `parent_node_id::inner_node_id`. Nested subgraphs compose naturally
+    by nesting the prefix (`paper::reconcile::step1`).
+
+    Stays langgraph-free; only consumes state-dict snapshots and
+    delegates writes to JsonlLogger.emit, preserving the runtime layer
+    rule.
+    """
+
+    def __init__(self, base: "JsonlLogger | SubgraphLogger", prefix: str) -> None:
+        self._base = base
+        self._prefix = prefix
+
+    def emit(self, event: dict[str, Any]) -> None:
+        if "node" in event:
+            event = {**event, "node": f"{self._prefix}::{event['node']}"}
+        self._base.emit(event)
+
+    def log_snapshot(self, prev: dict[str, Any], curr: dict[str, Any]) -> None:
+        # Reuse the base logger's diff logic but rewrite node ids in
+        # each emitted event. The cheapest implementation is to
+        # construct a thin proxy that intercepts emit() calls; that
+        # avoids duplicating JsonlLogger.log_snapshot's diffing rules.
+        proxy = _PrefixingProxy(self._base, self._prefix)
+        # JsonlLogger.log_snapshot is a method on the JsonlLogger
+        # instance, but it only calls self.emit — so we can rebind it
+        # to the proxy for this single call.
+        JsonlLogger.log_snapshot(proxy, prev, curr)
+
+
+class _PrefixingProxy:
+    """Internal: presents `emit()` matching JsonlLogger but prepends a
+    prefix to the `node` field before delegating to the base logger.
+    """
+
+    def __init__(self, base: "JsonlLogger | SubgraphLogger", prefix: str) -> None:
+        self._base = base
+        self._prefix = prefix
+
+    def emit(self, event: dict[str, Any]) -> None:
+        if "node" in event:
+            event = {**event, "node": f"{self._prefix}::{event['node']}"}
+        self._base.emit(event)

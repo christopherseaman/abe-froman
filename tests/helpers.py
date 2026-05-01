@@ -1,6 +1,13 @@
 """Shared test utilities — imported by test modules, not conftest.py."""
 
+import shutil
+
 from abe_froman.schema.models import Graph
+
+# Resolve binaries once at import time; the migrate tool uses
+# shutil.which the same way, so test helpers stay consistent.
+_ECHO = shutil.which("echo") or "/bin/echo"
+_FALSE = shutil.which("false") or "/bin/false"
 
 
 def make_config(nodes, **settings_kwargs) -> Graph:
@@ -18,7 +25,7 @@ def cmd_phase(id, name="", output="ok", depends_on=None, **kwargs):
     return {
         "id": id,
         "name": name or id,
-        "execution": {"type": "command", "command": "echo", "args": ["-n", output]},
+        "execute": {"url": _ECHO, "params": {"args": ["-n", output]}},
         "depends_on": depends_on or [],
         **kwargs,
     }
@@ -29,7 +36,7 @@ def fail_phase(id, name="", depends_on=None, **kwargs):
     return {
         "id": id,
         "name": name or id,
-        "execution": {"type": "command", "command": "false"},
+        "execute": {"url": _FALSE},
         "depends_on": depends_on or [],
         **kwargs,
     }

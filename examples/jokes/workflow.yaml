@@ -4,17 +4,19 @@ version: "0.1.0"
 nodes:
   - id: generate
     name: "Generate Jokes"
-    prompt_file: "examples/jokes/generate.md"
     evaluation:
       validator: "examples/jokes/gates/validate_jokes.py"
       threshold: 1.0
       blocking: true
       max_retries: 2
 
+    execute:
+      url: "examples/jokes/generate.md"
   - id: select
     name: "Select Best Joke"
-    prompt_file: "examples/jokes/select.md"
     depends_on: ["generate"]
+    execute:
+      url: "examples/jokes/select.md"
 
 settings:
   default_model: "sonnet"

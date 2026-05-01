@@ -6,7 +6,18 @@ from typing import Any
 from jinja2 import Template
 
 from abe_froman.runtime.result import ExecutionResult, OverloadError, PromptBackend
-from abe_froman.schema.models import Node, PromptExecution, Settings
+from abe_froman.schema.models import Node, Settings
+
+
+def resolve_model(node: Node, settings: Settings) -> str:
+    """Pick the model for a node: node.model overrides settings.default_model.
+
+    Used by foreman for per-model-semaphore selection. PromptParams.model
+    is a runtime-only override (handled in dispatch._dispatch_prompt) and
+    is not visible here — foreman reserves the slot for the *declared*
+    model, not the runtime override.
+    """
+    return node.model or settings.default_model
 
 
 def downgrade_model(current: str, chain: list[str]) -> str | None:
@@ -23,60 +34,52 @@ def render_template(template: str, context: dict[str, Any]) -> str:
     return Template(template, keep_trailing_newline=True).render(**context)
 
 
-def resolve_model(node: Node, settings: Settings) -> str:
-    return node.model or settings.default_model
-
-
 class PromptExecutor:
-    """Renders prompt templates, resolves models, delegates to a PromptBackend."""
+    """Renders prompt templates, resolves models, delegates to a PromptBackend.
+
+    Used by DispatchExecutor's `_dispatch_prompt`: callers fetch the
+    prompt body, apply preamble, render Jinja, then call
+    `execute_rendered` for the overload-downgrade loop.
+    """
 
     def __init__(self, backend: PromptBackend, settings: Settings, workdir: str = "."):
         self._backend = backend
         self._settings = settings
         self._workdir = workdir
 
-    async def execute(
-        self, node: Node, context: dict[str, Any], workdir: str | None = None
-    ) -> ExecutionResult:
-        if not isinstance(node.execution, PromptExecution):
-            return ExecutionResult(
-                success=False,
-                error=f"PromptExecutor requires PromptExecution, got {type(node.execution).__name__}",
-            )
+    def apply_preamble(self, template: str) -> str | ExecutionResult:
+        """Prepend ``settings.preamble_file`` if configured.
 
-        effective_workdir = workdir or self._workdir
-        prompt_path = Path(effective_workdir) / node.execution.prompt_file
+        Returns the modified template, or an ExecutionResult on error.
+        Preamble lives with the config (base workdir), not in any per-node
+        worktree.
+        """
+        if not self._settings.preamble_file:
+            return template
+        preamble_path = Path(self._workdir) / self._settings.preamble_file
         try:
-            template = prompt_path.read_text()
+            preamble = preamble_path.read_text()
         except FileNotFoundError:
             return ExecutionResult(
                 success=False,
-                error=f"Prompt file not found: {prompt_path}",
+                error=f"Preamble file not found: {preamble_path}",
             )
+        return preamble + "\n\n" + template
 
-        if self._settings.preamble_file:
-            # Preamble lives with the config, not in a per-node worktree —
-            # always resolve from the base workdir.
-            preamble_path = Path(self._workdir) / self._settings.preamble_file
-            try:
-                preamble = preamble_path.read_text()
-                template = preamble + "\n\n" + template
-            except FileNotFoundError:
-                return ExecutionResult(
-                    success=False,
-                    error=f"Preamble file not found: {preamble_path}",
-                )
-
-        rendered = render_template(template, context)
-        current_model = resolve_model(node, self._settings)
-        timeout = node.effective_timeout(self._settings)
-
+    async def execute_rendered(
+        self,
+        rendered: str,
+        model: str,
+        workdir: str,
+        timeout: float | None = None,
+    ) -> ExecutionResult:
+        """Send a pre-rendered prompt with overload→downgrade fallback."""
+        current_model = model
         try:
             while True:
                 try:
                     result = await self._backend.send_prompt(
-                        rendered, current_model, effective_workdir,
-                        timeout=timeout,
+                        rendered, current_model, workdir, timeout=timeout,
                     )
                     break
                 except OverloadError:
@@ -86,7 +89,10 @@ class PromptExecutor:
                     if next_model is None:
                         return ExecutionResult(
                             success=False,
-                            error=f"API overloaded, exhausted model chain (last: {current_model})",
+                            error=(
+                                f"API overloaded, exhausted model chain "
+                                f"(last: {current_model})"
+                            ),
                         )
                     current_model = next_model
         except Exception as e:

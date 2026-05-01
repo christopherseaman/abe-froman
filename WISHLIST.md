@@ -122,7 +122,16 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
 
 - [x] **Implicit Join + explicit JoinNode primitive** — _landed, Stage 4b._ Implicit join was already free via LangGraph's super-step semantics (multi-pred nodes naturally synchronize). Stage 4b added `execution: { type: join }` as the explicit form for author readability at fan-in points; dispatcher routes it to a no-op handler returning `ExecutionResult(success=True, output="")`. Composes with `evaluation:` (gates run against the empty join output) and downstream consumers (build_context reads the join's empty output like any other dep).
 
-- [ ] **Multi-step fan-out children** — today the `fan_out.template` is a single `prompt_file`; each fan-out item traverses exactly one execution node before gather. With Stage 4c subgraph composition this is now achievable by pointing fan_out at a subgraph YAML (each manifest item spawns a subgraph instance), but the DSL still routes through the legacy `template:` block. Future: collapse `fan_out.template:` into `fan_out.config:` so a fan-out item naturally becomes a subgraph instantiation.
+- [x] **Multi-step fan-out children** — _landed, Stage 5b
+  (branch `stage-5b-execute-url`)._ Closed by the same URL-suffix
+  dispatch model the rest of the orchestrator uses: a
+  `fan_out.template.execute.url` ending in `.yaml`/`.yml` runs as a
+  subgraph per Send branch; `.md`/`.txt`/`.prompt` as a prompt;
+  `.py`/`.js`/`.sh` as a script; bare path as a binary. One field
+  (`execute.url`), one rule (URL extension). No separate
+  `fan_out.config:` shape needed — the `template:` block is the
+  shape; the URL inside it picks the mode. Per-child subgraph e2e
+  coverage in `tests/e2e/test_fan_out_subgraph.py`.
 
 - [x] **Subgraph with defined entry/exit nodes as a first-class primitive** — _landed, Stage 4c._ A subgraph declared via `Node.config:` is loaded as a `Graph` (identical schema), recursively compiled, and added as a node in the parent via `add_node(node.id, compiled_subgraph)`. State projection across the boundary is explicit via `inputs:` / `outputs:` declarations. Reusable subgraph libraries are a real concept now: the same YAML runs both standalone and as a subgraph reference.
 
@@ -145,12 +154,16 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
 
 ## Features
 
-- [ ] **Fan-out + recursive-subgraph composition (`FanOutTemplate.config:`)**
-    - Today: `fan_out:` requires `template.prompt_file:`. Each item runs a synthetic per-item prompt phase.
-    - Wanted: `template.config:` to dispatch each manifest item to a recursively-compiled subgraph instance, with `_fan_out_item` projected via parent's `inputs:`.
-    - Would let `examples/absurd-paper/reviewer_pool` use `subgraphs/single_review.yaml` for each reviewer in the manifest, instead of the inline `template.prompt_file:` shape it uses today.
-    - Implementation: extend `FanOutTemplate` schema (`prompt_file | config`), add a `_make_fan_out_subgraph_node` factory that compiles the subgraph once and dispatches per-item Send.
-    - Captured during Stage 4 closeout (the absurd-paper carve was implemented for the multi-step `paper` node only; per-reviewer subgraph fan-out deferred to here).
+- [x] **Fan-out + recursive-subgraph composition** — _landed, Stage 5b
+  (branch `stage-5b-execute-url`)._ A `fan_out.template.execute.url`
+  ending in `.yaml`/`.yml` runs the referenced subgraph **per Send
+  branch**: each manifest item drives one subgraph invocation, and the
+  subgraph's terminal output flows back as that branch's
+  `child_outputs[parent::item_id]`. Cycle detection walks the URL-
+  reference DAG at parent compile time. Demo:
+  `examples/absurd-paper/reviewer_pool` now runs draft → critique
+  per reviewer via `subgraphs/single_review.yaml`. e2e coverage in
+  `tests/e2e/test_fan_out_subgraph.py` (4 tests).
 
 - [ ] **Output caching / skip-if-unchanged**
     - Make-style incrementality (not provided by langgraph checkpointers)
@@ -229,6 +242,50 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
 - [ ] **`BaseStore` for cross-run memory** — distinct from checkpointer (per-thread). Shared memory across workflow runs — e.g., "last week's gate was lenient, tighten this week." Optional store wired alongside `AsyncSqliteSaver`.
 
 - [ ] **`RetryPolicy` for transport-level retries** — layer `RetryPolicy(max_attempts=N, retry_on=OverloadError)` on executor-invoking nodes. Complements our eval-score-driven semantic retries; separates infrastructure flakes (rate limits, ACP drops) from content judgment. Closely related to "LLM gates inherit PromptBackend flakiness" above — fixes the same class of bug from a different angle.
+
+## Stage 5a hooks (deferred from the route-node design)
+
+These are forward-looking items surfaced during Stage 5a planning;
+landed alongside or after Stage 5c's `evaluation:`-block desugaring
+unless flagged otherwise.
+
+- [ ] **Multi-target parallel fan-out as a general primitive** — `goto:
+  [a, b, c]` returns from any node that decides flow (LangGraph
+  supports list-return conditional edges natively). Not route-specific:
+  applies to evaluation routers too, and could subsume some `fan_out:`
+  cases. Compatible with the existing `Command(goto=...)` API.
+
+- [ ] **Output specification unification** — one `output:` field on
+  Node taking `schema` | `contract` | (none). Today `output_contract:`
+  is free-floating. Folding the three modes under one field makes them
+  symmetric and pairs with the `schema:` work below.
+
+- [ ] **Schema enforcement at backend boundary** — `ACPBackend` and
+  stub backends populate `ExecutionResult.structured_output` when a
+  Node has `schema:` set. The field exists end-to-end already; today
+  no backend writes to it. Unblocks Stage 5b-style "route on producer
+  output without going through an evaluate gate."
+
+- [ ] **Schema-first templates** — `{{judge.score}}` resolves against
+  structured outputs; `{{judge}}` falls back to raw string. Pairs with
+  schema enforcement above. Today templates are flat string
+  substitution.
+
+- [ ] **Schema sources** — inline JSON schema dict OR `schema_file:`
+  path OR `schema_class: my_module.GateScore` for Pydantic. Three
+  shapes for one concept; symmetric with how `validator:` accepts
+  .py/.js/.md.
+
+- [ ] **Per-node delay primitive** — wrapping concern (orthogonal to
+  route) for backoff between attempts when authoring retry-via-route
+  patterns. Today `settings.retry_backoff` is the only knob and it's
+  coupled to evaluation-driven retries.
+
+- [ ] **Goto-target reachability validation** — schema validator
+  rejects `route → ship` configurations where `ship` is also reached
+  by a static dep edge from somewhere else (silent double-firing). Lo
+  priority — currently the runtime simply double-runs the target,
+  which is observable but ugly.
 
 ## Reimplementation debt (drop in favor of native LangGraph)
 

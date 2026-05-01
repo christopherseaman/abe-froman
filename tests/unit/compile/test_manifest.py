@@ -6,17 +6,17 @@ import pytest
 
 from abe_froman.compile.graph import _read_manifest
 from abe_froman.runtime.state import make_initial_state
-from abe_froman.schema.models import FanOut, Node, FanOutTemplate
+from abe_froman.schema.models import Execute, FanOut, Node, FanOutTemplate
 
 
 def _phase_with_dynamic(manifest_path=None) -> Node:
     return Node(
         id="p1", name="P1",
-        prompt_file="t.md",
+        execute=Execute(url="t.md"),
         fan_out=FanOut(
             enabled=True,
             manifest_path=manifest_path,
-            template=FanOutTemplate(prompt_file="sub.md"),
+            template=FanOutTemplate(execute=Execute(url="sub.md")),
         ),
     )
 
@@ -99,7 +99,7 @@ class TestReadManifestFromDisk:
 
 class TestReadManifestEdgeCases:
     def test_no_dynamic_subphases(self):
-        node = Node(id="p1", name="P1", prompt_file="t.md")
+        node = Node(id="p1", name="P1", execute=Execute(url="t.md"))
         state = make_initial_state()
         result = _read_manifest(state, node)
         assert result == []

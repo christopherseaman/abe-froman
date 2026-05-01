@@ -26,7 +26,7 @@ YAML Config → Pydantic Schema → LangGraph StateGraph (+ SqliteSaver checkpoi
 
 ```bash
 uv sync                                    # install deps
-uv run pytest tests/ -v                    # run all tests (~515 tests)
+uv run pytest tests/ -v                    # run all tests (~688 tests)
 uv run abe-froman validate config.yaml     # validate a workflow config
 uv run abe-froman run config.yaml --dry-run # dry run
 uv run abe-froman run config.yaml -e acp   # run with Claude via ACP
@@ -50,27 +50,21 @@ nodes:                        # required, list of nodes (Stage 4: phases→nodes
     depends_on: ["other-id"]  # optional, list of node IDs this depends on
     timeout: 30.0             # optional, seconds, overrides settings.default_timeout
 
-    # Execution — pick ONE approach (mutually exclusive with `config:`):
-    prompt_file: "path/to/prompt.md"   # shorthand for type: prompt
-    # OR
-    execution:
-      type: prompt                     # Claude prompt execution
-      prompt_file: "path/to/prompt.md"
-    # OR
-    execution:
-      type: command                    # subprocess execution
-      command: "echo"
-      args: ["hello"]                  # optional, default []
-    # OR
-    execution:
-      type: gate_only                  # no execution, just evaluation
-    # OR
-    execution:
+    # Execution (Stage 5b unified shape) — set EITHER `execute:` OR omit
+    # entirely (gate-only-by-elision: a node with `evaluation:` and no
+    # `execute:` block runs the gate against an empty output).
+    execute:
+      url: "path/to/prompt.md"         # see "Execute URLs" below for shapes
+      params: { ... }                  # per-mode params (see "Execute URLs")
+    # OR a join sentinel:
+    execute:
       type: join                       # no-op topology marker for fan-in
-    # OR
-    config: "subgraphs/sub.yaml"       # subgraph reference — see "Recursive subgraphs"
-    inputs: { var: "{{parent_dep}}" }  # parent → subgraph context projection
-    outputs: { key: "{{sub_node}}" }   # subgraph terminal → parent state
+    # OR a route ladder:
+    execute:
+      type: route
+      cases:
+        - { when: "judge['score'] >= 0.8", goto: ship }
+      else: produce
 
     # Evaluation — optional (renamed from quality_gate in Stage 4a)
     evaluation:
@@ -90,9 +84,10 @@ nodes:                        # required, list of nodes (Stage 4: phases→nodes
       enabled: true
       manifest_path: "manifest.json"
       template:
-        prompt_file: "template.md"
+        execute: { url: "template.md" }   # OR url: subgraphs/single.yaml
         evaluation: { ... }
-      final_nodes: [{ id, name, prompt_file, ... }]
+      final_nodes:
+        - { id, name, execute: { url: "final.md" }, ... }
 
 settings:                      # optional, all fields have defaults
   output_directory: "output"   # default: "output"
@@ -107,42 +102,203 @@ settings:                      # optional, all fields have defaults
   per_model_limits:            # foreman per-model concurrency caps (default: {})
     opus: 2
     sonnet: 4
+  # Stage 5b — execute.url remote URL gates
+  base_url: "https://prompts.example.com/v1/"  # default base for relative urls
+  allow_remote_urls: false      # master switch for non-file:// fetches (default false)
+  allow_remote_scripts: false   # extra opt-in for remote .py/.js/.sh (default false)
+  allowed_url_hosts: []         # fnmatch host patterns; [] = no filter
+  url_headers:                  # prefix → headers; ${VAR} expands from env
+    "https://prompts.example.com/":
+      Authorization: "Bearer ${PROMPTS_TOKEN}"
+  max_remote_fetch_bytes: 5000000   # 5 MB cap (default)
 ```
 
-### Execution types
+### Execute URLs (Stage 5b)
 
-| Type | What it does | Use for |
-|------|-------------|---------|
-| `prompt` | Sends rendered prompt to Claude via PromptBackend | AI-generated content |
-| `command` | Runs subprocess, captures stdout | Scripts, validators, data processing |
-| `gate_only` | No execution, just evaluation | Validation checkpoints |
-| `join` | No-op topology marker (Stage 4b) | Explicit fan-in synchronization |
-| (config:) | Recursively compile referenced graph | Subgraph composition (Stage 4c) |
+The `execute:` block has three modes; **exactly one** must be set:
 
-### Recursive subgraphs (Stage 4c)
+1. **URL mode** — `url:` set, no `type:`. The URL extension and scheme
+   pick the dispatch handler.
+2. **Join sentinel** — `type: join`, no `url:`, no `params:`, no `cases:`.
+   No-op topology marker for fan-in.
+3. **Route ladder** — `type: route`, `cases:`, `else:`. Pure
+   `Command(goto=…)` dispatch over structured state. See "Route nodes".
 
-A node with `config: path/to/another.yaml` is a subgraph reference. The
-referenced YAML is loaded as a `Graph` (identical schema to the top-level
-workflow) and recursively compiled. Graphs and subgraphs are
-definitionally identical — the same YAML file is runnable both
-standalone via `abe-froman run <file>` and as a subgraph reference from
-another graph.
+URL mode dispatch table:
 
-State projection across the boundary is explicit:
+| URL pattern | Handler | Params shape (`PromptParams` / `SubgraphParams` / `ScriptParams` / `ExecParams`) |
+|---|---|---|
+| `*.md` / `*.txt` / `*.prompt` (file://) | Prompt → PromptBackend | `model?`, `agent?`, `timeout?` |
+| `*.md` (https://, allowed) | Prompt → PromptBackend (after fetch) | same |
+| `*.yaml` / `*.yml` (file://) | Subgraph (recursive compile) | `inputs?: dict`, `outputs?: dict` |
+| `*.yaml` (https://, allowed) | Subgraph after fetch | same |
+| `*.py` / `*.js` / `*.mjs` / `*.ts` / `*.sh` (file://) | Script (interpreter dispatched) | `args?: list[str]`, `env?: dict[str, str]` |
+| `*.py` etc (https://, with `allow_remote_scripts`) | (deferred — not yet wired) | — |
+| `/abs/path/to/binary` (file://) | Direct exec | `args?: list[str]`, `env?: dict[str, str]` |
+| extensionless / unrecognized (file://) | Direct exec | same |
+| anything ending in `.yaml` / `.yml` reaching the runtime dispatcher | error (subgraph wiring is compile-time) | — |
+| `*.yaml` reached without a compile-fn (e.g. nested fan-out without plumbing) | error | — |
 
-- `inputs:` renders parent context into the subgraph's `node_inputs`
-  channel. Subgraph nodes see them as plain template variables (e.g.
-  `{{topic}}`) alongside their own dep outputs.
-- `outputs:` exposes named subgraph node outputs as
+Per-mode params are validated by Pydantic (`extra="forbid"`) — typos
+like `args:` on a prompt URL surface as a clear ValidationError at
+schema parse time, not runtime.
+
+### URL resolution
+
+`runtime/url.py::resolve_url(url, base_url, workdir)` applies three
+rules in order:
+
+1. **Explicit protocol passthrough.** If `url` already starts with
+   `<scheme>://` (e.g. `file://`, `https://`), it's returned as-is
+   (with canonicalization: lowercase host, no double-slash variance).
+2. **Absolute path → file://.** A `url` starting with `/` is wrapped as
+   `file:///path/to/x`.
+3. **Relative resolves against base.** If `settings.base_url` is set,
+   the URL resolves against it; otherwise against `--workdir`.
+
+| Input `url` | `base_url` | `workdir` | Resolved |
+|---|---|---|---|
+| `prompt.md` | unset | `/work` | `file:///work/prompt.md` |
+| `prompt.md` | `https://x/v1/` | `/work` | `https://x/v1/prompt.md` |
+| `/abs/x.md` | unset | `/work` | `file:///abs/x.md` |
+| `https://x/p.md` | unset | `/work` | `https://x/p.md` (canonicalized) |
+| `file:///abs/y.md` | `https://x/` | `/work` | `file:///abs/y.md` (passthrough) |
+
+### Remote URL support (Stage 5b)
+
+Non-`file://` URLs are blocked unless **all** of the following gates
+pass. The defaults reproduce a "local files only" policy.
+
+| Gate | Setting | Effect |
+|---|---|---|
+| 1 | `allow_remote_urls: true` | Master switch — must be true for any non-`file://` fetch. |
+| 2 | `allowed_url_hosts: ["*.internal.example.com"]` | fnmatch host allow-list. Empty list = no host filter. |
+| 3 | `allow_remote_scripts: true` | Extra opt-in for `.py`/`.js`/`.sh` URLs (defense-in-depth). |
+| 4 | `max_remote_fetch_bytes: 5_000_000` | Cap on response body size. |
+| — | `url_headers` | Per-prefix headers; `${VAR}` references env at fetch time. |
+
+A per-compile cache (`_RemoteFetchCache`) ensures the same URL is
+fetched at most once per `build_workflow_graph` call. Cache is
+keyed by canonical URL form. There is no on-disk cache.
+
+`RemoteURLBlockedError` and `RemoteURLFetchError` surface as node
+failures with a clear error message — not silent fallbacks.
+
+### Route nodes (Stage 5a / 5b shape)
+
+A `route` node is a pure case ladder over structured state. It carries
+**zero baked-in semantics** (no retry, no halt, no delay): each `when:`
+expression is evaluated in order against a sandboxed namespace, and the
+first match dispatches via `Command(goto=<node_id>)`. The `else:` branch
+is required as a catch-all.
+
+```yaml
+- id: decide
+  depends_on: [judge]
+  execute:
+    type: route
+    cases:
+      - when: "history['judge'][-1]['result']['score'] >= 0.8"
+        goto: ship
+      - when: "len(history['judge']) >= 3"
+        goto: __end__
+    else: produce
+- id: ship
+  execute:
+    url: /usr/bin/echo
+    params:
+      args: ["shipped"]
+```
+
+**Namespace bound to `when:` expressions:**
+
+- Each dep's structured output (or raw output if no structured) by id
+- `history` — the full `state.evaluations` map (`{node_id: [records...]}`)
+- `state` — the full state dict
+- Safe functions: `len`, `any`, `all`, `min`, `max`, `sum`
+
+**Goto sentinels:** `__end__` halts the workflow (maps to LangGraph
+`END`). All other goto values must resolve to a real node id; the
+schema validator rejects unknown targets at compile time.
+
+**Routes are leaves in the depends_on DAG.** A node cannot
+`depends_on:` a route — routing is exclusively via `Command(goto=)`,
+not static edges. The schema validator rejects this at compile time.
+
+**Goto targets skip the START fallback.** A node that is reached only
+via a route's goto won't get an automatic START → node edge; it
+runs only when the route activates it.
+
+**Sandbox:** predicates are evaluated by `simpleeval`. Dunder access,
+imports, and statements are blocked. Workflow YAML is treated as
+author-checked-in code, not untrusted input — this is footgun
+prevention, not adversarial sandboxing.
+
+### Recursive subgraphs (Stage 4c / 5b shape)
+
+A node with `execute: { url: path/to/sub.yaml, params: { ... } }` is a
+subgraph reference. The referenced YAML is loaded as a `Graph`
+(identical schema to the top-level workflow) and recursively compiled.
+Graphs and subgraphs are definitionally identical — the same YAML file
+is runnable both standalone via `abe-froman run <file>` and as a
+subgraph reference from another graph.
+
+State projection across the boundary is explicit and lives under
+`execute.params`:
+
+- `params.inputs:` renders parent context into the subgraph's
+  `node_inputs` channel. Subgraph nodes see them as plain template
+  variables (e.g. `{{topic}}`) alongside their own dep outputs.
+- `params.outputs:` exposes named subgraph node outputs as
   `node_outputs[parent_id.key]` in the parent. Default (empty
   `outputs:`) projects the subgraph's terminal-node output as
   `node_outputs[parent_id]`.
+
+```yaml
+- id: paper
+  depends_on: [discussion, abstract]
+  execute:
+    url: subgraphs/compose_and_validate.yaml
+    params:
+      inputs:
+        abstract: "{{abstract}}"
+        discussion: "{{discussion}}"
+      outputs:
+        check_result: "{{submission_check}}"
+```
 
 The subgraph runs in isolation — it never sees the parent's full state,
 only what `inputs:` projects in. Failed nodes inside a subgraph surface
 as `failed_nodes[parent_id]` in the parent; subgraph internals are not
 flattened. Compile-time guards: cycle detection over the
-config-reference DAG, and `settings.max_subgraph_depth` (default 10).
+URL-reference DAG (now using `runtime/url.py`'s canonical form), and
+`settings.max_subgraph_depth` (default 10).
+
+#### Per-child subgraph fan-out (Stage 5b)
+
+A `fan_out.template.execute.url` ending in `.yaml`/`.yml` runs a
+**subgraph per Send branch** instead of a single executor call. Each
+manifest item drives one subgraph invocation; the subgraph's terminal
+output is what the parent sees in `child_outputs[parent::item_id]`.
+
+```yaml
+- id: reviewer_pool
+  depends_on: [paper]
+  fan_out:
+    enabled: true
+    template:
+      execute:
+        url: subgraphs/single_review.yaml
+        params:
+          inputs:
+            persona: "{{style}}"
+            paper_summary: "{{paper_summary}}"
+      evaluation:
+        validator: gates/review_quality.py
+```
+
+Demo: `examples/absurd-paper/` — `reviewer_pool` runs a draft → critique
+2-node subgraph per reviewer.
 
 ### Prompt templating
 
@@ -160,7 +316,7 @@ The variable name matches the `id` of the dependency phase. Its value is the raw
 
 On retry, the orchestrator auto-injects `{{_retry_reason}}` with the previous gate score, threshold, attempt number, and — when the gate produced structured feedback — the narrative `feedback` string plus any `pass_criteria_unmet` bullets. Templates can surface this text to the model so the next attempt acts on specifics, not just a bare score.
 
-Both `prompt_file` and `quality_gate.validator` paths resolve relative to the working directory (`--workdir`), not the config file location.
+`execute.url` (when relative) and `evaluation.validator` paths resolve relative to the working directory (`--workdir`), not the config file location. `execute.url` additionally consults `settings.base_url` for relative-URL resolution — see "URL resolution" above.
 
 ### Quality gate validators
 
@@ -243,8 +399,8 @@ Persistence is handled by LangGraph's `AsyncSqliteSaver` (DB at `<workdir>/.abe-
 
 ## Key Design Decisions
 
-- **PhaseExecutor Protocol** (not ABC) — duck-typed, agent-agnostic, accepts per-call `workdir` override
-- **Discriminated union** for execution types: PromptExecution | CommandExecution | GateOnlyExecution
+- **NodeExecutor Protocol** (not ABC) — duck-typed, agent-agnostic, accepts per-call `workdir` override
+- **Single `execute:` block** (Stage 5b) — URL extension drives dispatch (prompt / subgraph / script / exec), with `type: join` and `type: route` carve-outs for non-URL shapes
 - **Quality gates owned by orchestrator**, not executor — gates run in `_make_phase_node`, not inside the executor
 - **Gate-kit is backend-agnostic** — `evaluate_gate` takes a `PromptBackend` handle, doesn't own one
 - **LangGraph state with Annotated reducers** for safe parallel state merging
@@ -305,7 +461,7 @@ Prioritized features for future development. See `docs/backlog-adapter-inspirati
 ## Testing
 
 ### Facts about the current suite
-- ~335 tests (~22s non-ACP). Layout: `tests/unit/{schema,compile,runtime,cli,workflow}/`, `tests/architecture/`, `tests/builder/`, `tests/e2e/`, `tests/acp/`
+- ~688 tests (~30s non-ACP). Layout: `tests/unit/{schema,compile,runtime,cli,workflow}/`, `tests/architecture/`, `tests/builder/`, `tests/e2e/`, `tests/acp/`
 - All tests use real execution — no mocks of external systems
 - Command phases use real subprocesses (`echo`, `cat`, `false`)
 - Gate validators are real Python scripts that inspect stdin

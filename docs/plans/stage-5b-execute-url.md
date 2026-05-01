@@ -1,5 +1,10 @@
 # Stage 5b — Unified `execute: { url, params }` Schema
 
+> **Status: landed.** Branch `stage-5b-execute-url`, 10 commits. Schema
+> cutover is hard (no aliases). Per-child subgraph fan-out (the Stage 4
+> audit's deferred work) shipped under this stage as well. Test suite:
+> 688 green; absurd-paper workflow validates and runs end-to-end.
+
 ## Context
 
 Today's YAML carries **seven** execution shapes for "what does this
