@@ -3,7 +3,125 @@
 All notable changes to abe-froman are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] — Stage 4: Phase → Node + Recursive Subgraphs + Join Nodes
+## [Unreleased] — Stage 5b: `execute: { url, params }` Schema Cutover
+
+### ⚠️ Breaking changes
+
+#### Schema (hard cutover; no aliases)
+
+The eight execution shapes — `prompt_file:` shorthand, `execution: {
+type: prompt | command | gate_only | join | route }`, top-level
+`config:` + `inputs:` + `outputs:`, and
+`fan_out.template.prompt_file` — collapse into a single
+`execute: { url, params }` block on `Node`. The URL extension drives
+dispatch.
+
+| Pre-Stage-5b | Stage 5b |
+|---|---|
+| `prompt_file: x.md` | `execute: { url: x.md }` |
+| `execution: { type: prompt, prompt_file: x.md }` | `execute: { url: x.md }` |
+| `execution: { type: command, command: c, args: [...] }` | `execute: { url: <abs path>, params: { args: [...] } }` |
+| `execution: { type: gate_only }` | omit `execute:` (gate-only-by-elision) |
+| `execution: { type: join }` | `execute: { type: join }` |
+| `execution: { type: route, cases, else }` | `execute: { type: route, cases, else }` |
+| `config: x.yaml` + top-level `inputs:` / `outputs:` | `execute: { url: x.yaml, params: { inputs: ..., outputs: ... } }` |
+| `fan_out.template.prompt_file: x.md` | `fan_out.template.execute: { url: x.md }` |
+
+`Node.model_config = ConfigDict(extra="forbid")` makes pre-Stage-5b
+YAML raise a clear ValidationError naming the offending key, instead of
+silently dropping it.
+
+The migrate tool (`abe-froman migrate`) now chains Stage 3 → 4 → 5b
+transforms automatically. Idempotent on already-migrated YAML; round-
+trip preserves comments, anchors, and `{{templated}}` strings.
+
+#### Removed schema/runtime symbols
+
+- `PromptExecution`, `CommandExecution`, `GateOnlyExecution`,
+  `JoinExecution`, `RouteExecution`, the `Execution` discriminated
+  union — all gone. Use `Execute` and dispatch by URL extension.
+- `Node.prompt_file`, `Node.execution`, `Node.config`, `Node.inputs`,
+  `Node.outputs` — all gone. Use `Node.execute`.
+- `_normalize_prompt_shorthand` model_validator — no longer needed.
+- `runtime/executor/command.py` (and `CommandExecutor`) — folded into
+  `runtime/executor/dispatch.py::_run_subprocess`. Script + binary
+  dispatch share a single subprocess runner.
+- `PromptExecutor.execute(node, context)` — deleted. The orchestrator
+  layer (`dispatch._dispatch_prompt`) reads the prompt file, applies
+  preamble, renders Jinja, and calls the new
+  `PromptExecutor.execute_rendered(rendered, model, workdir, timeout)`
+  helper, which owns the overload→downgrade fallback loop.
+
+### Added
+
+#### `runtime/url.py` — URL resolution + remote fetch gates
+
+- `resolve_url(url, base_url, workdir)` — three-rule resolver
+  (explicit-protocol passthrough → absolute path → relative against
+  base_url else workdir). Canonical form via `urllib.parse.urlsplit`
+  reassembly + lowercase host.
+- `fetch_url(resolved, settings, cache)` — validates against four gates
+  (`allow_remote_urls`, `allowed_url_hosts`, `allow_remote_scripts`,
+  `max_remote_fetch_bytes`), consults a per-compile `_RemoteFetchCache`,
+  applies `url_headers` with `${VAR}` env expansion. Defaults reproduce
+  a "local files only" policy.
+- `RemoteURLBlockedError`, `RemoteURLFetchError` exceptions surface as
+  node failures with clear messages — never silent fallbacks.
+
+#### `schema/params.py` — per-mode Pydantic params
+
+- `PromptParams(model?, agent?, timeout?)`,
+  `SubgraphParams(inputs, outputs)`,
+  `ScriptParams(args, env)`,
+  `ExecParams(args, env)`. All set `extra="forbid"` so typos like
+  `args:` on a prompt URL surface as ValidationError at schema parse
+  time, not runtime.
+- `params_for_url(resolved_url) -> type[BaseModel]` resolver picks the
+  right dataclass by URL extension/scheme.
+
+#### `Execute` schema model
+
+- New `schema/models.py::Execute(BaseModel)` with `url`, `type`
+  (`"join" | "route" | None`), `params`, `cases`, `else_` fields.
+  Validator enforces exactly one of {url, type=join, type=route} active
+  per node.
+
+#### Settings: remote URL gates
+
+- `base_url`, `allow_remote_urls`, `allow_remote_scripts`,
+  `allowed_url_hosts`, `url_headers`, `max_remote_fetch_bytes` — see
+  `CLAUDE.md`'s "Remote URL support" section.
+
+#### Per-child subgraph fan-out
+
+- `fan_out.template.execute.url` ending in `.yaml`/`.yml` runs the
+  referenced subgraph **per Send branch**. Each manifest item drives
+  one subgraph invocation; the subgraph's terminal output flows back
+  as that branch's `child_outputs[parent::item_id]`. Cycle detection
+  walks the URL-reference DAG at parent compile time.
+- Demo: `examples/absurd-paper/subgraphs/single_review.yaml` — each
+  reviewer in `reviewer_pool` runs draft → critique sequentially in
+  its own Send branch.
+- Closes the Stage 4 audit's deferred `FanOutTemplate.config:` carve.
+
+### Changed
+
+- The `evaluation:` block on a Node is the only way to attach gate logic
+  (the alias `quality_gate:` was dropped in Stage 3b; Stage 5b doesn't
+  touch this).
+- Subgraph inputs/outputs now live under `execute.params.{inputs,outputs}`
+  on the parent reference (no more top-level `inputs:` / `outputs:`).
+
+### Documentation
+
+- `CLAUDE.md`: Workflow Schema rewritten for the unified `execute:`
+  shape; new sections "Execute URLs", "URL resolution", "Remote URL
+  support".
+- `docs/plans/stage-5b-execute-url.md`: marked as landed.
+
+---
+
+## Stage 4: Phase → Node + Recursive Subgraphs + Join Nodes
 
 ### ⚠️ Breaking changes
 
