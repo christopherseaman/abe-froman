@@ -28,8 +28,9 @@ import yaml
 from abe_froman.compile.nodes import build_context
 from abe_froman.runtime.executor.prompt import render_template
 from abe_froman.runtime.result import ExecutionResult
+from abe_froman.runtime.settings_merge import merge_settings
 from abe_froman.runtime.state import WorkflowState, make_initial_state
-from abe_froman.schema.models import Graph, Node
+from abe_froman.schema.models import Graph, Node, Settings
 
 if TYPE_CHECKING:
     from abe_froman.runtime.result import NodeExecutor
@@ -75,6 +76,7 @@ def make_subgraph_node(
     executor: "NodeExecutor | None",
     depth: int,
     logger: Any | None = None,
+    parent_settings: Settings | None = None,
 ):
     """Create the wrapper async function added as the parent graph's node.
 
@@ -89,8 +91,18 @@ def make_subgraph_node(
     snapshots through a ``SubgraphLogger`` that prefixes node ids with
     the parent's id, so subgraph-internal completions surface in the
     parent JSONL keyed as ``parent_id::child_id``.
+
+    ``parent_settings`` (Phase 3 / scope-aware): the parent scope's
+    *effective* ``Settings``. Merged with ``sub_config.settings``
+    (child-explicit-fields-win) and threaded into the recursive
+    ``compile_fn`` so subgraph-internal nodes see the merged view.
     """
-    sub_graph = compile_fn(sub_config, executor=executor, _depth=depth + 1)
+    parent_eff = parent_settings or sub_config.settings
+    sub_effective = merge_settings(parent_eff, sub_config.settings)
+    sub_graph = compile_fn(
+        sub_config, executor=executor, _depth=depth + 1,
+        effective_settings=sub_effective,
+    )
 
     parent_id = parent_node.id
     inputs_decl: dict[str, str] = {}
@@ -190,6 +202,7 @@ def make_fan_out_subgraph_invoker(
     depth: int,
     executor: "NodeExecutor | None",
     logger: Any | None = None,
+    parent_settings: Settings | None = None,
 ) -> Any:
     """Per-Send-branch subgraph invoker for fan-out templates.
 
@@ -210,7 +223,12 @@ def make_fan_out_subgraph_invoker(
     if depth == 0:
         detect_config_cycle(template_url, base_dir=base_dir)
     sub_config = load_graph(template_url, base_dir=base_dir)
-    sub_compiled = compile_fn(sub_config, executor=executor, _depth=depth + 1)
+    parent_eff = parent_settings or sub_config.settings
+    sub_effective = merge_settings(parent_eff, sub_config.settings)
+    sub_compiled = compile_fn(
+        sub_config, executor=executor, _depth=depth + 1,
+        effective_settings=sub_effective,
+    )
     inputs_decl: dict[str, str] = {}
     if isinstance(template_params.get("inputs"), dict):
         inputs_decl = dict(template_params["inputs"])

@@ -16,7 +16,7 @@ from abe_froman.compile.nodes import (
 )
 from abe_froman.runtime.result import ExecutionResult
 from abe_froman.runtime.state import REDUCERS, WorkflowState
-from abe_froman.schema.models import Node, Graph
+from abe_froman.schema.models import Node, Graph, Settings
 
 if TYPE_CHECKING:
     from abe_froman.runtime.result import NodeExecutor
@@ -49,6 +49,7 @@ def _make_fan_out_node(
     base_dir: Any,
     depth: int,
     logger: Any | None = None,
+    effective_settings: Settings | None = None,
 ):
     """Create a template node function for dynamic children.
 
@@ -67,10 +68,11 @@ def _make_fan_out_node(
     retries, and aggregation all work uniformly across "template runs a
     prompt" and "template runs a multi-step subgraph."
     """
+    settings = effective_settings or config.settings
     template = parent_node.fan_out.template
-    timeout = parent_node.effective_timeout(config.settings)
-    max_retries = parent_node.effective_max_retries(config.settings)
-    retry_backoff = config.settings.retry_backoff
+    timeout = parent_node.effective_timeout(settings)
+    max_retries = parent_node.effective_max_retries(settings)
+    retry_backoff = settings.retry_backoff
 
     # Per-Send-branch subgraph invoker — set when the template references
     # a `.yaml`/`.yml` URL, else the fan-out body uses the executor path.
@@ -89,6 +91,7 @@ def _make_fan_out_node(
             depth=depth,
             executor=executor,
             logger=logger,
+            parent_settings=settings,
         )
 
     async def node_fn(state: WorkflowState) -> dict[str, Any]:
@@ -191,7 +194,8 @@ def _make_fan_out_node(
                     exec_result = await _run_sub()
             else:
                 exec_result = await execute_with_timeout(
-                    executor, synthetic_node, context, timeout
+                    executor, synthetic_node, context, timeout,
+                    settings_override=effective_settings,
                 )
             if exec_result == "timeout":
                 return _merge_updates(update, make_failure_update(
@@ -228,6 +232,7 @@ def _make_fan_out_node(
             eval_update = await run_evaluation_and_outcome(
                 synthetic_node, config, eval_state, exec_result, timeout,
                 backend=backend, node_id=child_id, history=history,
+                effective_settings=effective_settings,
             )
             update = _merge_updates(update, eval_update)
 
@@ -270,6 +275,7 @@ def _make_final_fan_out_node(
     executor: NodeExecutor | None = None,
     *,
     is_first: bool = False,
+    effective_settings: Settings | None = None,
 ):
     """Create a node function for a final node in a dynamic child group.
 
@@ -300,7 +306,10 @@ def _make_final_fan_out_node(
         execute=final_node.execute,
     )
 
-    inner = _make_execution_node(synthetic, config, executor)
+    inner = _make_execution_node(
+        synthetic, config, executor,
+        effective_settings=effective_settings,
+    )
     inner.__name__ = f"final_{parent_node.id}_{final_node.id}"
 
     if not is_first:

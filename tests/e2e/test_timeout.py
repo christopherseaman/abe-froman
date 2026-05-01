@@ -127,7 +127,7 @@ class SlowMockExecutor:
     def __init__(self, delay: float):
         self._delay = delay
 
-    async def execute(self, node, context):
+    async def execute(self, node, context, **_):
         await asyncio.sleep(self._delay)
         return ExecutionResult(success=True, output=f"[slow-mock] {node.id}")
 
@@ -186,7 +186,7 @@ class SelectiveSlowExecutor:
     def __init__(self, slow_delay: float):
         self._slow_delay = slow_delay
 
-    async def execute(self, node, context):
+    async def execute(self, node, context, **_):
         if "::" in node.id:
             await asyncio.sleep(self._slow_delay)
         return ExecutionResult(

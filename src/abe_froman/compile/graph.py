@@ -14,7 +14,7 @@ from abe_froman.compile.nodes import _make_evaluation_node, _make_execution_node
 from abe_froman.compile.route import build_route_namespace, evaluate_case
 from abe_froman.compile.subgraph import node_subgraph_path
 from abe_froman.runtime.state import WorkflowState
-from abe_froman.schema.models import Graph, Node
+from abe_froman.schema.models import Graph, Node, Settings
 
 if TYPE_CHECKING:
     from abe_froman.runtime.result import NodeExecutor
@@ -137,10 +137,17 @@ def _register_evaluation_node(
     config: Graph,
     executor: NodeExecutor | None,
     exec_node_id: str | None = None,
+    *,
+    effective_settings: Settings | None = None,
 ) -> str:
     """Register `_eval_{exec_node_id}` and return its id."""
     eval_id = f"_eval_{exec_node_id or node.id}"
-    builder.add_node(eval_id, _make_evaluation_node(node, config, executor))
+    builder.add_node(
+        eval_id,
+        _make_evaluation_node(
+            node, config, executor, effective_settings=effective_settings,
+        ),
+    )
     return eval_id
 
 
@@ -216,6 +223,7 @@ def build_workflow_graph(
     checkpointer: Any = None,
     *,
     logger: Any | None = None,
+    effective_settings: Settings | None = None,
     _depth: int = 0,
     _base_dir: Any = None,
 ) -> Any:
@@ -230,6 +238,12 @@ def build_workflow_graph(
     so subgraph-internal completions surface in the parent JSONL keyed
     as `parent_id::child_id` (and nested as `parent::child::grandchild`).
 
+    ``effective_settings`` (Phase 3 / scope-aware): pre-merged settings
+    for this scope. ``None`` at top-level (use ``config.settings``);
+    subgraph wrappers compute the merge and pass it in. Used for
+    ``effective_timeout``, ``effective_max_retries``, ``retry_backoff``,
+    LLM-gate ``default_model``, and the executor's ``settings_override``.
+
     `_depth` and `_base_dir` are internal: subgraph wrappers pass
     `_depth+1` to enforce `settings.max_subgraph_depth` and propagate
     the base directory so nested config: paths resolve correctly.
@@ -242,12 +256,14 @@ def build_workflow_graph(
         make_subgraph_node,
     )
 
+    settings = effective_settings or config.settings
+
     _detect_cycles(config)
 
-    if _depth > config.settings.max_subgraph_depth:
+    if _depth > settings.max_subgraph_depth:
         raise SubgraphDepthError(
             f"Subgraph nesting exceeded max_subgraph_depth="
-            f"{config.settings.max_subgraph_depth}"
+            f"{settings.max_subgraph_depth}"
         )
 
     base_dir = Path(_base_dir) if _base_dir is not None else Path(".")
@@ -284,10 +300,14 @@ def build_workflow_graph(
     # fan-out subgraphs: both compile a referenced YAML at parent build
     # time and invoke it later. Defined once so call sites don't drift.
     # `logger` propagates so nested subgraphs keep emitting prefixed events.
-    def compile_fn(c, executor=None, _depth=0):
+    # ``effective_settings`` (Phase 3) is the pre-merged scope view from
+    # the subgraph wrapper; threaded into the recursive call so subgraph
+    # nodes receive their own scope's settings.
+    def compile_fn(c, executor=None, _depth=0, effective_settings=None):
         return build_workflow_graph(
             c, executor=executor, _depth=_depth,
             _base_dir=base_dir, logger=logger,
+            effective_settings=effective_settings,
         )
 
     # Execution nodes for every configured node.
@@ -300,19 +320,28 @@ def build_workflow_graph(
                 executor=executor,
                 depth=_depth,
                 logger=logger,
+                parent_settings=settings,  # subgraph wrapper merges with sub's settings
             )
             builder.add_node(node.id, wrapper)
         elif node.id in route_node_ids:
             builder.add_node(node.id, _make_route_node(node))
         else:
-            builder.add_node(node.id, _make_execution_node(node, config, executor))
+            builder.add_node(
+                node.id,
+                _make_execution_node(
+                    node, config, executor, effective_settings=settings,
+                ),
+            )
 
     # Evaluation nodes for every gated node (top-level, dynamic parents,
     # and gated final nodes). Dynamic parents' eval runs before the fan-
     # out router so it sees completed/retries/failed state.
     for node in config.nodes:
         if node.evaluation:
-            _register_evaluation_node(builder, node, config, executor)
+            _register_evaluation_node(
+                builder, node, config, executor,
+                effective_settings=settings,
+            )
 
     # Dynamic node child template + final nodes.
     final_node_ids: dict[tuple[str, str], str] = {}
@@ -325,6 +354,7 @@ def build_workflow_graph(
                 node, config, executor,
                 compile_fn=compile_fn, base_dir=base_dir, depth=_depth,
                 logger=logger,
+                effective_settings=settings,
             ),
         )
 
@@ -334,6 +364,7 @@ def build_workflow_graph(
             builder.add_node(
                 fid, _make_final_fan_out_node(
                     node, final_node, config, executor, is_first=(idx == 0),
+                    effective_settings=settings,
                 ),
             )
             if final_node.evaluation:
@@ -342,7 +373,10 @@ def build_workflow_graph(
                     id=fid, name=final_node.name, evaluation=final_node.evaluation,
                     model=node.model,
                 )
-                _register_evaluation_node(builder, synthetic, config, executor, exec_node_id=fid)
+                _register_evaluation_node(
+                    builder, synthetic, config, executor, exec_node_id=fid,
+                    effective_settings=settings,
+                )
 
     # ----- exit_node: what downstream deps plain-edge from -----
     # For gated nodes, downstream waits on the eval node, not execution.

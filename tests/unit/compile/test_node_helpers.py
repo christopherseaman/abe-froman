@@ -364,7 +364,7 @@ class TestExecuteWithTimeout:
     @pytest.mark.asyncio
     async def test_successful_execution(self):
         class FakeExec:
-            async def execute(self, node, context):
+            async def execute(self, node, context, **_):
                 return ExecutionResult(output="done")
 
         result = await execute_with_timeout(FakeExec(), _phase(), {}, None)
@@ -374,7 +374,7 @@ class TestExecuteWithTimeout:
     @pytest.mark.asyncio
     async def test_with_timeout_succeeds(self):
         class FakeExec:
-            async def execute(self, node, context):
+            async def execute(self, node, context, **_):
                 return ExecutionResult(output="fast")
 
         result = await execute_with_timeout(FakeExec(), _phase(), {}, 5.0)
@@ -383,7 +383,7 @@ class TestExecuteWithTimeout:
     @pytest.mark.asyncio
     async def test_timeout_returns_sentinel(self):
         class SlowExec:
-            async def execute(self, node, context):
+            async def execute(self, node, context, **_):
                 await asyncio.sleep(10)
                 return ExecutionResult(output="never")
 

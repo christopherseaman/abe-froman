@@ -56,14 +56,22 @@ class ForemanExecutor:
         node: Node,
         context: dict[str, Any],
         workdir: str | None = None,
+        settings_override: Settings | None = None,
     ) -> ExecutionResult:
-        model = resolve_model(node, self._settings)
+        # Per-model semaphore selection respects the scope's settings —
+        # a subgraph that overrides default_model gets its concurrency
+        # accounted under the subgraph's tier, not the parent's.
+        s = settings_override or self._settings
+        model = resolve_model(node, s)
         model_sem = self._model_sems.get(model)
 
         async with self._global_sem:
             async with (model_sem or _null_async_cm()):
                 wt = await self._acquire_worktree(node.id)
-                return await self._inner.execute(node, context, workdir=wt)
+                return await self._inner.execute(
+                    node, context, workdir=wt,
+                    settings_override=settings_override,
+                )
 
     async def _acquire_worktree(self, node_id: str) -> str:
         async with self._worktree_lock:

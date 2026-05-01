@@ -47,16 +47,23 @@ class PromptExecutor:
         self._settings = settings
         self._workdir = workdir
 
-    def apply_preamble(self, template: str) -> str | ExecutionResult:
+    def apply_preamble(
+        self, template: str, *, settings: Settings | None = None,
+    ) -> str | ExecutionResult:
         """Prepend ``settings.preamble_file`` if configured.
 
         Returns the modified template, or an ExecutionResult on error.
         Preamble lives with the config (base workdir), not in any per-node
         worktree.
+
+        ``settings`` (Phase 3 / scope-aware): when provided, used in place
+        of ``self._settings`` so a subgraph's preamble_file is honored
+        for nodes inside that subgraph.
         """
-        if not self._settings.preamble_file:
+        s = settings or self._settings
+        if not s.preamble_file:
             return template
-        preamble_path = Path(self._workdir) / self._settings.preamble_file
+        preamble_path = Path(self._workdir) / s.preamble_file
         try:
             preamble = preamble_path.read_text()
         except FileNotFoundError:
@@ -72,8 +79,16 @@ class PromptExecutor:
         model: str,
         workdir: str,
         timeout: float | None = None,
+        *,
+        settings: Settings | None = None,
     ) -> ExecutionResult:
-        """Send a pre-rendered prompt with overload→downgrade fallback."""
+        """Send a pre-rendered prompt with overload→downgrade fallback.
+
+        ``settings`` (Phase 3 / scope-aware): provides the
+        ``model_downgrade_chain`` for this scope. Subgraph wrappers pass
+        the merged settings so a subgraph-specific chain is honored.
+        """
+        s = settings or self._settings
         current_model = model
         try:
             while True:
@@ -84,7 +99,7 @@ class PromptExecutor:
                     break
                 except OverloadError:
                     next_model = downgrade_model(
-                        current_model, self._settings.model_downgrade_chain
+                        current_model, s.model_downgrade_chain
                     )
                     if next_model is None:
                         return ExecutionResult(

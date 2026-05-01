@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
-from abe_froman.schema.models import Node
+from abe_froman.schema.models import Node, Settings
 
 
 @dataclass
@@ -30,7 +30,9 @@ class OverloadError(Exception):
 @runtime_checkable
 class NodeExecutor(Protocol):
     async def execute(
-        self, node: Node, context: dict[str, Any], workdir: str | None = None
+        self, node: Node, context: dict[str, Any],
+        workdir: str | None = None,
+        settings_override: Settings | None = None,
     ) -> ExecutionResult: ...
 
 

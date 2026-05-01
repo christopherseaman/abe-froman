@@ -67,8 +67,12 @@ class DispatchExecutor:
             self._prompt_executor = None
 
     async def execute(
-        self, node: Node, context: dict[str, Any], workdir: str | None = None
+        self, node: Node, context: dict[str, Any],
+        workdir: str | None = None,
+        settings_override: Settings | None = None,
     ) -> ExecutionResult:
+        s = settings_override or self._settings
+
         if node.execute is None:
             # Gate-only-by-elision: a node with `evaluation:` and no
             # `execute:` block runs the gate against an empty output.
@@ -89,9 +93,7 @@ class DispatchExecutor:
 
         # URL mode
         effective_workdir = workdir or self._workdir
-        resolved = resolve_url(
-            execute.url, self._settings.base_url, effective_workdir
-        )
+        resolved = resolve_url(execute.url, s.base_url, effective_workdir)
 
         # Subgraphs are dispatched at compile time (not here). If we see a
         # .yaml URL or a forced-subgraph mode, the compile layer missed it.
@@ -120,7 +122,8 @@ class DispatchExecutor:
         # Mode override → forced dispatch. Otherwise route by URL extension.
         if execute.mode == "prompt" or (execute.mode is None and ext in _PROMPT_EXTS):
             return await self._dispatch_prompt(
-                node, resolved, params, context, effective_workdir
+                node, resolved, params, context, effective_workdir,
+                settings=s,
             )
         if execute.mode in _MODE_INTERPRETERS:
             return await self._dispatch_script(
@@ -143,6 +146,8 @@ class DispatchExecutor:
         params: Any,
         context: dict[str, Any],
         workdir: str,
+        *,
+        settings: Settings,
     ) -> ExecutionResult:
         """Read prompt body (file or remote), render Jinja, send to backend."""
         if self._prompt_executor is None:
@@ -152,14 +157,14 @@ class DispatchExecutor:
             )
 
         try:
-            body = fetch_url(resolved, self._settings, self._fetch_cache).decode()
+            body = fetch_url(resolved, settings, self._fetch_cache).decode()
         except Exception as e:
             return ExecutionResult(
                 success=False,
                 error=f"Failed to fetch prompt {resolved!r}: {e}",
             )
 
-        applied = self._prompt_executor.apply_preamble(body)
+        applied = self._prompt_executor.apply_preamble(body, settings=settings)
         if isinstance(applied, ExecutionResult):
             return applied
         rendered = render_template(applied, context)
@@ -172,15 +177,16 @@ class DispatchExecutor:
         current_model = (
             params_model if params_model is not None
             else node.model if node.model is not None
-            else self._settings.default_model
+            else settings.default_model
         )
         params_timeout = getattr(params, "timeout", None)
         timeout = (
             params_timeout if params_timeout is not None
-            else node.effective_timeout(self._settings)
+            else node.effective_timeout(settings)
         )
         return await self._prompt_executor.execute_rendered(
             rendered, current_model, workdir, timeout=timeout,
+            settings=settings,
         )
 
     async def _dispatch_script(

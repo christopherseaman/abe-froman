@@ -189,15 +189,27 @@ def inject_retry_reason(
 
 
 async def execute_with_timeout(
-    executor, node: Node, context: dict[str, Any], timeout: float | None
+    executor, node: Node, context: dict[str, Any], timeout: float | None,
+    *, settings_override: Settings | None = None,
 ) -> ExecutionResult | str:
+    """Run executor.execute with optional timeout + scope settings override.
+
+    ``settings_override`` (Phase 3 / scope-aware): the scope's effective
+    settings, threaded into ``NodeExecutor.execute`` so a subgraph's
+    ``default_model``, ``base_url``, etc. apply to its own nodes.
+    """
     try:
         if timeout is not None:
             result = await asyncio.wait_for(
-                executor.execute(node, context), timeout=timeout
+                executor.execute(
+                    node, context, settings_override=settings_override,
+                ),
+                timeout=timeout,
             )
         else:
-            result = await executor.execute(node, context)
+            result = await executor.execute(
+                node, context, settings_override=settings_override,
+            )
         return result
     except asyncio.TimeoutError:
         return "timeout"
@@ -336,9 +348,15 @@ async def run_evaluation_and_outcome(
     *,
     node_id: str | None = None,
     history: list[dict[str, Any]] | None = None,
+    effective_settings: Settings | None = None,
 ) -> dict[str, Any]:
+    """``effective_settings`` (Phase 3 / scope-aware): when set, drives
+    ``effective_max_retries`` and the LLM-gate ``default_model`` so a
+    subgraph's own settings apply to its evaluations. Falls back to
+    ``config.settings`` for top-level scope."""
+    s = effective_settings or config.settings
     key = node_id or node.id
-    max_retries = node.effective_max_retries(config.settings)
+    max_retries = node.effective_max_retries(s)
     retries = state.get("retries", {}).get(key, 0)
 
     eval_call = run_evaluation(
@@ -349,7 +367,7 @@ async def run_evaluation_and_outcome(
         workflow_name=config.name,
         attempt_number=retries + 1,
         backend=backend,
-        default_model=config.settings.default_model,
+        default_model=s.default_model,
     )
     try:
         if timeout is not None:
@@ -375,9 +393,20 @@ def _make_execution_node(
     node: Node,
     config: Graph,
     executor: NodeExecutor | None = None,
+    *,
+    effective_settings: Settings | None = None,
 ):
-    max_retries = node.effective_max_retries(config.settings)
-    timeout = node.effective_timeout(config.settings)
+    """Build the LangGraph node body for an execution node.
+
+    ``effective_settings`` (Phase 3 / scope-aware): captured into the
+    closure so ``effective_timeout``, ``effective_max_retries``,
+    ``retry_backoff``, and the executor's ``settings_override`` all
+    reflect this scope (top-level *or* subgraph). When ``None``, falls
+    through to ``config.settings`` (top-level case).
+    """
+    settings = effective_settings or config.settings
+    max_retries = node.effective_max_retries(settings)
+    timeout = node.effective_timeout(settings)
 
     async def node_fn(state: WorkflowState) -> dict[str, Any]:
         if node.id in state.get("completed_nodes", []):
@@ -400,7 +429,7 @@ def _make_execution_node(
         context = build_context(node, state)
         retry_count = state.get("retries", {}).get(node.id, 0)
         if retry_count > 0:
-            delay = _get_retry_delay(retry_count, config.settings.retry_backoff)
+            delay = _get_retry_delay(retry_count, settings.retry_backoff)
             if delay > 0:
                 await asyncio.sleep(delay)
         context = inject_retry_reason(context, node, state, max_retries)
@@ -410,7 +439,10 @@ def _make_execution_node(
                 node.output_contract, state.get("workdir", ".")
             )
 
-        exec_result = await execute_with_timeout(executor, node, context, timeout)
+        exec_result = await execute_with_timeout(
+            executor, node, context, timeout,
+            settings_override=effective_settings,
+        )
         if exec_result == "timeout":
             return make_failure_update(
                 node.id, f"Node timed out after {timeout}s"
@@ -459,6 +491,7 @@ def _make_evaluation_node(
     executor: "NodeExecutor | None" = None,
     *,
     node_id_resolver: Callable[[WorkflowState], str] | None = None,
+    effective_settings: Settings | None = None,
 ):
     """Create the Evaluation node — second half of a gated node pair.
 
@@ -468,8 +501,13 @@ def _make_evaluation_node(
 
     `node_id_resolver` lets child eval nodes derive the per-branch id
     from `state._fan_out_item`. Defaults to `node.id` for top-level use.
+
+    ``effective_settings`` (Phase 3 / scope-aware): drives the eval
+    timeout and feeds ``run_evaluation_and_outcome`` the scope's
+    ``default_model`` for ``.md`` LLM gates.
     """
-    timeout = node.effective_timeout(config.settings)
+    settings = effective_settings or config.settings
+    timeout = node.effective_timeout(settings)
     resolve = node_id_resolver or (lambda _s: node.id)
 
     async def node_fn(state: WorkflowState) -> dict[str, Any]:
@@ -523,6 +561,7 @@ def _make_evaluation_node(
             backend=backend,
             node_id=node_id,
             history=history,
+            effective_settings=effective_settings,
         )
 
     node_fn.__name__ = f"eval_{node.id}"
