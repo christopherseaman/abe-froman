@@ -201,18 +201,55 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
 
 ## Execution engines
 
+### Backend-selection ergonomics (high priority)
+
+- [ ] **Default executor should be real, not stub**
+    - Today: `settings.executor` defaults to `"stub"`, so a workflow with prompt nodes silently emits `[prompt-stub] {id}: {url}` placeholders unless the author either declares `executor: "acp"` in YAML OR passes `-e acp` on every CLI invocation. That's a footgun — running an absurd-paper or jokes workflow without `-e acp` produces convincing-looking output that is fake.
+    - Want: detect available backends at startup; default to the first real one (anthropic API key in env → anthropic; ACP adapter on PATH → ACP). Fall back to stub only when no real backend is available, and emit a warning when stub is selected. CLI flag stays as an explicit override.
+    - Companion change: rename or remove `--executor stub` since "fake responses" should require an opt-in like `--no-network` or `--dry-run`, not be the path of least resistance.
+
+- [ ] **Three orthogonal axes for LLM execution, configurable in YAML**
+    - Today's `settings.executor: "stub" | "acp"` collapses three independent decisions into one enum. Splitting them lets workflows declare their interaction model at authoring time and lets per-node overrides exist.
+    - **Axis 1 — Interaction mode**: `agent` (multi-turn, tool-using session like Claude Code via ACP) vs `prompt` (single-shot completion via API). Same `{{var}}` template; different runtime semantics — agents can read/write files, run tools, take multiple turns; prompts return one response and exit.
+    - **Axis 2 — Protocol/transport**: `acp` (subprocess + stdio JSON-RPC), `api` (HTTP via SDK), `stub` (no network). Today this is conflated with axis 1 because the only `agent` option ships over ACP and the only `api` option is hypothetical.
+    - **Axis 3 — Provider/model**: `anthropic+sonnet`, `anthropic+opus`, `openai+gpt-4`, `local+llama-3.3` via Ollama, etc. Today `settings.default_model` only picks Claude tiers and is implicitly tied to whatever `executor` decided.
+    - Schema sketch (workflow-level defaults + per-node override):
+      ```yaml
+      settings:
+        llm:
+          mode: agent            # default for prompt nodes
+          protocol: acp          # default transport
+          provider: anthropic
+          model: sonnet
+      nodes:
+        - id: research
+          execute:
+            url: prompts/research.md
+            params:
+              # Per-node override: this one wants the cheap fast prompt-and-response,
+              # not a full agent session
+              llm:
+                mode: prompt
+                provider: anthropic
+                model: haiku
+      ```
+    - Mode selection drives backend wiring: `mode=agent + protocol=acp` → ACPBackend; `mode=prompt + protocol=api + provider=anthropic` → AnthropicBackend; `mode=prompt + protocol=api + provider=openai` → OpenAIBackend.
+    - Per-node `params.llm` lives inside `PromptParams` (already extra="forbid" so typos surface loudly).
+
+### Backends to add (lower priority once axes above land)
+
 - [ ] **Direct Anthropic API backend**
     - `runtime/executor/backends/anthropic.py` using the `anthropic` SDK — no ACP process
-    - Removes ACP as a hard runtime dependency
+    - Removes ACP as a hard runtime dependency for prompt-mode nodes
     - Map 429 / 529 / rate-limit to `OverloadError` (activates the dormant model-downgrade path in `runtime/executor/prompt.py`)
     - Expose input/output token counts via `PromptBackendResult.tokens_used`
-    - `settings.executor: "anthropic"`
+    - Selected by `settings.llm.protocol: api` + `settings.llm.provider: anthropic`
 
 - [ ] **OpenAI-compatible backend**
     - `runtime/executor/backends/openai.py` using the `openai` SDK with configurable `base_url`
     - Unlocks OpenAI, Azure OpenAI, Ollama, vLLM, llama.cpp, LM Studio, LiteLLM
     - Separate model-downgrade chain
-    - `settings.executor: "openai"` + `settings.openai_base_url`
+    - Selected by `settings.llm.protocol: api` + `settings.llm.provider: openai` (+ optional `base_url`)
 
 - [ ] **Wire `OverloadError` through `ACPBackend`**
     - Translate ACP 429 / 529 / overload codes so the existing downgrade path fires with ACP too
