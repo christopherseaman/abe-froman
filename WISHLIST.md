@@ -122,7 +122,16 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
 
 - [x] **Implicit Join + explicit JoinNode primitive** — _landed, Stage 4b._ Implicit join was already free via LangGraph's super-step semantics (multi-pred nodes naturally synchronize). Stage 4b added `execution: { type: join }` as the explicit form for author readability at fan-in points; dispatcher routes it to a no-op handler returning `ExecutionResult(success=True, output="")`. Composes with `evaluation:` (gates run against the empty join output) and downstream consumers (build_context reads the join's empty output like any other dep).
 
-- [ ] **Multi-step fan-out children** — today the `fan_out.template` is a single `prompt_file`; each fan-out item traverses exactly one execution node before gather. With Stage 4c subgraph composition this is now achievable by pointing fan_out at a subgraph YAML (each manifest item spawns a subgraph instance), but the DSL still routes through the legacy `template:` block. Future: collapse `fan_out.template:` into `fan_out.config:` so a fan-out item naturally becomes a subgraph instantiation.
+- [x] **Multi-step fan-out children** — _landed, Stage 5b
+  (branch `stage-5b-execute-url`)._ Closed by the same URL-suffix
+  dispatch model the rest of the orchestrator uses: a
+  `fan_out.template.execute.url` ending in `.yaml`/`.yml` runs as a
+  subgraph per Send branch; `.md`/`.txt`/`.prompt` as a prompt;
+  `.py`/`.js`/`.sh` as a script; bare path as a binary. One field
+  (`execute.url`), one rule (URL extension). No separate
+  `fan_out.config:` shape needed — the `template:` block is the
+  shape; the URL inside it picks the mode. Per-child subgraph e2e
+  coverage in `tests/e2e/test_fan_out_subgraph.py`.
 
 - [x] **Subgraph with defined entry/exit nodes as a first-class primitive** — _landed, Stage 4c._ A subgraph declared via `Node.config:` is loaded as a `Graph` (identical schema), recursively compiled, and added as a node in the parent via `add_node(node.id, compiled_subgraph)`. State projection across the boundary is explicit via `inputs:` / `outputs:` declarations. Reusable subgraph libraries are a real concept now: the same YAML runs both standalone and as a subgraph reference.
 
