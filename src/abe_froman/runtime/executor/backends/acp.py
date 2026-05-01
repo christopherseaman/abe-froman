@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import signal
 from typing import Any
 
 from acp import spawn_agent_process, text_block
 from acp.interfaces import Client
 
-from abe_froman.runtime.result import OverloadError
-from abe_froman.runtime.result import ExecutionResult
+from abe_froman.runtime.result import ExecutionResult, OverloadError
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,16 @@ class ACPBackend:
     """ACP backend using claude-code-acp adapter.
 
     Spawns lazily on first send_prompt, reuses for subsequent calls.
+
+    Process-tree cleanup (Phase 4 / WISHLIST 49–54): the SDK's
+    ``spawn_agent_process`` exposes the spawned ``npx`` process but
+    NOT its descendant tree (``node`` → ``claude``). Without explicit
+    teardown, ``__aexit__`` returns before the children settle and
+    long-running orchestrators accumulate zombie subprocesses.
+    ``close()`` now SIGTERMs the spawned PID's process group, waits
+    briefly for graceful shutdown, then SIGKILLs anything still alive
+    — independent of whether the SDK or shell wrapper opted into a
+    new session itself.
     """
 
     def __init__(
@@ -69,6 +80,7 @@ class ACPBackend:
         self._callbacks = _ACPCallbacks()
         self._conn: Any = None
         self._proc: Any = None
+        self._proc_pid: int | None = None
         self._session_id: str | None = None
         self._ctx_manager: Any = None
         self._initialized = False
@@ -85,6 +97,17 @@ class ACPBackend:
                 self._callbacks, self._program, *self._args
             )
             self._conn, self._proc = await self._ctx_manager.__aenter__()
+            self._proc_pid = getattr(self._proc, "pid", None)
+            # Best-effort: place the spawned process in its own process
+            # group so the descendant tree is killable via os.killpg.
+            # If the SDK already did this, setpgid is a no-op; if exec
+            # has already happened the call may EACCES — both are fine,
+            # the killpg path below tolerates either outcome.
+            if self._proc_pid is not None:
+                try:
+                    os.setpgid(self._proc_pid, self._proc_pid)
+                except (PermissionError, ProcessLookupError, OSError):
+                    pass
             await self._conn.initialize(protocol_version=1)
             session = await self._conn.new_session(cwd=workdir, mcp_servers=[])
             self._session_id = session.session_id
@@ -118,18 +141,92 @@ class ACPBackend:
     async def close(self) -> None:
         if self._ctx_manager is None:
             return
+        pid = self._proc_pid
+        # Capture descendants BEFORE graceful shutdown. Once npx exits
+        # during __aexit__, its grandchildren (node, claude) reparent
+        # to PID 1 — at that point /proc walks from spawn_pid no
+        # longer reach them. The pre-shutdown snapshot is what lets
+        # us kill the orphaned tree below.
+        pre_targets: set[int] = set()
+        if pid is not None:
+            pre_targets = self._collect_descendants(pid) | {pid}
+
+        # Phase 1: graceful shutdown via the SDK's __aexit__. Capped
+        # at 5s — past that we hard-kill rather than wait for a hung
+        # adapter.
         try:
-            await self._ctx_manager.__aexit__(None, None, None)
-        except Exception:
-            logger.warning("ACP process cleanup failed", exc_info=True)
-            proc = self._proc
-            if proc is not None and getattr(proc, "returncode", 0) is None:
-                try:
-                    proc.terminate()
-                except Exception:
-                    logger.warning("ACP process terminate failed", exc_info=True)
+            await asyncio.wait_for(
+                self._ctx_manager.__aexit__(None, None, None), timeout=5.0,
+            )
+        except (asyncio.TimeoutError, Exception):
+            logger.warning("ACP graceful shutdown failed", exc_info=True)
+
+        # Phase 2: hard-kill the captured descendants (now orphans).
+        if pre_targets:
+            await self._kill_pids(pre_targets)
+
         self._conn = None
         self._proc = None
+        self._proc_pid = None
         self._session_id = None
         self._ctx_manager = None
         self._initialized = False
+
+    async def _kill_pids(self, pids: set[int]) -> None:
+        """SIGTERM each PID, wait briefly, SIGKILL survivors.
+
+        ``npx`` re-spawns ``node`` and ``claude`` in their own process
+        groups, and once ``npx`` exits its descendants reparent to
+        PID 1 — so a ``killpg`` on the spawn group misses most of the
+        tree. Capturing PIDs pre-shutdown and signaling each one is
+        robust against both decisions.
+        """
+        for p in pids:
+            try:
+                os.kill(p, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                pass
+        await asyncio.sleep(0.5)
+        for p in pids:
+            try:
+                os.kill(p, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+
+    @staticmethod
+    def _collect_descendants(pid: int) -> set[int]:
+        """Recursively gather descendant PIDs of ``pid`` via ``/proc``.
+        Empty set on non-Linux or when the PID has already been reaped."""
+        out: set[int] = set()
+        stack = [pid]
+        while stack:
+            cur = stack.pop()
+            try:
+                with open(f"/proc/{cur}/task/{cur}/children") as f:
+                    children = [int(c) for c in f.read().split()]
+            except (FileNotFoundError, ProcessLookupError, PermissionError, OSError):
+                continue
+            for c in children:
+                if c not in out:
+                    out.add(c)
+                    stack.append(c)
+        return out
+
+    @staticmethod
+    def _collect_descendants(pid: int) -> set[int]:
+        """Recursively gather descendant PIDs of ``pid`` via ``/proc``.
+        Empty set on non-Linux or when the PID has already been reaped."""
+        out: set[int] = set()
+        stack = [pid]
+        while stack:
+            cur = stack.pop()
+            try:
+                with open(f"/proc/{cur}/task/{cur}/children") as f:
+                    children = [int(c) for c in f.read().split()]
+            except (FileNotFoundError, ProcessLookupError, PermissionError, OSError):
+                continue
+            for c in children:
+                if c not in out:
+                    out.add(c)
+                    stack.append(c)
+        return out
