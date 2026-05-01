@@ -87,13 +87,20 @@ def _make_fan_out_node(
                 "completed_nodes": [child_id],
             }
 
-        synthetic_node = Node(
-            id=child_id,
-            name=f"{parent_node.name} - {item.get('name', item_id)}",
-            prompt_file=template.prompt_file,
-            evaluation=template.evaluation,
-            model=parent_node.model,
-        )
+        # Build the synthetic child node mirroring the template's executable
+        # shape. Stage-4 uses prompt_file; Stage 5b uses execute. (Schema
+        # validator enforces exactly one of the two on FanOutTemplate.)
+        node_kwargs: dict[str, Any] = {
+            "id": child_id,
+            "name": f"{parent_node.name} - {item.get('name', item_id)}",
+            "evaluation": template.evaluation,
+            "model": parent_node.model,
+        }
+        if template.execute is not None:
+            node_kwargs["execute"] = template.execute
+        else:
+            node_kwargs["prompt_file"] = template.prompt_file
+        synthetic_node = Node(**node_kwargs)
 
         # Build context up front — dep outputs + per-item manifest fields
         # do not change across retries within this node invocation.
@@ -233,16 +240,25 @@ def _make_final_fan_out_node(
     """
     node_id = f"_final_{parent_node.id}_{final_node.id}"
 
-    synthetic = Node(
-        id=node_id,
-        name=final_node.name,
-        description=final_node.description,
-        prompt_file=final_node.prompt_file,
-        execution=final_node.execution,
-        evaluation=final_node.evaluation,
-        model=parent_node.model,
-        depends_on=[parent_node.id],
-    )
+    # Synthetic Node mirrors final_node's executable shape (legacy or 5b).
+    # getattr() over direct attribute access tolerates test-side duck-typed
+    # mocks that don't carry every FanOutFinalNode field.
+    final_kwargs: dict[str, Any] = {
+        "id": node_id,
+        "name": final_node.name,
+        "description": final_node.description,
+        "evaluation": final_node.evaluation,
+        "model": parent_node.model,
+        "depends_on": [parent_node.id],
+    }
+    final_execute = getattr(final_node, "execute", None)
+    if final_execute is not None:
+        final_kwargs["execute"] = final_execute
+    elif final_node.execution is not None:
+        final_kwargs["execution"] = final_node.execution
+    else:
+        final_kwargs["prompt_file"] = final_node.prompt_file
+    synthetic = Node(**final_kwargs)
 
     inner = _make_execution_node(synthetic, config, executor)
     inner.__name__ = f"final_{parent_node.id}_{final_node.id}"

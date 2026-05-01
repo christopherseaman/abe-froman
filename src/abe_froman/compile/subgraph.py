@@ -157,6 +157,17 @@ def make_subgraph_node(
     return wrapper
 
 
+def _node_subgraph_path(n: Node) -> str | None:
+    """Return the subgraph YAML path for either Stage-4 or Stage-5b shape."""
+    if n.config:
+        return n.config
+    if n.execute and n.execute.url:
+        suffix = Path(n.execute.url).suffix.lower()
+        if suffix in {".yaml", ".yml"}:
+            return n.execute.url
+    return None
+
+
 def detect_config_cycle(
     config_path: str,
     visited: list[str] | None = None,
@@ -164,9 +175,10 @@ def detect_config_cycle(
 ) -> None:
     """Walk the config-reference DAG; raise on cycle.
 
-    Called at compile time when a Node has `config:`. Visited paths are
-    accumulated as the walker descends; revisiting a path means the
-    chain refers back to an ancestor.
+    Called at compile time for any subgraph reference (Stage 4
+    ``node.config:`` OR Stage 5b ``node.execute.url`` ending in
+    ``.yaml``). Visited paths are accumulated as the walker descends;
+    revisiting a path means the chain refers back to an ancestor.
     """
     visited = list(visited or [])
     abs_path = str(Path(base_dir) / config_path)
@@ -176,5 +188,6 @@ def detect_config_cycle(
     visited.append(abs_path)
     sub = load_graph(config_path, base_dir=base_dir)
     for n in sub.nodes:
-        if n.config:
-            detect_config_cycle(n.config, visited=visited, base_dir=base_dir)
+        sub_path = _node_subgraph_path(n)
+        if sub_path is not None:
+            detect_config_cycle(sub_path, visited=visited, base_dir=base_dir)

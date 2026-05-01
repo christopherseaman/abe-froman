@@ -145,13 +145,22 @@ class OutputContract(BaseModel):
 class FanOutTemplate(BaseModel):
     """Template for nodes spawned during fan-out over a manifest.
 
-    Stage 4a keeps the legacy template/final-node structure under the
-    new `fan_out:` key. Stage 4c will collapse this — the parent Node
-    will reference a subgraph YAML directly via `config:`, and joins
-    will be authored as separate downstream Nodes.
+    Stage 4a kept the legacy template/final-node structure under the
+    new `fan_out:` key. Stage 5b adds the `execute:` shape: either
+    `prompt_file:` (legacy) or `execute:` (new) — exactly one.
     """
-    prompt_file: str
+    prompt_file: str | None = None
+    execute: Execute | None = None
     evaluation: Evaluation | None = None
+
+    @model_validator(mode="after")
+    def validate_one_executable(self) -> Self:
+        defs = sum(bool(x) for x in (self.prompt_file, self.execute))
+        if defs > 1:
+            raise ValueError(
+                "FanOutTemplate: at most one of prompt_file or execute"
+            )
+        return self
 
 
 class FanOutFinalNode(BaseModel):
@@ -161,11 +170,18 @@ class FanOutFinalNode(BaseModel):
     description: str | None = None
     prompt_file: str | None = None
     execution: Execution | None = None
+    execute: Execute | None = None
     evaluation: Evaluation | None = None
 
     @model_validator(mode="after")
     def normalize_prompt_file(self) -> Self:
-        return _normalize_prompt_shorthand(self)
+        _normalize_prompt_shorthand(self)
+        defs = sum(bool(x) for x in (self.execute, self.execution))
+        if defs > 1:
+            raise ValueError(
+                f"FanOutFinalNode '{self.id}': at most one of execute/execution"
+            )
+        return self
 
 
 class FanOut(BaseModel):

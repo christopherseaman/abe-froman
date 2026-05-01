@@ -13,7 +13,14 @@ from abe_froman.compile.dynamic import _make_final_fan_out_node, _make_fan_out_n
 from abe_froman.compile.nodes import _make_evaluation_node, _make_execution_node
 from abe_froman.compile.route import build_route_namespace, evaluate_case
 from abe_froman.runtime.state import WorkflowState
-from abe_froman.schema.models import Node, Graph, RouteExecution
+from abe_froman.schema.models import (
+    Execute,
+    Graph,
+    JoinExecution,
+    Node,
+    RouteCase,
+    RouteExecution,
+)
 
 if TYPE_CHECKING:
     from abe_froman.runtime.result import NodeExecutor
@@ -30,6 +37,49 @@ def _resolve_goto(target: str) -> str:
     return END if target == "__end__" else target
 
 
+# ----- Shape-agnostic helpers (Stage 4 + Stage 5b) -----
+#
+# During the dual-mode window, a Node may carry either:
+#   - Stage 4 fields (node.execution, node.config), or
+#   - Stage 5b unified Execute (node.execute).
+#
+# These four helpers normalize the two shapes so the build loop and
+# downstream callers don't branch on field presence at every step.
+
+def _is_subgraph_ref(node: Node) -> bool:
+    """True if node references another graph YAML (legacy or Stage 5b)."""
+    if node.config:
+        return True
+    if node.execute and node.execute.url:
+        suffix = Path(node.execute.url).suffix.lower()
+        return suffix in {".yaml", ".yml"}
+    return False
+
+
+def _subgraph_path(node: Node) -> str | None:
+    """Return the raw subgraph YAML path for cycle detection / load_graph."""
+    if node.config:
+        return node.config
+    if node.execute and node.execute.url and _is_subgraph_ref(node):
+        return node.execute.url
+    return None
+
+
+def _is_route(node: Node) -> bool:
+    return isinstance(node.execution, RouteExecution) or (
+        node.execute is not None and node.execute.type == "route"
+    )
+
+
+def _route_cases_else(node: Node) -> tuple[list[RouteCase], str]:
+    """Extract (cases, else_target) from either schema shape."""
+    if isinstance(node.execution, RouteExecution):
+        return node.execution.cases, node.execution.else_
+    if node.execute and node.execute.type == "route":
+        return node.execute.cases, node.execute.else_  # type: ignore[return-value]
+    raise ValueError(f"Node '{node.id}' is not a route")
+
+
 def _make_route_node(node: Node):
     """Build the async fn for a route node — returns Command(goto=<id>).
 
@@ -37,12 +87,11 @@ def _make_route_node(node: Node):
     expressions raise loudly with route id + case context (no silent
     fall-through).
     """
-    route = node.execution
-    assert isinstance(route, RouteExecution)
+    cases, else_target = _route_cases_else(node)
 
     async def node_fn(state: WorkflowState) -> Command:
         ns = build_route_namespace(state, node.depends_on)
-        for case in route.cases:
+        for case in cases:
             try:
                 matched = evaluate_case(case.when, ns)
             except Exception as e:
@@ -51,7 +100,7 @@ def _make_route_node(node: Node):
                 ) from e
             if matched:
                 return Command(goto=_resolve_goto(case.goto))
-        return Command(goto=_resolve_goto(route.else_))
+        return Command(goto=_resolve_goto(else_target))
 
     node_fn.__name__ = f"route_{node.id}"
     return node_fn
@@ -248,13 +297,13 @@ def build_workflow_graph(
             dynamic_fan_out_ids.add(node.id)
             if node.fan_out.template.evaluation:
                 gated_fan_out_template_ids.add(node.id)
-        if node.config:
+        if _is_subgraph_ref(node):
             subgraph_node_ids.add(node.id)
             # Cycle detection happens once at top-level — nested calls
             # see _depth>0 so they skip this and rely on the depth cap.
             if _depth == 0:
-                detect_config_cycle(node.config, base_dir=base_dir)
-        if isinstance(node.execution, RouteExecution):
+                detect_config_cycle(_subgraph_path(node), base_dir=base_dir)
+        if _is_route(node):
             route_node_ids.add(node.id)
 
     # ----- Node registration -----
@@ -262,7 +311,7 @@ def build_workflow_graph(
     # Execution nodes for every configured node.
     for node in config.nodes:
         if node.id in subgraph_node_ids:
-            sub_config = load_graph(node.config, base_dir=base_dir)
+            sub_config = load_graph(_subgraph_path(node), base_dir=base_dir)
             wrapper = make_subgraph_node(
                 node, sub_config,
                 compile_fn=lambda c, executor=None, _depth=0: build_workflow_graph(
@@ -339,12 +388,14 @@ def build_workflow_graph(
     # regardless of routing).
     route_goto_targets: set[str] = set()
     for node in config.nodes:
-        if isinstance(node.execution, RouteExecution):
-            for case in node.execution.cases:
-                if case.goto != "__end__":
-                    route_goto_targets.add(case.goto)
-            if node.execution.else_ != "__end__":
-                route_goto_targets.add(node.execution.else_)
+        if not _is_route(node):
+            continue
+        cases, else_target = _route_cases_else(node)
+        for case in cases:
+            if case.goto != "__end__":
+                route_goto_targets.add(case.goto)
+        if else_target != "__end__":
+            route_goto_targets.add(else_target)
 
     has_incoming: set[str] = set()
 
