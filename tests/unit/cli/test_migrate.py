@@ -396,7 +396,8 @@ class TestRoundTripInRepoExamples:
 
     @pytest.mark.parametrize("rel_path", [
         "examples/smoke_test.yaml",
-        "examples/example_workflow.yaml",
+        "examples/explicit_join.yaml",
+        "examples/route_classify/workflow.yaml",
         "examples/jokes/workflow.yaml",
         "examples/absurd-paper/workflow.yaml",
     ])

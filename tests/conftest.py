@@ -114,5 +114,12 @@ def parallel_config_dict():
 
 
 @pytest.fixture
-def example_workflow_path():
-    return EXAMPLES_DIR / "example_workflow.yaml"
+def kitchen_sink_workflow_path():
+    """Full-feature workflow used as a CLI / schema fixture: prompt nodes,
+    fan-out, evaluations, subgraph composition, and route nodes all in one.
+
+    The absurd-paper workflow is the canonical example of every Stage 4-5b
+    feature combined; CLI tests use it to verify validate / graph / dry-run
+    over a non-trivial graph.
+    """
+    return EXAMPLES_DIR / "absurd-paper" / "workflow.yaml"

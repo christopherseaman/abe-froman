@@ -488,25 +488,28 @@ class TestFanOut:
 
 
 class TestFullExampleParse:
-    def test_parse_example_yaml(self, example_workflow_path):
-        with open(example_workflow_path) as f:
+    """Parse the absurd-paper kitchen-sink workflow to verify the schema
+    handles every Stage 4-5b feature combined: prompts, scripts, fan-out,
+    evaluations, subgraph composition (`paper` references
+    `subgraphs/compose_and_validate.yaml`)."""
+
+    def test_parse_example_yaml(self, kitchen_sink_workflow_path):
+        with open(kitchen_sink_workflow_path) as f:
             raw = yaml.safe_load(f)
         config = Graph(**raw)
 
-        assert config.name == "CFRA Default Workflow"
-        assert config.version == "1.0.0"
+        assert config.name == "Absurd Academic Paper"
         assert len(config.nodes) > 0
         assert config.settings.default_model == "sonnet"
-        assert config.settings.output_directory == "prd"
 
-    def test_example_has_all_execution_types(self, example_workflow_path):
-        """Example YAML exercises script, prompt, and gate-only-by-elision."""
-        with open(example_workflow_path) as f:
+    def test_example_has_all_execution_types(self, kitchen_sink_workflow_path):
+        """Kitchen-sink YAML exercises prompt, subgraph reference, and fan-out."""
+        with open(kitchen_sink_workflow_path) as f:
             raw = yaml.safe_load(f)
         config = Graph(**raw)
 
-        # Stage 5b: classify by execute.url extension or by execute=None.
         prompt_exts = {".md", ".txt", ".prompt"}
+        subgraph_exts = {".yaml", ".yml"}
         kinds: set[str] = set()
         for n in config.nodes:
             if n.execute is None:
@@ -518,53 +521,48 @@ class TestFullExampleParse:
             ext = Path(n.execute.url).suffix.lower()
             if ext in prompt_exts:
                 kinds.add("prompt")
+            elif ext in subgraph_exts:
+                kinds.add("subgraph")
             elif ext == "":
                 kinds.add("binary")
             else:
                 kinds.add("script")
         assert "prompt" in kinds
-        assert ("script" in kinds) or ("binary" in kinds)
+        assert "subgraph" in kinds  # `paper` node references compose_and_validate.yaml
 
-    def test_example_phase_types(self, example_workflow_path):
-        with open(example_workflow_path) as f:
+    def test_example_node_shapes(self, kitchen_sink_workflow_path):
+        """Spot-check named nodes carry the right execute shape."""
+        with open(kitchen_sink_workflow_path) as f:
             raw = yaml.safe_load(f)
         config = Graph(**raw)
-
         node_map = {p.id: p for p in config.nodes}
 
-        # node-0 dispatches a JS validator via URL-extension routing
-        # (Stage 5b) — no hardcoded interpreter path needed.
-        n0 = node_map["node-0"]
-        assert n0.execute is not None
-        assert n0.execute.url.endswith(".js")
+        # `abstract` is a prompt node with the default sonnet model.
+        abstract = node_map["abstract"]
+        assert abstract.execute is not None
+        assert Path(abstract.execute.url).suffix == ".md"
 
-        # node-1 uses a prompt URL with a model override on the Node itself.
-        n1 = node_map["node-1"]
-        assert n1.execute is not None
-        assert Path(n1.execute.url).suffix == ".md"
-        assert n1.model == "sonnet"
+        # `paper` references a subgraph (compose_and_validate.yaml) and
+        # projects state via execute.params.{inputs,outputs}.
+        paper = node_map["paper"]
+        assert paper.execute is not None
+        assert Path(paper.execute.url).suffix == ".yaml"
+        assert "inputs" in paper.execute.params
 
-    def test_example_dynamic_subphases(self, example_workflow_path):
-        with open(example_workflow_path) as f:
+    def test_example_fan_out(self, kitchen_sink_workflow_path):
+        """reviewer_pool fans out per reviewer; template runs a per-child
+        subgraph (Stage 5b carve)."""
+        with open(kitchen_sink_workflow_path) as f:
             raw = yaml.safe_load(f)
         config = Graph(**raw)
-
         node_map = {p.id: p for p in config.nodes}
-        node2 = node_map["node-2"]
-        assert node2.fan_out is not None
-        assert node2.fan_out.enabled is True
-        assert len(node2.fan_out.final_nodes) > 0
 
-    def test_example_fan_in_dependency(self, example_workflow_path):
-        """node-4 depends on all node-3-* nodes (fan-in)."""
-        with open(example_workflow_path) as f:
-            raw = yaml.safe_load(f)
-        config = Graph(**raw)
-
-        node_map = {p.id: p for p in config.nodes}
-        node4 = node_map["node-4"]
-        node3_ids = {p.id for p in config.nodes if p.id.startswith("node-3")}
-        assert node3_ids == set(node4.depends_on)
+        rp = node_map["reviewer_pool"]
+        assert rp.fan_out is not None
+        assert rp.fan_out.enabled is True
+        # Stage 5b: template's execute.url ends in .yaml → per-child subgraph
+        assert Path(rp.fan_out.template.execute.url).suffix == ".yaml"
+        assert len(rp.fan_out.final_nodes) > 0
 
 
 # ---------------------------------------------------------------------------

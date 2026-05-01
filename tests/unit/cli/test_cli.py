@@ -19,11 +19,11 @@ def runner():
 
 
 class TestValidateCommand:
-    def test_validate_valid_config(self, runner, example_workflow_path):
-        result = runner.invoke(cli, ["validate", str(example_workflow_path)])
+    def test_validate_valid_config(self, runner, kitchen_sink_workflow_path):
+        result = runner.invoke(cli, ["validate", str(kitchen_sink_workflow_path)])
         assert result.exit_code == 0
         assert "Valid:" in result.output
-        assert "CFRA Default Workflow" in result.output
+        assert "Absurd Academic Paper" in result.output
 
     def test_validate_nonexistent_file(self, runner):
         result = runner.invoke(cli, ["validate", "nonexistent.yaml"])
@@ -48,37 +48,38 @@ class TestValidateCommand:
 
 
 class TestGraphCommand:
-    def test_graph_prints_phase_ids(self, runner, example_workflow_path):
-        result = runner.invoke(cli, ["graph", str(example_workflow_path)])
+    def test_graph_prints_phase_ids(self, runner, kitchen_sink_workflow_path):
+        result = runner.invoke(cli, ["graph", str(kitchen_sink_workflow_path)])
         assert result.exit_code == 0
-        assert "node-0" in result.output
-        assert "node-1" in result.output
-        assert "node-5" in result.output
+        # absurd-paper has these named nodes
+        assert "abstract" in result.output
+        assert "paper" in result.output
+        assert "reviewer_pool" in result.output
 
-    def test_graph_mermaid_format(self, runner, example_workflow_path):
+    def test_graph_mermaid_format(self, runner, kitchen_sink_workflow_path):
         """Default format is Mermaid — output should contain the header."""
-        result = runner.invoke(cli, ["graph", str(example_workflow_path)])
+        result = runner.invoke(cli, ["graph", str(kitchen_sink_workflow_path)])
         assert result.exit_code == 0
         assert "graph TD" in result.output
 
-    def test_graph_shows_gate_edges(self, runner, example_workflow_path):
+    def test_graph_shows_gate_edges(self, runner, kitchen_sink_workflow_path):
         """Gated nodes produce conditional (dotted) edges in mermaid output."""
-        result = runner.invoke(cli, ["graph", str(example_workflow_path)])
+        result = runner.invoke(cli, ["graph", str(kitchen_sink_workflow_path)])
         assert result.exit_code == 0
         assert "-.->" in result.output
 
-    def test_graph_shows_start_and_end(self, runner, example_workflow_path):
+    def test_graph_shows_start_and_end(self, runner, kitchen_sink_workflow_path):
         """Mermaid output contains LangGraph's start/end terminal nodes."""
-        result = runner.invoke(cli, ["graph", str(example_workflow_path)])
+        result = runner.invoke(cli, ["graph", str(kitchen_sink_workflow_path)])
         assert result.exit_code == 0
         assert "__start__" in result.output
         assert "__end__" in result.output
 
 
 class TestRunCommand:
-    def test_run_dry_run(self, runner, example_workflow_path):
+    def test_run_dry_run(self, runner, kitchen_sink_workflow_path):
         result = runner.invoke(
-            cli, ["run", str(example_workflow_path), "--dry-run"]
+            cli, ["run", str(kitchen_sink_workflow_path), "--dry-run"]
         )
         assert result.exit_code == 0
         assert "Dry run completed" in result.output
@@ -88,13 +89,13 @@ class TestRunCommand:
         result = runner.invoke(cli, ["run", "nonexistent.yaml"])
         assert result.exit_code != 0
 
-    def test_run_dry_run_lists_nodes(self, runner, example_workflow_path):
+    def test_run_dry_run_lists_nodes(self, runner, kitchen_sink_workflow_path):
         result = runner.invoke(
-            cli, ["run", str(example_workflow_path), "--dry-run"]
+            cli, ["run", str(kitchen_sink_workflow_path), "--dry-run"]
         )
         assert result.exit_code == 0
         assert "Nodes:" in result.output
-        assert "node-0" in result.output
+        assert "abstract" in result.output
 
     def test_run_simple_workflow(self, runner, tmp_path):
         """End-to-end: command node that actually runs."""
