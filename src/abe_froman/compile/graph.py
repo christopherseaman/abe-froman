@@ -12,6 +12,7 @@ from langgraph.types import Command, Send
 from abe_froman.compile.dynamic import _make_final_fan_out_node, _make_fan_out_node
 from abe_froman.compile.nodes import _make_evaluation_node, _make_execution_node
 from abe_froman.compile.route import build_route_namespace, evaluate_case
+from abe_froman.compile.subgraph import node_subgraph_path
 from abe_froman.runtime.state import WorkflowState
 from abe_froman.schema.models import (
     Execute,
@@ -43,26 +44,18 @@ def _resolve_goto(target: str) -> str:
 #   - Stage 4 fields (node.execution, node.config), or
 #   - Stage 5b unified Execute (node.execute).
 #
-# These four helpers normalize the two shapes so the build loop and
+# These three helpers normalize the two shapes so the build loop and
 # downstream callers don't branch on field presence at every step.
+# `node_subgraph_path` lives in compile/subgraph.py (single source of
+# truth for subgraph URL extraction); the helpers below cover route
+# semantics that are local to compile-time graph construction.
 
 def _is_subgraph_ref(node: Node) -> bool:
-    """True if node references another graph YAML (legacy or Stage 5b)."""
-    if node.config:
-        return True
-    if node.execute and node.execute.url:
-        suffix = Path(node.execute.url).suffix.lower()
-        return suffix in {".yaml", ".yml"}
-    return False
+    return node_subgraph_path(node) is not None
 
 
 def _subgraph_path(node: Node) -> str | None:
-    """Return the raw subgraph YAML path for cycle detection / load_graph."""
-    if node.config:
-        return node.config
-    if node.execute and node.execute.url and _is_subgraph_ref(node):
-        return node.execute.url
-    return None
+    return node_subgraph_path(node)
 
 
 def _is_route(node: Node) -> bool:

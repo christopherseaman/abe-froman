@@ -6,12 +6,8 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from abe_froman.runtime.executor.command import CommandExecutor
-from abe_froman.runtime.executor.prompt import (
-    PromptExecutor,
-    render_template,
-    resolve_model,
-)
-from abe_froman.runtime.result import ExecutionResult, OverloadError, PromptBackend
+from abe_froman.runtime.executor.prompt import PromptExecutor, render_template
+from abe_froman.runtime.result import ExecutionResult, PromptBackend
 from abe_froman.runtime.url import _RemoteFetchCache, fetch_url, resolve_url
 from abe_froman.schema.models import (
     CommandExecution,
@@ -178,7 +174,12 @@ class DispatchExecutor:
         context: dict[str, Any],
         workdir: str,
     ) -> ExecutionResult:
-        """Read prompt body (file or remote), render Jinja, send to backend."""
+        """Read prompt body (file or remote), render Jinja, send to backend.
+
+        Delegates the preamble + downgrade-chain loop to PromptExecutor
+        helpers so both the legacy and Stage-5b paths share one
+        implementation of the overload-handling.
+        """
         if self._prompt_executor is None:
             return ExecutionResult(
                 success=True,
@@ -193,57 +194,23 @@ class DispatchExecutor:
                 error=f"Failed to fetch prompt {resolved!r}: {e}",
             )
 
-        if self._settings.preamble_file:
-            preamble_path = Path(self._workdir) / self._settings.preamble_file
-            try:
-                body = preamble_path.read_text() + "\n\n" + body
-            except FileNotFoundError:
-                return ExecutionResult(
-                    success=False,
-                    error=f"Preamble file not found: {preamble_path}",
-                )
+        applied = self._prompt_executor.apply_preamble(body)
+        if isinstance(applied, ExecutionResult):
+            return applied
+        rendered = render_template(applied, context)
 
-        rendered = render_template(body, context)
         # PromptParams.model overrides Node.model overrides Settings.default.
-        model_override = getattr(params, "model", None)
         current_model = (
-            model_override or node.model or self._settings.default_model
+            getattr(params, "model", None)
+            or node.model
+            or self._settings.default_model
         )
         timeout = (
             getattr(params, "timeout", None)
             or node.effective_timeout(self._settings)
         )
-        backend = self._prompt_executor._backend  # noqa: SLF001 — internal handle
-
-        try:
-            while True:
-                try:
-                    result = await backend.send_prompt(
-                        rendered, current_model, workdir, timeout=timeout,
-                    )
-                    break
-                except OverloadError:
-                    chain = self._settings.model_downgrade_chain
-                    try:
-                        idx = chain.index(current_model)
-                    except ValueError:
-                        idx = -1
-                    if idx + 1 >= len(chain):
-                        return ExecutionResult(
-                            success=False,
-                            error=(
-                                f"API overloaded, exhausted model chain "
-                                f"(last: {current_model})"
-                            ),
-                        )
-                    current_model = chain[idx + 1]
-        except Exception as e:
-            return ExecutionResult(success=False, error=f"Backend error: {e}")
-
-        return ExecutionResult(
-            success=True,
-            output=result.output,
-            structured_output=result.structured_output,
+        return await self._prompt_executor.execute_rendered(
+            rendered, current_model, workdir, timeout=timeout,
         )
 
     async def _dispatch_script(

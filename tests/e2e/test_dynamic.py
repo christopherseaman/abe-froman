@@ -235,7 +235,7 @@ class TestFinalNodes:
         final = type("F", (), dict(
             id="summary", name="Summary",
             description=None, prompt_file="s.md",
-            execution=None, evaluation=None,
+            execution=None, execute=None, evaluation=None,
         ))()
 
         from helpers import make_config

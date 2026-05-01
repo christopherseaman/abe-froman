@@ -102,24 +102,25 @@ class TestBinaryDispatch:
 
 class TestScriptDispatch:
     @pytest.mark.asyncio
-    async def test_python_script_runs(self, tmp_path):
+    async def test_python_script_runs(self, tmp_path, monkeypatch):
+        """Python interpreter resolves to the test's own sys.executable
+        (guaranteed available); script output is asserted unconditionally."""
         script = tmp_path / "say.py"
         script.write_text("print('hello-from-python')\n")
         node = Node(
             id="s", name="S",
             execute=Execute(url=f"file://{script}"),
         )
-        # Force python3 to be the same interpreter we're running pytest under
-        # so the test passes regardless of system python3 version.
+        # Pin the interpreter to the running pytest's sys.executable so
+        # the test doesn't depend on a system-installed python3.
+        from abe_froman.runtime.executor import dispatch
+        monkeypatch.setitem(
+            dispatch._SCRIPT_INTERPRETERS, ".py", [sys.executable]
+        )
         executor = DispatchExecutor(workdir=str(tmp_path))
         result = await executor.execute(node, {}, workdir=str(tmp_path))
-        # If `python3` is on the system, this passes. If not, it'll error
-        # — accept either since CI environments vary.
-        if result.success:
-            assert "hello-from-python" in result.output
-        else:
-            assert "python3" in (result.error or "").lower() or \
-                   "no such file" in (result.error or "").lower()
+        assert result.success is True, result.error
+        assert "hello-from-python" in result.output
 
     @pytest.mark.asyncio
     async def test_shell_script_runs(self, tmp_path):

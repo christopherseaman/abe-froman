@@ -204,6 +204,92 @@ class TestSettingsExtension:
         assert s.max_remote_fetch_bytes == 1_000_000
 
 
+class TestGraphValidatorOnExecuteRoutes:
+    """Stage-5b routes (execute.type=route) get the same Graph-level
+    validation as Stage-5a routes (execution.type=route)."""
+
+    def test_resolves_real_goto_target(self):
+        from abe_froman.schema.models import Graph
+
+        Graph(
+            name="t", version="1.0",
+            nodes=[
+                Node(id="a", name="A", execution={"type": "command", "command": "echo"}),
+                Node(
+                    id="r", name="R", depends_on=["a"],
+                    execute=Execute(
+                        type="route",
+                        cases=[{"when": "True", "goto": "a"}],
+                        else_="__end__",
+                    ),
+                ),
+            ],
+        )
+
+    def test_rejects_unresolved_goto(self):
+        from abe_froman.schema.models import Graph
+
+        with pytest.raises(ValidationError) as ei:
+            Graph(
+                name="t", version="1.0",
+                nodes=[
+                    Node(id="a", name="A", execution={"type": "command", "command": "echo"}),
+                    Node(
+                        id="r", name="R", depends_on=["a"],
+                        execute=Execute(
+                            type="route",
+                            cases=[{"when": "True", "goto": "ghost"}],
+                            else_="__end__",
+                        ),
+                    ),
+                ],
+            )
+        assert "ghost" in str(ei.value)
+        assert "Route 'r'" in str(ei.value)
+
+    def test_rejects_unresolved_else(self):
+        from abe_froman.schema.models import Graph
+
+        with pytest.raises(ValidationError) as ei:
+            Graph(
+                name="t", version="1.0",
+                nodes=[
+                    Node(id="a", name="A", execution={"type": "command", "command": "echo"}),
+                    Node(
+                        id="r", name="R", depends_on=["a"],
+                        execute=Execute(
+                            type="route",
+                            cases=[],
+                            else_="ghost-else",
+                        ),
+                    ),
+                ],
+            )
+        assert "ghost-else" in str(ei.value)
+
+    def test_rejects_depends_on_execute_route(self):
+        from abe_froman.schema.models import Graph
+
+        with pytest.raises(ValidationError) as ei:
+            Graph(
+                name="t", version="1.0",
+                nodes=[
+                    Node(id="a", name="A", execution={"type": "command", "command": "echo"}),
+                    Node(
+                        id="r", name="R", depends_on=["a"],
+                        execute=Execute(type="route", cases=[], else_="__end__"),
+                    ),
+                    Node(
+                        id="downstream", name="D", depends_on=["r"],
+                        execution={"type": "command", "command": "echo"},
+                    ),
+                ],
+            )
+        msg = str(ei.value)
+        assert "downstream" in msg
+        assert "route 'r'" in msg
+
+
 class TestExecuteFromYAML:
     def test_url_mode_yaml(self):
         src = """

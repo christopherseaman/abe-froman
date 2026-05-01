@@ -241,8 +241,6 @@ def _make_final_fan_out_node(
     node_id = f"_final_{parent_node.id}_{final_node.id}"
 
     # Synthetic Node mirrors final_node's executable shape (legacy or 5b).
-    # getattr() over direct attribute access tolerates test-side duck-typed
-    # mocks that don't carry every FanOutFinalNode field.
     final_kwargs: dict[str, Any] = {
         "id": node_id,
         "name": final_node.name,
@@ -251,9 +249,8 @@ def _make_final_fan_out_node(
         "model": parent_node.model,
         "depends_on": [parent_node.id],
     }
-    final_execute = getattr(final_node, "execute", None)
-    if final_execute is not None:
-        final_kwargs["execute"] = final_execute
+    if final_node.execute is not None:
+        final_kwargs["execute"] = final_node.execute
     elif final_node.execution is not None:
         final_kwargs["execution"] = final_node.execution
     else:

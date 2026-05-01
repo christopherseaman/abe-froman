@@ -285,25 +285,35 @@ class Graph(BaseModel):
         # Route nodes: every goto must resolve to a real node id or
         # __end__; routes must be leaves in the dep DAG (their
         # Command(goto=) IS the dispatch — a static depends_on edge
-        # would double-trigger the goto target).
-        route_ids = {
-            n.id for n in self.nodes if isinstance(n.execution, RouteExecution)
-        }
+        # would double-trigger the goto target). Validation walks both
+        # legacy `execution: { type: route, ... }` and Stage-5b
+        # `execute: { type: route, ... }` schema shapes.
+        def _route_payload(n: "Node") -> tuple[list[RouteCase], str] | None:
+            if isinstance(n.execution, RouteExecution):
+                return n.execution.cases, n.execution.else_
+            if n.execute is not None and n.execute.type == "route":
+                return n.execute.cases, n.execute.else_  # else_ guaranteed non-None
+            return None
+
+        route_ids: set[str] = set()
+        for n in self.nodes:
+            if _route_payload(n) is not None:
+                route_ids.add(n.id)
+
         for node in self.nodes:
-            if not isinstance(node.execution, RouteExecution):
+            payload = _route_payload(node)
+            if payload is None:
                 continue
-            for case in node.execution.cases:
+            cases, else_target = payload
+            for case in cases:
                 if case.goto != "__end__" and case.goto not in node_ids:
                     raise ValueError(
                         f"Route '{node.id}' case goto '{case.goto}' "
                         f"references nonexistent node"
                     )
-            if (
-                node.execution.else_ != "__end__"
-                and node.execution.else_ not in node_ids
-            ):
+            if else_target != "__end__" and else_target not in node_ids:
                 raise ValueError(
-                    f"Route '{node.id}' else goto '{node.execution.else_}' "
+                    f"Route '{node.id}' else goto '{else_target}' "
                     f"references nonexistent node"
                 )
         for node in self.nodes:

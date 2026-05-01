@@ -124,6 +124,49 @@ class TestSubgraphCompileViaExecuteURL:
         assert "p" in result["completed_nodes"]
         assert "from-sub" in result["node_outputs"]["p"]
 
+    @pytest.mark.asyncio
+    async def test_execute_params_inputs_outputs_project_through(self, tmp_path):
+        """Stage-5b subgraph with execute.params.{inputs,outputs} actually
+        projects state across the boundary (the HIGH 1 audit fix)."""
+        # Subgraph reads {{topic}} from node_inputs and emits its terminal output
+        sub_yaml = tmp_path / "sub.yaml"
+        sub_yaml.write_text(
+            "name: sub\nversion: '1.0'\n"
+            "nodes:\n"
+            "  - id: step1\n    name: Step1\n"
+            "    execution:\n      type: command\n      command: echo\n"
+            "      args: ['{{topic}}']\n"
+            "  - id: step2\n    name: Step2\n    depends_on: [step1]\n"
+            "    execution:\n      type: command\n      command: echo\n"
+            "      args: ['final-{{step1}}']\n"
+        )
+        producer = Node(
+            id="producer", name="Producer",
+            execution={"type": "command", "command": "echo", "args": ["alpha"]},
+        )
+        # Stage-5b shape: inputs/outputs nested inside execute.params
+        wrapper = Node(
+            id="p", name="P", depends_on=["producer"],
+            execute=Execute(
+                url="sub.yaml",
+                params={
+                    "inputs": {"topic": "{{producer}}"},
+                    "outputs": {"second": "{{step2}}"},
+                },
+            ),
+        )
+        config = Graph(name="parent", version="1.0", nodes=[producer, wrapper])
+        executor = DispatchExecutor(workdir=str(tmp_path))
+        graph = build_workflow_graph(config, executor, _base_dir=tmp_path)
+        result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
+
+        # Subgraph saw producer's output as {{topic}} input, ran step1+step2,
+        # terminal output projects as node_outputs[p].
+        assert "p" in result["completed_nodes"]
+        # outputs.second projection populates node_outputs["p.second"]
+        assert "p.second" in result["node_outputs"]
+        assert "final-alpha" in result["node_outputs"]["p.second"]
+
 
 class TestCycleDetectionAcrossShapes:
     def test_legacy_to_legacy_cycle_detected(self, tmp_path):

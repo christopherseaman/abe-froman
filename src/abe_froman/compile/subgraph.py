@@ -86,8 +86,18 @@ def make_subgraph_node(
     sub_graph = compile_fn(sub_config, executor=executor, _depth=depth + 1)
 
     parent_id = parent_node.id
-    inputs_decl = dict(parent_node.inputs)
-    outputs_decl = dict(parent_node.outputs)
+    # Subgraph inputs/outputs may live at the legacy top-level
+    # (Node.inputs / Node.outputs) or under the Stage-5b
+    # `execute.params.{inputs,outputs}`. Read the new shape when set;
+    # fall back to legacy.
+    inputs_decl: dict[str, str] = dict(parent_node.inputs)
+    outputs_decl: dict[str, str] = dict(parent_node.outputs)
+    if parent_node.execute is not None and parent_node.execute.params:
+        params = parent_node.execute.params
+        if isinstance(params.get("inputs"), dict):
+            inputs_decl = dict(params["inputs"])
+        if isinstance(params.get("outputs"), dict):
+            outputs_decl = dict(params["outputs"])
 
     async def wrapper(parent_state: WorkflowState) -> dict[str, Any]:
         # Skip if parent node already terminal (re-entry on dep updates).
@@ -157,8 +167,15 @@ def make_subgraph_node(
     return wrapper
 
 
-def _node_subgraph_path(n: Node) -> str | None:
-    """Return the subgraph YAML path for either Stage-4 or Stage-5b shape."""
+def node_subgraph_path(n: Node) -> str | None:
+    """Return the subgraph YAML path for either Stage-4 or Stage-5b shape.
+
+    Single source of truth for "is this node a subgraph reference and
+    where does it point?" Used by:
+      - compile/graph.py build loop (subgraph_node_ids detection)
+      - detect_config_cycle (DAG walk)
+      - cycle/depth tests
+    """
     if n.config:
         return n.config
     if n.execute and n.execute.url:
@@ -188,6 +205,6 @@ def detect_config_cycle(
     visited.append(abs_path)
     sub = load_graph(config_path, base_dir=base_dir)
     for n in sub.nodes:
-        sub_path = _node_subgraph_path(n)
+        sub_path = node_subgraph_path(n)
         if sub_path is not None:
             detect_config_cycle(sub_path, visited=visited, base_dir=base_dir)

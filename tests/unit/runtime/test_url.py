@@ -159,6 +159,7 @@ class TestRemoteURLGates:
 
 class TestVarExpansion:
     def test_missing_var_raises_clear_error(self, monkeypatch):
+        """Missing env var is a configuration error (ValueError), not I/O."""
         monkeypatch.delenv("ABSENT_TOKEN", raising=False)
         cache = _RemoteFetchCache()
         settings = Settings(
@@ -167,7 +168,7 @@ class TestVarExpansion:
                 "https://nope.invalid/": {"Authorization": "Bearer ${ABSENT_TOKEN}"}
             },
         )
-        with pytest.raises(RemoteURLFetchError) as ei:
+        with pytest.raises(ValueError) as ei:
             fetch_url("https://nope.invalid/a.md", settings, cache)
         assert "ABSENT_TOKEN" in str(ei.value)
 
