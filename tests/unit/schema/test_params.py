@@ -13,10 +13,9 @@ import pytest
 from pydantic import ValidationError
 
 from abe_froman.schema.params import (
-    ExecParams,
     PromptParams,
-    ScriptParams,
     SubgraphParams,
+    SubprocessParams,
     coerce_params,
     params_for_url,
 )
@@ -62,30 +61,21 @@ class TestSubgraphParams:
             SubgraphParams(model="opus")
 
 
-class TestScriptParams:
+class TestSubprocessParams:
+    """script + direct-exec collapsed to one model (Stage 5b cleanup)."""
+
     def test_parses_args_env(self):
-        p = ScriptParams(args=["--flag", "value"], env={"X": "y"})
+        p = SubprocessParams(args=["--flag", "value"], env={"X": "y"})
         assert p.args == ["--flag", "value"]
         assert p.env == {"X": "y"}
 
     def test_rejects_model_key(self):
         with pytest.raises(ValidationError):
-            ScriptParams(model="opus")
+            SubprocessParams(model="opus")
 
     def test_rejects_inputs_key(self):
         with pytest.raises(ValidationError):
-            ScriptParams(inputs={"x": "y"})
-
-
-class TestExecParams:
-    def test_parses_args_env(self):
-        p = ExecParams(args=["arg1"], env={"PATH": "/usr/bin"})
-        assert p.args == ["arg1"]
-        assert p.env == {"PATH": "/usr/bin"}
-
-    def test_rejects_model_key(self):
-        with pytest.raises(ValidationError):
-            ExecParams(model="opus")
+            SubprocessParams(inputs={"x": "y"})
 
 
 class TestParamsForURL:
@@ -99,18 +89,18 @@ class TestParamsForURL:
 
     @pytest.mark.parametrize("ext", [".py", ".js", ".mjs", ".ts", ".sh"])
     def test_script_extensions(self, ext):
-        assert params_for_url(f"file:///x/y{ext}") is ScriptParams
+        assert params_for_url(f"file:///x/y{ext}") is SubprocessParams
 
-    def test_no_extension_falls_through_to_exec(self):
-        assert params_for_url("file:///bin/echo") is ExecParams
+    def test_no_extension_falls_through_to_subprocess(self):
+        assert params_for_url("file:///bin/echo") is SubprocessParams
 
-    def test_unknown_extension_falls_through_to_exec(self):
-        assert params_for_url("file:///x/y.unknown") is ExecParams
+    def test_unknown_extension_falls_through_to_subprocess(self):
+        assert params_for_url("file:///x/y.unknown") is SubprocessParams
 
     def test_https_scheme_routes_by_extension(self):
         assert params_for_url("https://x.com/y.md") is PromptParams
         assert params_for_url("https://x.com/y.yaml") is SubgraphParams
-        assert params_for_url("https://x.com/y.py") is ScriptParams
+        assert params_for_url("https://x.com/y.py") is SubprocessParams
 
     def test_case_insensitive_extension(self):
         assert params_for_url("file:///x/Y.MD") is PromptParams

@@ -747,15 +747,3 @@ class TestPreambleInjection:
         assert result.success is True
         assert backend.calls[0][0] == "Just the prompt"
 
-    def test_preamble_in_config_yaml(self):
-        from abe_froman.schema.models import Graph
-
-        config = Graph(
-            name="test",
-            version="1.0",
-            nodes=[
-                Node(id="p1", name="P1", execute=Execute(url="t.md")),
-            ],
-            settings=Settings(preamble_file="preamble.md"),
-        )
-        assert config.settings.preamble_file == "preamble.md"

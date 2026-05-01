@@ -233,16 +233,24 @@ def make_fan_out_subgraph_invoker(
     return invoke
 
 
+def execute_subgraph_path(execute: Any) -> str | None:
+    """Return the subgraph YAML path for an Execute block whose `url`
+    ends in `.yaml` / `.yml`, else None. Used by callers that already
+    hold the Execute (fan-out templates) without a containing Node.
+    """
+    if execute is not None and execute.url:
+        suffix = Path(execute.url).suffix.lower()
+        if suffix in {".yaml", ".yml"}:
+            return execute.url
+    return None
+
+
 def node_subgraph_path(n: Node) -> str | None:
     """Return the subgraph YAML path for a Stage-5b execute.url ending
     in `.yaml` or `.yml`. Single source of truth for "is this node a
     subgraph reference and where does it point?"
     """
-    if n.execute and n.execute.url:
-        suffix = Path(n.execute.url).suffix.lower()
-        if suffix in {".yaml", ".yml"}:
-            return n.execute.url
-    return None
+    return execute_subgraph_path(n.execute)
 
 
 def detect_config_cycle(

@@ -225,7 +225,6 @@ class TestCacheAndSizeCap:
 
         assert body1 == body2 == body3 == b"once"
         assert local_server["handler"].hits[path] == 1
-        assert cache.fetch_count == 1
 
     def test_size_cap_rejects_oversize_body(self, local_server):
         path = "/big.md"

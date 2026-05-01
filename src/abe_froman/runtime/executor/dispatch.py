@@ -146,14 +146,19 @@ class DispatchExecutor:
         rendered = render_template(applied, context)
 
         # PromptParams.model overrides Node.model overrides Settings.default.
+        # Explicit-None tests (not `or`) so an authored zero/empty value
+        # — e.g. `timeout: 0` to mean "kill immediately" — wins over the
+        # next-lower fallback rather than getting silently overridden.
+        params_model = getattr(params, "model", None)
         current_model = (
-            getattr(params, "model", None)
-            or node.model
-            or self._settings.default_model
+            params_model if params_model is not None
+            else node.model if node.model is not None
+            else self._settings.default_model
         )
+        params_timeout = getattr(params, "timeout", None)
         timeout = (
-            getattr(params, "timeout", None)
-            or node.effective_timeout(self._settings)
+            params_timeout if params_timeout is not None
+            else node.effective_timeout(self._settings)
         )
         return await self._prompt_executor.execute_rendered(
             rendered, current_model, workdir, timeout=timeout,

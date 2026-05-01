@@ -37,18 +37,11 @@ class SubgraphParams(_StrictParams):
     outputs: dict[str, str] = {}
 
 
-class ScriptParams(_StrictParams):
-    """Params for script mode (`*.py`, `*.js`, `*.mjs`, `*.ts`, `*.sh`)."""
-    args: list[str] = []
-    env: dict[str, str] = {}
-
-
-class ExecParams(_StrictParams):
-    """Params for direct-exec (binary path, unrecognized extension).
-
-    Same shape as ScriptParams today; distinguished for forward-compat
-    so future direct-exec-specific params (e.g. `cwd`, `stdin`) can
-    land here without rippling through script semantics.
+class SubprocessParams(_StrictParams):
+    """Params for any subprocess mode — script (interpreter-dispatched)
+    or direct-exec (binary path / unrecognized extension). Both paths
+    use ``args`` + ``env`` and run through the same shared
+    ``DispatchExecutor._run_subprocess``.
     """
     args: list[str] = []
     env: dict[str, str] = {}
@@ -56,14 +49,15 @@ class ExecParams(_StrictParams):
 
 _PROMPT_EXTS = {".md", ".txt", ".prompt"}
 _SUBGRAPH_EXTS = {".yaml", ".yml"}
-_SCRIPT_EXTS = {".py", ".js", ".mjs", ".ts", ".sh"}
+SCRIPT_EXTS = {".py", ".js", ".mjs", ".ts", ".sh"}
 
 
 def params_for_url(resolved_url: str) -> type[_StrictParams]:
     """Pick the params dataclass that matches the resolved URL's mode.
 
     Extension lookup is case-insensitive. Unknown extensions and bare
-    binary paths fall through to ExecParams.
+    binary paths fall through to ``SubprocessParams`` — same shape as
+    script-mode (script + exec collapsed in Stage 5b cleanup).
     """
     parts = urlsplit(resolved_url)
     ext = Path(parts.path).suffix.lower()
@@ -71,9 +65,7 @@ def params_for_url(resolved_url: str) -> type[_StrictParams]:
         return PromptParams
     if ext in _SUBGRAPH_EXTS:
         return SubgraphParams
-    if ext in _SCRIPT_EXTS:
-        return ScriptParams
-    return ExecParams
+    return SubprocessParams
 
 
 def coerce_params(resolved_url: str, raw: dict[str, Any]) -> _StrictParams:

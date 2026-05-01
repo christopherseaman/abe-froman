@@ -43,11 +43,11 @@ def _merge_updates(base: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any
 def _make_fan_out_node(
     parent_node: Node,
     config: Graph,
-    executor: NodeExecutor | None = None,
+    executor: NodeExecutor | None,
     *,
-    compile_fn: Any = None,
-    base_dir: Any = None,
-    depth: int = 0,
+    compile_fn: Any,
+    base_dir: Any,
+    depth: int,
 ):
     """Create a template node function for dynamic children.
 
@@ -71,31 +71,20 @@ def _make_fan_out_node(
     max_retries = parent_node.effective_max_retries(config.settings)
     retry_backoff = config.settings.retry_backoff
 
-    # Per-Send-branch subgraph invoker, lazily set if the template is
-    # a subgraph reference. compile_fn/base_dir come from the parent's
-    # build_workflow_graph call; for older callers that don't pass them
-    # in, subgraph templates are unsupported (and the dispatcher would
-    # error on the .yaml URL).
-    sub_invoker = None
+    # Per-Send-branch subgraph invoker — set when the template references
+    # a `.yaml`/`.yml` URL, else the fan-out body uses the executor path.
     from abe_froman.compile.subgraph import (
+        execute_subgraph_path,
         make_fan_out_subgraph_invoker,
-        node_subgraph_path,
     )
-    template_subgraph_path = (
-        node_subgraph_path(
-            Node(
-                id="_fan_out_template", name="_template",
-                execute=template.execute,
-            )
-        )
-        if template.execute is not None else None
-    )
-    if template_subgraph_path is not None and compile_fn is not None:
+    sub_invoker = None
+    template_subgraph_path = execute_subgraph_path(template.execute)
+    if template_subgraph_path is not None:
         sub_invoker = make_fan_out_subgraph_invoker(
             template_subgraph_path,
             template.execute.params,
             compile_fn=compile_fn,
-            base_dir=base_dir if base_dir is not None else ".",
+            base_dir=base_dir,
             depth=depth,
             executor=executor,
         )

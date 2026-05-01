@@ -31,11 +31,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
+from abe_froman.schema.params import SCRIPT_EXTS as _SCRIPT_EXTS
+
 if TYPE_CHECKING:
     from abe_froman.schema.models import Settings
-
-
-_SCRIPT_EXTS = {".py", ".js", ".mjs", ".ts", ".sh"}
 
 
 class RemoteURLBlockedError(ValueError):
@@ -54,7 +53,6 @@ class _RemoteFetchCache:
     persistent caching is deferred (would need ETag / cache-control).
     """
     bodies: dict[str, bytes] = field(default_factory=dict)
-    fetch_count: int = 0  # observable for tests; not load-bearing
 
 
 def canonical(url: str) -> str:
@@ -191,5 +189,4 @@ def fetch_url(
         raise RemoteURLFetchError(f"Remote URL {canon!r} fetch failed: {e}") from e
 
     cache.bodies[canon] = body
-    cache.fetch_count += 1
     return body
