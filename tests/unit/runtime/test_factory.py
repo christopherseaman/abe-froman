@@ -82,20 +82,22 @@ class TestCreatePromptBackend:
 # ---------------------------------------------------------------------
 
 class TestAutoDetect:
-    def test_anthropic_key_wins(self, clean_env, monkeypatch):
+    def test_anthropic_key_alone_falls_through(self, clean_env, monkeypatch):
+        """ANTHROPIC_API_KEY alone does NOT auto-pick — the native
+        anthropic backend isn't wired yet, so picking it would surface
+        as a confusing ValueError at workflow startup. Resolution falls
+        through to the next available real backend (or stub)."""
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-anthropic")
-        # Even with deepseek key on disk and npx on PATH, anthropic wins.
-        auth = clean_env / ".pi" / "agent" / "auth.json"
-        auth.parent.mkdir(parents=True)
-        auth.write_text('{"deepseek": {"key": "sk-deepseek"}}')
         monkeypatch.setattr(
             "abe_froman.runtime.executor.backends.factory.shutil.which",
             lambda name: "/usr/bin/npx" if name == "npx" else None,
         )
 
         with warnings.catch_warnings():
-            warnings.simplefilter("error")  # any warning fails the test
-            assert auto_detect_executor() == "anthropic"
+            warnings.simplefilter("error")
+            # ACP via npx is what actually gets picked — the user's
+            # ANTHROPIC_API_KEY is irrelevant to that decision.
+            assert auto_detect_executor() == "acp"
 
     def test_deepseek_key_when_no_anthropic(self, clean_env, monkeypatch):
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek")

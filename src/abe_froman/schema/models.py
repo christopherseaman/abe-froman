@@ -121,7 +121,10 @@ class Settings(BaseModel):
     output_directory: str = "output"
     max_retries: int = 3
     default_model: str = "sonnet"
-    executor: str | None = None  # None = auto-detect at CLI dispatch
+    # `None` triggers auto-detect at CLI dispatch (DeepSeek key → ACP
+    # via npx → stub). Explicit choices: "stub" | "acp" | "deepseek" |
+    # "openai". The CLI `--executor` flag overrides this field.
+    executor: str | None = None
     default_timeout: float | None = None
     preamble_file: str | None = None
     retry_backoff: list[float] = []

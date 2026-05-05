@@ -263,7 +263,13 @@ async def _execute_workflow(
     "--dry-run", is_flag=True, help="Validate and trace without executing"
 )
 @click.option("--model", "-m", help="Override default model")
-@click.option("--executor", "-e", help="Prompt executor backend (stub, acp)")
+@click.option(
+    "--executor", "-e",
+    help=(
+        "Prompt executor backend. Choices: stub | acp | deepseek | "
+        "openai. Omit to auto-detect (DeepSeek key → npx/ACP → stub)."
+    ),
+)
 @click.option(
     "--resume", is_flag=True, help="Resume from the last checkpoint"
 )

@@ -93,31 +93,32 @@ def auto_detect_executor() -> str:
     on miss.
 
     Resolution order (first match wins):
-      1. ``ANTHROPIC_API_KEY`` env → ``"anthropic"`` (placeholder; the
-         backend itself is not yet wired and ``create_prompt_backend``
-         will raise ``ValueError`` on use. Listed first to document
-         intent for the eventual native backend.)
-      2. DeepSeek key on disk or env → ``"deepseek"``.
-      3. ``npx`` on PATH → ``"acp"``.
-      4. Nothing → ``"stub"`` with a UserWarning so the operator knows
-         prompt nodes will produce fake output.
+      1. DeepSeek key (env ``DEEPSEEK_API_KEY`` or
+         ``~/.pi/agent/auth.json``) → ``"deepseek"``.
+      2. ``npx`` on PATH → ``"acp"`` (assumes
+         ``@zed-industries/claude-code-acp`` is installed).
+      3. Nothing → ``"stub"`` with a UserWarning so the operator
+         knows prompt nodes will produce fake output.
+
+    A native ``anthropic`` API backend is on the wishlist but not yet
+    wired; setting only ``ANTHROPIC_API_KEY`` falls through to whichever
+    of the above is available rather than picking a non-existent
+    backend. Once the Anthropic backend lands, this function gains a
+    branch above DeepSeek.
 
     Only called from the CLI as a *fallback* when neither ``--executor``
-    nor ``settings.executor`` was set. Explicit ``--executor stub`` or
-    ``executor: stub`` in YAML never triggers this function — and so
-    never emits the warning.
+    nor ``settings.executor`` was set. Explicit choices never trigger
+    this function — and so never emit the warning.
     """
-    if os.getenv("ANTHROPIC_API_KEY"):
-        return "anthropic"
     if _resolve_deepseek_key():
         return "deepseek"
     if shutil.which("npx"):
         return "acp"
     warnings.warn(
-        "No real backend detected (no ANTHROPIC_API_KEY, no "
-        "DEEPSEEK_API_KEY, no npx on PATH); falling back to stub. "
-        "Prompt nodes will produce fake output. Set DEEPSEEK_API_KEY "
-        "or install npx + @zed-industries/claude-code-acp.",
+        "No real backend detected (no DEEPSEEK_API_KEY, no npx on "
+        "PATH); falling back to stub. Prompt nodes will produce fake "
+        "output. Set DEEPSEEK_API_KEY or install npx + "
+        "@zed-industries/claude-code-acp.",
         stacklevel=2,
     )
     return "stub"

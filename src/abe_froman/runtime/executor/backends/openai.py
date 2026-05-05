@@ -89,10 +89,16 @@ class OpenAIBackend:
                 raise OverloadError(str(e)) from e
             raise
 
-        content = ""
-        if resp.choices and resp.choices[0].message:
-            content = resp.choices[0].message.content or ""
-
+        if not resp.choices:
+            return ExecutionResult(
+                success=False,
+                error=(
+                    f"OpenAI-compatible API returned no choices "
+                    f"(model={model!r}). Likely a content filter, "
+                    f"refusal, or upstream truncation."
+                ),
+            )
+        content = resp.choices[0].message.content or ""
         return ExecutionResult(output=content)
 
     async def close(self) -> None:
