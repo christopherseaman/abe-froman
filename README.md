@@ -284,11 +284,13 @@ A per-compile cache keyed by canonical URL ensures the same URL is fetched at mo
 
 ### Prompt nodes
 
-Prompt files (`.md` / `.txt` / `.prompt`) are read, optionally prepended with `settings.preamble_file`, then rendered with Jinja2. Variables visible to the template:
+Prompt files (`.md` / `.txt` / `.prompt`) are read, optionally prepended with `settings.preamble_file`, then rendered with full Jinja2 (`{{var}}`, `{% if %}`, `{% for %}`, filters — anything Jinja2 supports). Variables bound to the template context:
 
 - `{{dep_id}}` — raw output of each dep.
 - `{{dep_id_worktree}}` — absolute path to the dep's git worktree (when foreman is active).
 - `{{_retry_reason}}` — auto-injected on retry (previous score, threshold, attempt number, gate feedback).
+- Inside a fan-out child: every key from the manifest item, plus `{{<parent_id>}}` for the parent's output (see Fan-out below).
+- Inside a subgraph: whatever `params.inputs` projects in.
 
 Model resolution order: `params.model` → `node.model` → `settings.default_model`. Hyphenated node IDs in templates (`{{my-id}}`) are parsed by Jinja2 as subtraction and will error — use underscores.
 
@@ -353,6 +355,14 @@ Workflow YAML is treated as author-checked-in code, so the sandbox is footgun pr
 ### Fan-out
 
 `fan_out.enabled: true` plus a manifest produces one `Send` per item. The manifest is read from the parent node's JSON output, falling back to `manifest_path` on disk. Each Send runs the `template.execute` (and optionally `template.evaluation`); the gate retry loop runs inline. After all Sends complete, `final_nodes` consume aggregated `child_outputs[parent::item_id]`.
+
+Each Send branch renders its prompt / script args against a per-item Jinja2 context:
+
+- Dep outputs by node id (same as a top-level node).
+- `{{<parent_id>}}` — the parent fan-out node's raw output (so a child can reference the manifest-producing prompt's output verbatim).
+- Every key on the manifest item — `{"id": "alpha", "topic": "cats"}` exposes `{{id}}` and `{{topic}}` to that branch's template only.
+
+So a fan-out template at `templates/per_item.md` that says `Write about {{topic}} in a {{tone}} voice, building on {{generate}}` will render once per manifest item with that item's `topic` / `tone` and the parent `generate` node's output. Built by `compile/dynamic.py::node_fn` (lines 133–139).
 
 When `template.execute.url` ends in `.yaml`, each Send runs a per-child subgraph instead of a single executor call. See `examples/absurd-paper/workflow.yaml` for `reviewer_pool` — a draft → critique 2-node subgraph per reviewer.
 
