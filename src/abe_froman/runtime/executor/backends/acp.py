@@ -154,11 +154,15 @@ class ACPBackend:
         # Phase 1: graceful shutdown via the SDK's __aexit__. Capped
         # at 5s — past that we hard-kill rather than wait for a hung
         # adapter.
+        # `asyncio.TimeoutError` is a subclass of `Exception` on
+        # 3.11+; one bare except covers both the timeout and any
+        # SDK-internal failure during teardown. Phase 2 below will
+        # hard-kill regardless.
         try:
             await asyncio.wait_for(
                 self._ctx_manager.__aexit__(None, None, None), timeout=5.0,
             )
-        except (asyncio.TimeoutError, Exception):
+        except Exception:
             logger.warning("ACP graceful shutdown failed", exc_info=True)
 
         # Phase 2: hard-kill the captured descendants (now orphans).

@@ -34,13 +34,16 @@ def merge_settings(parent: Settings, child: Settings) -> Settings:
     ``default_model`` inherits the parent's; one that says
     ``default_model: opus`` wins for that scope only.
 
-    NOTE: ``model_fields_set`` is preserved by ``model_validate(dict)``
-    and ``Settings(**kwargs)``, but **not** across a
-    ``model_dump() -> model_validate(...)`` round-trip. Always pass
-    freshly-validated ``Settings`` instances (the ones built from
-    parsed YAML) rather than reconstructed dumps.
+    NOTE: ``model_fields_set`` on the *child* is what drives the
+    merge — so ``child`` must be a freshly-parsed ``Settings`` (the
+    one Pydantic produced from YAML). The *returned* Settings has
+    every field marked as set (round-trip side effect); do not feed
+    it back as ``child`` to a subsequent ``merge_settings`` call, or
+    every field will appear authored and shadow the parent's.
+    Subgraph callers always have a fresh child from YAML parse, so
+    the constraint is naturally respected.
     """
     merged = parent.model_dump()
     for field in child.model_fields_set:
         merged[field] = getattr(child, field)
-    return Settings(**merged)
+    return Settings.model_validate(merged)

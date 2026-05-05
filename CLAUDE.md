@@ -93,7 +93,7 @@ settings:                      # optional, all fields have defaults
   output_directory: "output"   # default: "output"
   max_retries: 3               # default: 3
   default_model: "sonnet"      # default: "sonnet"
-  executor: "stub"             # default: "stub", options: "stub", "acp"
+  executor: null               # default: null (auto-detect); choices: stub | acp | deepseek | openai
   default_timeout: 300         # optional, seconds, None = no timeout
   preamble_file: "preamble.md" # optional, prepended to all prompt nodes
   retry_backoff: [10, 30, 60]  # optional, delay seconds per retry attempt
@@ -112,6 +112,57 @@ settings:                      # optional, all fields have defaults
       Authorization: "Bearer ${PROMPTS_TOKEN}"
   max_remote_fetch_bytes: 5000000   # 5 MB cap (default)
 ```
+
+### Backend selection (post-Stage-5b)
+
+`settings.executor` is **null by default** — the CLI auto-detects at
+dispatch. Resolution order (first match wins):
+
+1. **DeepSeek key** in env (`DEEPSEEK_API_KEY`) or
+   `~/.pi/agent/auth.json` → `"deepseek"` (OpenAI-compatible backend
+   pointed at `https://api.deepseek.com/v1`).
+2. **`npx` on PATH** → `"acp"` (ACP via
+   `@zed-industries/claude-code-acp`; npx auto-fetches the adapter
+   on first run).
+3. **Nothing** → `"stub"` plus a `UserWarning` naming the remediation.
+
+Setting only `ANTHROPIC_API_KEY` is **not** an auto-detect signal — the
+native Anthropic backend isn't wired yet. Resolution falls through to
+ACP via npx (or stub).
+
+Explicit choices override auto-detect:
+- CLI: `abe-froman run config.yaml -e deepseek`
+- YAML: `settings.executor: deepseek`
+
+`stub` produces fake `[prompt-stub] {id}: {url}` output and exists for
+offline testing only — it never auto-selects unless **nothing** real is
+available, and the warning makes that explicit.
+
+Install paths:
+- DeepSeek/OpenAI: `uv sync --extra openai` + set `DEEPSEEK_API_KEY`
+  (or place `{"deepseek": {"key": "..."}}` in `~/.pi/agent/auth.json`).
+- ACP: `npm i -g @zed-industries/claude-code-acp` (Python `acp` SDK
+  ships in dev deps).
+
+### Settings inheritance in subgraphs (post-Stage-5b)
+
+A subgraph YAML's `settings:` block now actually applies to the
+subgraph's nodes. Resolution order, lowest-to-highest:
+
+1. `Settings()` schema defaults
+2. Outermost `Graph.settings`
+3. Each subgraph's `Graph.settings` (one layer per nest)
+4. Per-node fields (`Node.model`, `Node.timeout`, `execute.params.*`)
+
+Fields a subgraph YAML *explicitly* sets win over the parent. Fields
+the YAML doesn't mention inherit. This is per-field, so a subgraph
+that overrides only `default_model` keeps the parent's
+`default_timeout`, `preamble_file`, `retry_backoff`, etc.
+
+Implementation: `runtime/settings_merge.merge_settings()` (Pydantic
+v2 `model_fields_set` distinguishes authored values from defaults).
+The merged Settings reaches the executor via
+`NodeExecutor.execute(node, context, workdir=, settings_override=)`.
 
 ### Execute URLs (Stage 5b)
 

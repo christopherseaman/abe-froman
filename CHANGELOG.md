@@ -58,6 +58,23 @@ All notable changes to abe-froman are documented here. Format follows
   builds instead of the inner scope's. Caught by the artifact-driven
   `default_timeout` inheritance test. Fix: the closure forwards
   its own `effective_settings` parameter.
+- Stage 5b cutover left two ACP tests using removed APIs
+  (`Node(prompt_file=...)`, `run_evaluation_llm(gate=...)`); both
+  migrated to current schema. ACP suite back to 14/14 green.
+- `ACPBackend._collect_descendants` was defined twice (Phase 4
+  Edit cruft, second definition silently shadowed the first).
+  Deduped.
+- `auto_detect_executor()` returned `"anthropic"` when
+  `ANTHROPIC_API_KEY` was set, but `create_prompt_backend("anthropic")`
+  raises (no native backend). A common dev env var actively broke
+  the workflow. Branch removed; `ANTHROPIC_API_KEY` alone now falls
+  through to whichever real backend is available.
+- `OpenAIBackend.send_prompt` returned silent empty output when the
+  API responded with no choices (refusal, content filter, upstream
+  truncation). Now surfaces as `ExecutionResult(success=False,
+  error=...)` so the orchestrator routes via failure semantics.
+- CLI `--executor` help text was stale ("(stub, acp)"). Updated to
+  list all four choices and document auto-detect order.
 
 ## [Unreleased] — Stage 5b: `execute: { url, params }` Schema Cutover
 
