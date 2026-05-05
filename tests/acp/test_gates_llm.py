@@ -40,12 +40,12 @@ class TestEvaluateGateLLMPositivePath:
             '"pass_criteria_unmet": []}\n'
         )
 
-        gate = Evaluation(validator="llm_gate.md", threshold=0.8)
+        evaluation = Evaluation(validator="llm_gate.md", threshold=0.8)
         backend = ACPBackend()
         try:
             async with asyncio.timeout(ACP_TIMEOUT):
                 result = await run_evaluation_llm(
-                    gate=gate,
+                    evaluation=evaluation,
                     node_id="test_phase",
                     workdir=str(tmp_path),
                     node_output="some node output",

@@ -211,22 +211,3 @@ class ACPBackend:
                     out.add(c)
                     stack.append(c)
         return out
-
-    @staticmethod
-    def _collect_descendants(pid: int) -> set[int]:
-        """Recursively gather descendant PIDs of ``pid`` via ``/proc``.
-        Empty set on non-Linux or when the PID has already been reaped."""
-        out: set[int] = set()
-        stack = [pid]
-        while stack:
-            cur = stack.pop()
-            try:
-                with open(f"/proc/{cur}/task/{cur}/children") as f:
-                    children = [int(c) for c in f.read().split()]
-            except (FileNotFoundError, ProcessLookupError, PermissionError, OSError):
-                continue
-            for c in children:
-                if c not in out:
-                    out.add(c)
-                    stack.append(c)
-        return out
