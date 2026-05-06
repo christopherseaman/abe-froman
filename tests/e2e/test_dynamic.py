@@ -107,14 +107,6 @@ class TestDynamicFanOut:
 
         assert "p::only" in result["completed_nodes"]
 
-    # NOTE: A `test_template_interpolation_in_subphases` test was
-    # deleted alongside StubBackend removal. Jinja rendering is
-    # already covered at the unit level by
-    # ``tests/unit/runtime/test_prompt.py::TestRenderTemplate``;
-    # exercising the same logic via prompt_length echo at the
-    # dispatch level was second-guessing well-tested code.
-
-
 # ---------------------------------------------------------------------------
 # Final nodes
 # ---------------------------------------------------------------------------

@@ -745,12 +745,6 @@ class TestMDGateDispatchGuard:
         with pytest.raises(ValueError, match="requires a PromptBackend"):
             await run_evaluation(gate, "p1", workdir=str(tmp_path))
 
-    # NOTE: A `test_llm_gate_missing_template_returns_loud_failure`
-    # test was deleted alongside StubBackend removal. The covered
-    # behavior (missing-template → structured EvaluationResult) is
-    # already pinned at the unit level by ``TestRenderTemplate`` in
-    # this file, which validates the parser and template-resolution
-    # paths without requiring any PromptBackend at all.
 
 
 # ---------------------------------------------------------------------------

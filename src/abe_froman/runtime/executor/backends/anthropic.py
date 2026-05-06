@@ -18,7 +18,8 @@ import asyncio
 import logging
 from typing import Any
 
-from abe_froman.runtime.result import ExecutionResult, OverloadError
+from abe_froman.runtime.executor.backends._overload import maybe_raise_overload
+from abe_froman.runtime.result import ExecutionResult
 
 logger = logging.getLogger(__name__)
 
@@ -45,23 +46,15 @@ def _resolve_model(model: str) -> str:
     return _MODEL_ALIASES.get(model, model)
 
 
-def _is_overload_status(status: int | None) -> bool:
-    """429 (rate limit) and 5xx-overload (502/503/504/529) all warrant
-    a model downgrade attempt."""
-    if status is None:
-        return False
-    return status == 429 or status in {502, 503, 504, 529}
-
-
-# Class-name fallback: Anthropic SDK exceptions don't always carry
-# status_code as an int — match by name so a renamed exception class
-# doesn't silently break the downgrade chain.
+# Anthropic SDK exception classes that don't always carry a numeric
+# status_code but should still trigger downgrade. Class-name string
+# match (vs class import) keeps this robust to SDK version churn.
 _OVERLOAD_EXCEPTION_NAMES = frozenset({
     "RateLimitError",        # 429
     "APIConnectionError",    # transient network
     "APITimeoutError",       # request timeout
     "InternalServerError",   # 5xx
-    "OverloadedError",       # 529 (some SDK versions)
+    "OverloadedError",       # 529 (newer SDK versions)
 })
 
 
@@ -112,11 +105,7 @@ class AnthropicBackend:
             else:
                 resp = await coro
         except Exception as e:
-            status = getattr(e, "status_code", None) or getattr(e, "status", None)
-            if _is_overload_status(status):
-                raise OverloadError(str(e)) from e
-            if type(e).__name__ in _OVERLOAD_EXCEPTION_NAMES:
-                raise OverloadError(str(e)) from e
+            maybe_raise_overload(e, class_names=_OVERLOAD_EXCEPTION_NAMES)
             raise
 
         if not resp.content:

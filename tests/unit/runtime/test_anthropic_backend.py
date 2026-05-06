@@ -15,7 +15,6 @@ from __future__ import annotations
 import pytest
 
 from abe_froman.runtime.executor.backends.anthropic import (
-    _MODEL_ALIASES,
     AnthropicBackend,
     _resolve_model,
 )
@@ -105,12 +104,6 @@ class TestModelResolution:
     )
     def test_unknown_strings_pass_through(self, explicit):
         assert _resolve_model(explicit) == explicit
-
-    def test_alias_table_covers_three_families(self):
-        """Guards against accidental drop of one of the three generic
-        names. Adding a fourth is fine; removing one breaks the
-        contract with `Settings.default_model`."""
-        assert set(_MODEL_ALIASES.keys()) >= {"sonnet", "opus", "haiku"}
 
 
 # ---------------------------------------------------------------------

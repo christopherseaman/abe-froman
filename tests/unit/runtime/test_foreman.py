@@ -360,13 +360,6 @@ class TestPerModelBackpressure:
             await foreman.close()
 
 
-# NOTE: A `TestBackendPassthrough::test_get_backend_passes_through_to_inner`
-# class was deleted alongside StubBackend removal. The covered behavior
-# (``Foreman.get_backend()`` returning the inner executor's backend) is
-# orchestration plumbing exercised end-to-end by every LLM-gate test —
-# the standalone unit test was redundant.
-
-
 class TestWorktreeCreationFailure:
     @pytest.mark.asyncio
     async def test_non_git_workdir_raises_runtime_error(self, tmp_path):

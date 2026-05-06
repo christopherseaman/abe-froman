@@ -15,17 +15,14 @@ import asyncio
 import logging
 from typing import Any
 
-from abe_froman.runtime.result import ExecutionResult, OverloadError
+from abe_froman.runtime.executor.backends._overload import maybe_raise_overload
+from abe_froman.runtime.result import ExecutionResult
 
 logger = logging.getLogger(__name__)
 
-
-def _is_overload_status(status: int | None) -> bool:
-    """429 (rate limit) and 5xx-overload (502/503/504/529) all warrant
-    a model downgrade attempt."""
-    if status is None:
-        return False
-    return status == 429 or status in {502, 503, 504, 529}
+# OpenAI/DeepSeek SDK exception classes that don't always carry a
+# numeric status_code but should still trigger downgrade.
+_OVERLOAD_EXCEPTION_NAMES = frozenset({"RateLimitError", "APIConnectionError"})
 
 
 class OpenAIBackend:
@@ -79,14 +76,7 @@ class OpenAIBackend:
             else:
                 resp = await coro
         except Exception as e:
-            status = getattr(e, "status_code", None) or getattr(e, "status", None)
-            if _is_overload_status(status):
-                raise OverloadError(str(e)) from e
-            # openai.RateLimitError doesn't always carry status_code as int;
-            # name-based fallback covers it without coupling to the SDK's
-            # exception hierarchy.
-            if type(e).__name__ in {"RateLimitError", "APIConnectionError"}:
-                raise OverloadError(str(e)) from e
+            maybe_raise_overload(e, class_names=_OVERLOAD_EXCEPTION_NAMES)
             raise
 
         if not resp.choices:

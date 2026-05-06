@@ -82,15 +82,6 @@ async def test_simple_recursive_subgraph(tmp_path):
     assert result["node_outputs"]["sub_node"] == "from-child-b"
 
 
-# NOTE: A `test_subgraph_inputs_projection` test was deleted
-# alongside StubBackend removal. Jinja rendering of subgraph-injected
-# inputs is already covered at the unit level (see
-# ``tests/unit/compile/test_subgraph.py`` for inputs projection and
-# ``tests/unit/runtime/test_prompt.py::TestRenderTemplate`` for Jinja
-# semantics); the prompt_length echo at the dispatch level was
-# second-guessing well-tested code.
-
-
 @pytest.mark.asyncio
 async def test_subgraph_outputs_named_projection(tmp_path):
     """Explicit `outputs:` exposes named subgraph node outputs to parent."""
@@ -228,13 +219,69 @@ async def test_subgraph_internal_failure_surfaces_to_parent(tmp_path):
     assert any("subgraph" in s.lower() for s in error_strs)
 
 
-# NOTE: A `test_subgraph_isolation_no_parent_state_leak` test was
-# deleted alongside StubBackend removal. It used StubBackend's
-# prompt_length echo to indirectly observe whether `{{parent_only}}`
-# rendered to empty (isolation OK) or to the parent's value (leak).
-# The cleaner home for that invariant is unit-level coverage of the
-# subgraph context-building layer (``compile/subgraph.py``) — tracked
-# separately rather than restored as a stand-in e2e test.
+@pytest.mark.asyncio
+async def test_subgraph_isolation_no_parent_state_leak(tmp_path):
+    """Subgraph never sees parent's `node_outputs` from siblings.
+
+    A subgraph node's template can reference both `{{from_parent}}`
+    (projected via `inputs:`) and `{{parent_only}}` (a parent sibling
+    that was NOT projected). Only the projected name should resolve;
+    the unprojected name must render empty. Observable signal: the
+    subgraph runs a script whose Jinja-rendered args print both
+    values literally — the dispatcher's script-args rendering happens
+    against the subgraph's context, so the script's stdout is the
+    direct evidence of what was in scope.
+    """
+    _yaml(tmp_path / "sub.yaml", {
+        "name": "Sub", "version": "1.0",
+        "nodes": [{
+            "id": "prober",
+            "name": "Prober",
+            "execute": {
+                "url": _ECHO,
+                "params": {
+                    "args": ["-n", "leak={{parent_only}}|input={{from_parent}}"],
+                },
+            },
+        }],
+    })
+    _yaml(tmp_path / "parent.yaml", {
+        "name": "Parent", "version": "1.0",
+        "nodes": [
+            {
+                "id": "parent_only",
+                "name": "Parent Only",
+                "execute": {"url": _ECHO, "params": {"args": ["-n", "PARENT_VALUE"]}},
+            },
+            {
+                "id": "sub_ref",
+                "name": "Sub Ref",
+                "execute": {
+                    "url": "sub.yaml",
+                    "params": {"inputs": {"from_parent": "explicit-input"}},
+                },
+                "depends_on": ["parent_only"],
+            },
+        ],
+    })
+
+    raw = yaml.safe_load((tmp_path / "parent.yaml").read_text())
+    parent_config = Graph(**raw)
+    executor = DispatchExecutor(workdir=str(tmp_path))
+    graph = build_workflow_graph(parent_config, executor, _base_dir=tmp_path)
+    result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
+
+    assert "sub_ref" in result["completed_nodes"]
+    sub_output = result["node_outputs"]["sub_ref"]
+    # Projected input is in scope inside the subgraph...
+    assert "input=explicit-input" in sub_output
+    # ...but the parent sibling's output is NOT — `{{parent_only}}`
+    # renders to empty because subgraph state starts fresh.
+    assert "leak=|" in sub_output, (
+        f"got {sub_output!r}; expected `leak=|` (empty). If "
+        f"`leak=PARENT_VALUE|` appeared, parent state leaked across "
+        f"the subgraph boundary."
+    )
 
 
 def test_depth_limit_enforced(tmp_path):
