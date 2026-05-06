@@ -13,7 +13,9 @@ from abe_froman.schema.models import (
     Graph,
     Node,
     OutputContract,
+    Route,
     RouteCase,
+    RouteElse,
     Settings,
 )
 
@@ -320,6 +322,191 @@ class TestSettingsRemoteUrlGates:
         assert s.allowed_url_hosts == ["*.example.com"]
         assert s.url_headers["https://api.example.com/"]["X-Auth"] == "${TOKEN}"
         assert s.max_remote_fetch_bytes == 10_000_000
+
+
+class TestInlineRoute:
+    """Stage 5c: `Node.route` block (inline forward dispatch).
+
+    Coexists with `execute:` (executes, evaluates, then routes) or
+    stands alone (no execute, replaces legacy `Execute.type=route`).
+    """
+
+    def test_unconditional_goto_str(self):
+        r = Route(goto="b")
+        assert r.goto == "b"
+        assert r.cases == []
+        assert r.else_ is None
+        assert r.include_eval is False
+
+    def test_unconditional_goto_list(self):
+        r = Route(goto=["b", "c"])
+        assert r.goto == ["b", "c"]
+
+    def test_unconditional_with_include_eval(self):
+        r = Route(goto="b", include_eval=True)
+        assert r.include_eval is True
+
+    def test_cases_with_string_else(self):
+        r = Route.model_validate({
+            "cases": [{"when": "x>0", "goto": "ship"}],
+            "else": "fallback",
+        })
+        assert r.cases[0].goto == "ship"
+        assert r.cases[0].include_eval is False
+        # else: string shorthand auto-promoted to RouteElse
+        assert isinstance(r.else_, RouteElse)
+        assert r.else_.goto == "fallback"
+        assert r.else_.include_eval is False
+
+    def test_cases_with_list_else(self):
+        r = Route.model_validate({
+            "cases": [{"when": "x>0", "goto": ["a", "b"]}],
+            "else": ["c", "d"],
+        })
+        assert r.cases[0].goto == ["a", "b"]
+        assert r.else_.goto == ["c", "d"]
+
+    def test_cases_with_structured_else(self):
+        r = Route.model_validate({
+            "cases": [{"when": "x>0", "goto": "ship"}],
+            "else": {"goto": "human_review", "include_eval": True},
+        })
+        assert r.else_.goto == "human_review"
+        assert r.else_.include_eval is True
+
+    def test_per_case_include_eval(self):
+        r = Route.model_validate({
+            "cases": [
+                {"when": "passed('x')", "goto": "ship"},
+                {"when": "score('x') < 0.4", "goto": "rewrite", "include_eval": True},
+            ],
+            "else": "review",
+        })
+        assert r.cases[0].include_eval is False
+        assert r.cases[1].include_eval is True
+
+    def test_goto_and_cases_are_mutex(self):
+        with pytest.raises(ValidationError, match="mutually exclusive"):
+            Route.model_validate({
+                "goto": "a",
+                "cases": [{"when": "x", "goto": "b"}],
+                "else": "c",
+            })
+
+    def test_cases_require_else(self):
+        with pytest.raises(ValidationError, match="requires `else"):
+            Route.model_validate({
+                "cases": [{"when": "x", "goto": "b"}],
+            })
+
+    def test_route_must_set_at_least_one_form(self):
+        with pytest.raises(ValidationError, match="requires either"):
+            Route()
+
+    def test_route_level_include_eval_only_with_goto_shorthand(self):
+        # `cases:` form forbids route-level include_eval (per-case is canonical)
+        with pytest.raises(ValidationError, match="route level"):
+            Route.model_validate({
+                "include_eval": True,
+                "cases": [{"when": "x", "goto": "b"}],
+                "else": "c",
+            })
+
+    def test_node_route_field(self):
+        config = Graph(
+            name="T", version="1.0.0",
+            nodes=[
+                {"id": "a", "name": "A", "execute": {"url": "a.md"},
+                 "route": {"goto": "b"}},
+                {"id": "b", "name": "B", "execute": {"url": "b.md"}},
+            ],
+        )
+        assert config.nodes[0].route is not None
+        assert config.nodes[0].route.goto == "b"
+
+    def test_node_route_unknown_target_rejected(self):
+        with pytest.raises(ValidationError, match="goto 'ghost'"):
+            Graph(
+                name="T", version="1.0.0",
+                nodes=[
+                    {"id": "a", "name": "A", "execute": {"url": "a.md"},
+                     "route": {"goto": "ghost"}},
+                ],
+            )
+
+    def test_node_route_else_unknown_target_rejected(self):
+        with pytest.raises(ValidationError, match="else goto 'ghost'"):
+            Graph(
+                name="T", version="1.0.0",
+                nodes=[
+                    {"id": "a", "name": "A", "execute": {"url": "a.md"},
+                     "route": {
+                         "cases": [{"when": "x", "goto": "b"}],
+                         "else": "ghost",
+                     }},
+                    {"id": "b", "name": "B", "execute": {"url": "b.md"}},
+                ],
+            )
+
+    def test_node_route_list_goto_unknown_rejected(self):
+        with pytest.raises(ValidationError, match="goto 'ghost'"):
+            Graph(
+                name="T", version="1.0.0",
+                nodes=[
+                    {"id": "a", "name": "A", "execute": {"url": "a.md"},
+                     "route": {"goto": ["b", "ghost"]}},
+                    {"id": "b", "name": "B", "execute": {"url": "b.md"}},
+                ],
+            )
+
+    def test_inline_route_node_cannot_be_dep(self):
+        # Inline-route nodes dispatch via Command; static depends_on to
+        # them would double-trigger the goto target.
+        with pytest.raises(ValidationError, match="depends on route"):
+            Graph(
+                name="T", version="1.0.0",
+                nodes=[
+                    {"id": "a", "name": "A", "execute": {"url": "a.md"},
+                     "route": {"goto": "b"}},
+                    {"id": "b", "name": "B", "execute": {"url": "b.md"}},
+                    {"id": "c", "name": "C", "execute": {"url": "c.md"},
+                     "depends_on": ["a"]},
+                ],
+            )
+
+    def test_node_cannot_have_both_route_and_legacy_route_execute(self):
+        with pytest.raises(ValidationError, match="both `route:` and"):
+            Graph(
+                name="T", version="1.0.0",
+                nodes=[
+                    {"id": "a", "name": "A", "depends_on": [],
+                     "execute": {
+                         "type": "route",
+                         "cases": [{"when": "x", "goto": "b"}],
+                         "else": "b",
+                     },
+                     "route": {"goto": "b"}},
+                    {"id": "b", "name": "B", "execute": {"url": "b.md"}},
+                ],
+            )
+
+    def test_standalone_inline_route(self):
+        # Node with route but no execute — replaces legacy
+        # Execute.type=route. Validates the same way (target resolution).
+        config = Graph(
+            name="T", version="1.0.0",
+            nodes=[
+                {"id": "produce", "name": "P", "execute": {"url": "p.md"}},
+                {"id": "dispatch", "name": "D", "depends_on": ["produce"],
+                 "route": {
+                     "cases": [{"when": "True", "goto": "ship"}],
+                     "else": "__end__",
+                 }},
+                {"id": "ship", "name": "S", "execute": {"url": "s.md"}},
+            ],
+        )
+        assert config.nodes[1].execute is None
+        assert config.nodes[1].route is not None
 
 
 class TestDependencyValidation:

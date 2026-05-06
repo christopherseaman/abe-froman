@@ -58,6 +58,22 @@ class WorkflowState(TypedDict):
     # nodes. Set by the subgraph wrapper before subgraph invocation; not
     # populated at the top level. Merged into build_context output.
     node_inputs: NotRequired[dict[str, str]]
+    # Inline-route sender threading (Stage 5c). Set by an inline-route
+    # node's `_route_X` synthetic node when it emits Command(goto=...);
+    # read by the goto target's `build_context` to bind `{{sender}}` /
+    # `{{sender_id}}` / `{{sender_*}}` and (when include_eval=True) to
+    # auto-prepend the neutral eval preamble. Last-write-wins via
+    # `_merge_updates`'s default overwrite path — no REDUCER entry.
+    _route_sender: NotRequired[str]
+    _route_include_eval: NotRequired[bool]
+    # Pre-built eval preamble string. The synthetic `_route_<id>`
+    # builds this at dispatch time when `include_eval: true` is set on
+    # the matched case AND the source node has an evaluation that
+    # produced a result. ``_dispatch_prompt`` reads it from context
+    # (via build_context) and concatenates before the rendered prompt
+    # body — auto-prepend, no template syntax required. Empty string
+    # or absent = no preamble.
+    _route_eval_preamble: NotRequired[str]
 
 
 def make_initial_state(

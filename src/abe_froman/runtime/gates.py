@@ -10,10 +10,101 @@ from typing import Any
 from abe_froman.schema.models import Evaluation, OutputContract
 
 
+def build_eval_preamble(
+    last_result: dict[str, Any],
+    evaluation: Any,
+    *,
+    attempt: int | None = None,
+    total_attempts: int | None = None,
+) -> str:
+    """Format an evaluation record as a neutral preamble block.
+
+    Same builder serves two callers:
+    1. Same-node retry — `compile/nodes.py::inject_retry_reason` passes
+       ``attempt`` and ``total_attempts`` populated from
+       ``state.retries``; the preamble carries an "Attempt N of M."
+       footer line so the model knows how many tries remain.
+    2. Goto target with ``include_eval=True`` — the synthetic
+       ``_route_<id>`` writes the preamble into state under
+       ``_route_eval_preamble``; ``_dispatch_prompt`` auto-prepends it
+       to the rendered template body. Caller passes both arguments as
+       ``None``; the footer is omitted.
+
+    Lives in ``runtime/gates.py`` (alongside ``EvaluationResult``)
+    rather than ``compile/nodes.py`` so the compile-layer route
+    dispatcher can import it without violating the layer split
+    (compile → runtime imports are allowed; the reverse is not).
+
+    Neutral wording — no "failed" / "fail" / "failure" framing.
+    A ``blocking: false`` settled score below threshold is not a
+    failure, and goto targets opting in via ``include_eval: true``
+    may receive contextual non-failure information (e.g., a passing
+    score with feedback worth carrying forward).
+    """
+    lines: list[str] = []
+
+    threshold = getattr(evaluation, "threshold", None) if evaluation else None
+    dimensions = getattr(evaluation, "dimensions", None) if evaluation else None
+
+    if dimensions:
+        dim_scores = last_result.get("scores", {}) or {}
+        dim_reasons = last_result.get("reasons", {}) or {}
+        head_lines = ["Previous evaluation:"]
+        for d in dimensions:
+            score = dim_scores.get(d.field, 0.0)
+            reason = dim_reasons.get(d.field)
+            if reason:
+                head_lines.append(
+                    f"- {d.field}={score:.2f} (min={d.min}): {reason}"
+                )
+            else:
+                head_lines.append(f"- {d.field}={score:.2f} (min={d.min})")
+        # Surface any extra dimensions the gate reported beyond what
+        # was declared, so unexpected coverage is visible.
+        declared = {d.field for d in dimensions}
+        for k, v in dim_scores.items():
+            if k in declared:
+                continue
+            reason = dim_reasons.get(k)
+            if reason:
+                head_lines.append(f"- {k}={v:.2f}: {reason}")
+            else:
+                head_lines.append(f"- {k}={v:.2f}")
+        lines.append("\n".join(head_lines))
+    else:
+        prev_score = last_result.get("score", 0.0) or 0.0
+        if threshold is not None:
+            lines.append(
+                f"Previous evaluation: score={prev_score:.2f}, "
+                f"threshold={threshold}."
+            )
+        else:
+            lines.append(f"Previous evaluation: score={prev_score:.2f}.")
+
+    if last_result.get("feedback"):
+        lines.append(f"Feedback: {last_result['feedback']}")
+    unmet = last_result.get("pass_criteria_unmet") or []
+    if unmet:
+        lines.append(
+            "Unmet criteria:\n" + "\n".join(f"- {c}" for c in unmet)
+        )
+    met = last_result.get("pass_criteria_met") or []
+    if met:
+        lines.append(
+            "Met criteria:\n" + "\n".join(f"- {c}" for c in met)
+        )
+
+    if attempt is not None and total_attempts is not None:
+        lines.append(f"Attempt {attempt} of {total_attempts}.")
+
+    return "\n\n".join(lines)
+
+
 @dataclass
 class EvaluationResult:
     score: float
     scores: dict[str, float] = field(default_factory=dict)
+    reasons: dict[str, str] = field(default_factory=dict)
     feedback: str | None = None
     pass_criteria_met: list[str] = field(default_factory=list)
     pass_criteria_unmet: list[str] = field(default_factory=list)
@@ -22,6 +113,7 @@ class EvaluationResult:
 _NON_SCORE_KEYS = frozenset(
     {"feedback", "pass_criteria_met", "pass_criteria_unmet", "score"}
 )
+_REASON_SUFFIX = "_reason"
 
 
 def _parse_evaluation_output(
@@ -55,8 +147,19 @@ def _parse_evaluation_output(
         )
 
     dim_scores: dict[str, float] = {}
+    dim_reasons: dict[str, str] = {}
     for k, v in data.items():
-        if k not in _NON_SCORE_KEYS and isinstance(v, (int, float)):
+        if k in _NON_SCORE_KEYS:
+            continue
+        # `<dim>_reason` is reserved for per-dimension string rationale.
+        # If a key carries the suffix, capture string values into
+        # `reasons[<dim>]`; non-string values are dropped silently
+        # (likely author error, never a numeric dim score).
+        if k.endswith(_REASON_SUFFIX) and len(k) > len(_REASON_SUFFIX):
+            if isinstance(v, str):
+                dim_reasons[k[: -len(_REASON_SUFFIX)]] = v
+            continue
+        if isinstance(v, (int, float)):
             dim_scores[k] = float(v)
 
     if "score" in data:
@@ -80,6 +183,7 @@ def _parse_evaluation_output(
     return EvaluationResult(
         score=score,
         scores=dim_scores,
+        reasons=dim_reasons,
         feedback=data.get("feedback"),
         pass_criteria_met=list(met) if isinstance(met, list) else [],
         pass_criteria_unmet=list(unmet) if isinstance(unmet, list) else [],

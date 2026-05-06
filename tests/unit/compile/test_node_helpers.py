@@ -107,20 +107,22 @@ class TestBuildContext:
             "node_structured_outputs": {"a": {"k": "v"}},
         }
         ctx = build_context(node, state)
-        assert ctx == {"a": "out-a", "a_structured": {"k": "v"}}
+        # `evals` is always-bound (Stage 5c) — empty dict when no
+        # evaluations have run.
+        assert ctx == {"a": "out-a", "a_structured": {"k": "v"}, "evals": {}}
 
     def test_no_matching_deps(self):
         node = _phase(depends_on=["b"])
         state = {"node_outputs": {"a": "out-a"}}
-        assert build_context(node, state) == {}
+        assert build_context(node, state) == {"evals": {}}
 
     def test_empty_deps(self):
-        assert build_context(_phase(), {"node_outputs": {"a": "x"}}) == {}
+        assert build_context(_phase(), {"node_outputs": {"a": "x"}}) == {"evals": {}}
 
     def test_output_only_no_structured(self):
         node = _phase(depends_on=["a"])
         state = {"node_outputs": {"a": "text"}}
-        assert build_context(node, state) == {"a": "text"}
+        assert build_context(node, state) == {"a": "text", "evals": {}}
 
     def test_projects_dep_worktree_path(self):
         """`{{dep_worktree}}` is populated from state.node_worktrees."""
@@ -295,7 +297,9 @@ class TestInjectRetryReason:
         ctx = inject_retry_reason({}, node, state, 3)
         assert "score=0.50" in ctx["_retry_reason"]
         assert "threshold=0.8" in ctx["_retry_reason"]
-        assert "retry 1 of 3" in ctx["_retry_reason"]
+        assert "Attempt 1 of 3" in ctx["_retry_reason"]
+        # Neutral preamble: no "failed" framing.
+        assert "failed" not in ctx["_retry_reason"].lower()
 
     def test_no_gate_no_injection(self):
         state = {"retries": {"p1": 1}}
@@ -355,8 +359,9 @@ class TestInjectRetryReason:
         reason = ctx["_retry_reason"]
         assert "score=0.40" in reason
         assert "threshold=0.8" in reason
-        assert "retry 1 of 3" in reason
+        assert "Attempt 1 of 3" in reason
         assert "Feedback:" not in reason
+        assert "failed" not in reason.lower()
         assert "Unmet criteria:" not in reason
 
 

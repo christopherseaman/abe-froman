@@ -526,7 +526,9 @@ class TestRetryContextInjection:
         assert "_retry_reason" in ctx
         assert "0.30" in ctx["_retry_reason"]
         assert "threshold=1.0" in ctx["_retry_reason"]
-        assert "retry 1 of 2" in ctx["_retry_reason"].lower()
+        assert "Attempt 1 of 2" in ctx["_retry_reason"]
+        # Neutral preamble — no "failed" framing.
+        assert "failed" not in ctx["_retry_reason"].lower()
 
     @pytest.mark.asyncio
     async def test_no_retry_reason_on_first_attempt(self, tmp_path):

@@ -19,6 +19,7 @@ from abe_froman.compile.evaluation import (
 )
 from abe_froman.runtime.gates import (
     EvaluationResult,
+    build_eval_preamble,
     scaffold_output_directory,
     validate_output_contract,
 )
@@ -139,6 +140,39 @@ def build_context(node: Node, state: WorkflowState) -> dict[str, Any]:
         context["_deps"] = _json.dumps(dep_outputs_map)
         if dep_worktrees_map:
             context["_dep_worktrees"] = _json.dumps(dep_worktrees_map)
+
+    # Stage 5c: cross-cutting eval access. `evals[node_id]` returns the
+    # latest evaluation result dict for any node that has run an eval.
+    # Always-on so templates can reference `{{evals.classify.score}}`
+    # without declaring classify as a dep.
+    history = state.get("evaluations", {}) or {}
+    context["evals"] = {
+        nid: (records[-1].get("result", {}) or {}) if records else {}
+        for nid, records in history.items()
+    }
+
+    # Stage 5c: inline-route sender threading. When this node was
+    # reached via Command(goto=...) from a `_route_<id>` dispatcher,
+    # state carries the source node id. Always-bound identity vars:
+    # sender_id (str), sender (raw output), sender_structured
+    # (parsed if available), sender_worktree (path or None).
+    sender_id = state.get("_route_sender")
+    if sender_id is not None:
+        context["sender_id"] = sender_id
+        if sender_id in outputs:
+            context["sender"] = outputs[sender_id]
+        if sender_id in structured:
+            context["sender_structured"] = structured[sender_id]
+        if sender_id in worktrees:
+            context["sender_worktree"] = worktrees[sender_id]
+
+    # Pre-built eval preamble (auto-prepended by `_dispatch_prompt`
+    # when present and non-empty). The synthetic `_route_<id>` writes
+    # this into state when `include_eval: true` on the matched case.
+    preamble = state.get("_route_eval_preamble")
+    if preamble:
+        context["_route_eval_preamble"] = preamble
+
     return context
 
 
@@ -150,6 +184,13 @@ def inject_retry_reason(
     *,
     node_id: str | None = None,
 ) -> dict[str, Any]:
+    """Auto-prepend the eval preamble for retry attempts.
+
+    Reads `state.evaluations[<key>][-1]` for the last result, formats
+    it via `build_eval_preamble` with retry context (Attempt N of M),
+    and stuffs the rendered string into `context["_retry_reason"]` —
+    the prompt template prepends `{{_retry_reason}}` to its body.
+    """
     key = node_id or node.id
     retry_count = state.get("retries", {}).get(key, 0)
     if retry_count == 0 or not node.evaluation:
@@ -160,31 +201,10 @@ def inject_retry_reason(
         return context
     last_result = records[-1].get("result", {}) or {}
 
-    evaluation = node.evaluation
-    if evaluation.dimensions:
-        dim_scores = last_result.get("scores", {}) or {}
-        score_parts = [
-            f"{d.field}={dim_scores.get(d.field, 0.0):.2f} (min={d.min})"
-            for d in evaluation.dimensions
-        ]
-        score_summary = "; ".join(score_parts)
-    else:
-        prev_score = last_result.get("score", 0.0) or 0.0
-        score_summary = f"score={prev_score:.2f}, threshold={evaluation.threshold}"
-
-    lines = [
-        f"Attempt {retry_count} failed evaluation ({score_summary}). "
-        f"This is retry {retry_count} of {max_retries}."
-    ]
-    if last_result.get("feedback"):
-        lines.append(f"Feedback: {last_result['feedback']}")
-    unmet = last_result.get("pass_criteria_unmet") or []
-    if unmet:
-        lines.append(
-            "Unmet criteria:\n" + "\n".join(f"- {c}" for c in unmet)
-        )
-
-    context["_retry_reason"] = "\n\n".join(lines)
+    context["_retry_reason"] = build_eval_preamble(
+        last_result, node.evaluation,
+        attempt=retry_count, total_attempts=max_retries,
+    )
     return context
 
 
@@ -247,6 +267,7 @@ def _evaluation_result_payload(
     return {
         "score": eval_result.score,
         "scores": scores,
+        "reasons": dict(eval_result.reasons),
         "feedback": eval_result.feedback,
         "pass_criteria_met": list(eval_result.pass_criteria_met),
         "pass_criteria_unmet": list(eval_result.pass_criteria_unmet),

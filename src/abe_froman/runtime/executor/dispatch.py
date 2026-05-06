@@ -169,6 +169,17 @@ class DispatchExecutor:
             return applied
         rendered = render_template(applied, context)
 
+        # Stage 5c: auto-prepend the eval preamble for inline-route
+        # goto targets that opted in via `include_eval: true`. The
+        # synthetic `_route_<id>` builds the string and writes it to
+        # state; build_context surfaces it as `_route_eval_preamble`.
+        # Concatenated AFTER Jinja render so author-template content
+        # is preserved verbatim — preamble appears as a system-style
+        # block before the body.
+        eval_preamble = context.get("_route_eval_preamble")
+        if eval_preamble:
+            rendered = f"{eval_preamble}\n\n{rendered}"
+
         # PromptParams.model overrides Node.model overrides Settings.default.
         # Explicit-None tests (not `or`) so an authored zero/empty value
         # — e.g. `timeout: 0` to mean "kill immediately" — wins over the

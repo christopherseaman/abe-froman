@@ -13,6 +13,7 @@ from abe_froman.compile.dynamic import _make_final_fan_out_node, _make_fan_out_n
 from abe_froman.compile.nodes import _make_evaluation_node, _make_execution_node
 from abe_froman.compile.route import build_route_namespace, evaluate_case
 from abe_froman.compile.subgraph import node_subgraph_path
+from abe_froman.runtime.gates import build_eval_preamble
 from abe_froman.runtime.state import WorkflowState
 from abe_froman.schema.models import Graph, Node, Settings
 
@@ -27,7 +28,15 @@ def _find_terminal_nodes(config: Graph) -> set[str]:
     return {p.id for p in config.nodes if p.id not in depended_on}
 
 
-def _resolve_goto(target: str) -> str:
+def _resolve_goto(target: str | list[str]) -> str | list[str]:
+    """Normalize ``__end__`` → ``END`` for str or list-valued goto.
+
+    Supports list-valued goto (Stage 5c) for static fan-out via
+    `Command(goto=[...])` — LangGraph 1.x dispatches each target as
+    its own concurrent edge in the next super-step.
+    """
+    if isinstance(target, list):
+        return [END if t == "__end__" else t for t in target]
     return END if target == "__end__" else target
 
 
@@ -39,18 +48,69 @@ def _is_subgraph_ref(node: Node) -> bool:
     return node_subgraph_path(node) is not None
 
 
-def _is_route(node: Node) -> bool:
+def _has_legacy_route(node: Node) -> bool:
+    """Pre-Stage-5c standalone route: `execute: { type: route, ... }`."""
     return node.execute is not None and node.execute.type == "route"
 
 
-def _make_route_node(node: Node):
-    """Build the async fn for a route node — returns Command(goto=<id>).
+def _has_inline_route(node: Node) -> bool:
+    """Stage 5c inline route: `Node.route` block. Coexists with execute,
+    or stands alone (replaces legacy `Execute.type=route`)."""
+    return node.route is not None
 
-    Cases evaluate first-match-wins via simpleeval; broken `when:`
-    expressions raise loudly with route id + case context (no silent
-    fall-through).
+
+def _is_route(node: Node) -> bool:
+    """Standalone route — node whose only forward dispatch is a route
+    block, no execute body. Either spelling counts."""
+    return _has_legacy_route(node) or (
+        _has_inline_route(node) and node.execute is None
+    )
+
+
+def _has_synthetic_route(node: Node) -> bool:
+    """Node that pairs `execute:` with inline `route:` — needs a
+    synthetic `_route_<id>` dispatcher node post-execute (and post-
+    eval if present)."""
+    return _has_inline_route(node) and node.execute is not None
+
+
+def _collect_route_targets(node: Node) -> set[str]:
+    """Every node id this node's route block (legacy or inline) can
+    dispatch to. Used to mark goto-targets so they don't get a stray
+    START → fallback edge.
     """
-    assert node.execute is not None and node.execute.type == "route"
+    targets: set[str] = set()
+
+    def _add(tgt: Any) -> None:
+        ids = tgt if isinstance(tgt, list) else [tgt]
+        for t in ids:
+            if t != "__end__" and t is not None:
+                targets.add(t)
+
+    if _has_legacy_route(node):
+        for case in node.execute.cases:
+            _add(case.goto)
+        _add(node.execute.else_)
+    elif _has_inline_route(node):
+        r = node.route
+        if r.goto is not None:
+            _add(r.goto)
+        for case in r.cases:
+            _add(case.goto)
+        if r.else_ is not None:
+            _add(r.else_.goto)
+    return targets
+
+
+def _make_route_node(node: Node):
+    """Build the async fn for a LEGACY standalone route node
+    (`execute: { type: route, ... }`). Returns Command(goto=<id>).
+
+    Kept for backwards compatibility until commit 3 removes
+    `Execute.type=route`. Inline route (Node.route) uses
+    `_make_inline_route_node` instead.
+    """
+    assert _has_legacy_route(node)
     cases = node.execute.cases
     else_target = node.execute.else_
 
@@ -68,6 +128,97 @@ def _make_route_node(node: Node):
         return Command(goto=_resolve_goto(else_target))
 
     node_fn.__name__ = f"route_{node.id}"
+    return node_fn
+
+
+def _make_inline_route_node(node: Node):
+    """Build the async fn for an inline-route dispatcher (Node.route).
+
+    Used in two configurations:
+    1. **Standalone** — node has `route:` and no `execute:`. Registered
+       under ``node.id``; runs as the node itself.
+    2. **Synthetic post-execute** — node has both `execute:` and
+       `route:`. The synthetic `_route_<id>` runs after the execute
+       node (and after eval, if present) and resolves the route block.
+
+    Returns Command(update={...}, goto=resolved). Update includes:
+
+    - ``_route_sender``: source node id (always).
+    - ``_route_include_eval``: bool flag from the matched case.
+    - ``_route_eval_preamble``: pre-built preamble string. Populated
+      only when ``include_eval=True`` on the matched case AND the
+      source node has ``evaluation:`` AND a result is recorded. Empty
+      string otherwise (overwrites any stale value from a prior
+      Command emission). ``_dispatch_prompt`` auto-prepends a
+      non-empty preamble before the rendered prompt body.
+    """
+    assert _has_inline_route(node)
+    route = node.route
+    sender_id = node.id
+
+    def _emit(target: Any, include_eval: bool) -> Command:
+        preamble = ""
+        if include_eval and node.evaluation is not None:
+            # Built lazily here (not at compile) because the eval
+            # result is in state, set by `_eval_<id>` before this
+            # dispatcher fires. Fan-out children would be in
+            # `state.evaluations[child_id]` — but inline route on
+            # fan-out children is forbidden by the dynamic.py
+            # composition rules, so this only ever sees top-level
+            # evals.
+            pass  # filled below — _emit is closed over state in node_fn
+
+        return Command(
+            update={
+                "_route_sender": sender_id,
+                "_route_include_eval": include_eval,
+                "_route_eval_preamble": preamble,
+            },
+            goto=_resolve_goto(target),
+        )
+
+    async def node_fn(state: WorkflowState) -> Command:
+        from abe_froman.compile.route import build_safe_funcs
+        ns = build_route_namespace(state, node.depends_on)
+        funcs = build_safe_funcs(state)
+
+        def _build_preamble(include_eval: bool) -> str:
+            if not include_eval or node.evaluation is None:
+                return ""
+            records = (state.get("evaluations") or {}).get(sender_id) or []
+            if not records:
+                return ""
+            last_result = records[-1].get("result", {}) or {}
+            return build_eval_preamble(last_result, node.evaluation)
+
+        def _command(target: Any, include_eval: bool) -> Command:
+            return Command(
+                update={
+                    "_route_sender": sender_id,
+                    "_route_include_eval": include_eval,
+                    "_route_eval_preamble": _build_preamble(include_eval),
+                },
+                goto=_resolve_goto(target),
+            )
+
+        if route.goto is not None:
+            return _command(route.goto, route.include_eval)
+
+        for case in route.cases:
+            try:
+                matched = evaluate_case(case.when, ns, functions=funcs)
+            except Exception as e:
+                raise ValueError(
+                    f"Route '{sender_id}' case {case.when!r}: {e}"
+                ) from e
+            if matched:
+                return _command(case.goto, case.include_eval)
+
+        # else (always present when cases is non-empty per validation)
+        else_ = route.else_
+        return _command(else_.goto, else_.include_eval)
+
+    node_fn.__name__ = f"route_{sender_id}"
     return node_fn
 
 
@@ -277,6 +428,13 @@ def build_workflow_graph(
     gated_fan_out_template_ids: set[str] = set()
     subgraph_node_ids: set[str] = set()
     route_node_ids: set[str] = set()
+    # Stage 5c: nodes carrying `Node.route` block. `synthetic_route_ids`
+    # is the subset that ALSO has `execute:` — they get a synthetic
+    # `_route_<id>` dispatcher post-execute. `inline_route_ids` includes
+    # both standalone and synthetic forms (used to skip terminal-end
+    # wiring; their exit is via Command(goto=)).
+    inline_route_ids: set[str] = set()
+    synthetic_route_ids: set[str] = set()
 
     for node in config.nodes:
         if node.evaluation:
@@ -293,6 +451,10 @@ def build_workflow_graph(
                 detect_config_cycle(node_subgraph_path(node), base_dir=base_dir)
         if _is_route(node):
             route_node_ids.add(node.id)
+        if _has_inline_route(node):
+            inline_route_ids.add(node.id)
+            if _has_synthetic_route(node):
+                synthetic_route_ids.add(node.id)
 
     # ----- Node registration -----
 
@@ -324,14 +486,29 @@ def build_workflow_graph(
             )
             builder.add_node(node.id, wrapper)
         elif node.id in route_node_ids:
-            builder.add_node(node.id, _make_route_node(node))
+            # Standalone route: legacy `Execute.type=route` OR new
+            # inline `Node.route` with no execute. Dispatched via
+            # Command from the node fn itself.
+            if _has_inline_route(node):
+                builder.add_node(node.id, _make_inline_route_node(node))
+            else:
+                builder.add_node(node.id, _make_route_node(node))
         else:
             builder.add_node(
                 node.id,
                 _make_execution_node(
-                    node, config, executor, effective_settings=settings,
+                    node, config, executor,
+                    effective_settings=settings,
                 ),
             )
+
+    # Synthetic _route_<id> dispatchers for execute+route nodes.
+    # They fire after the execute body (and after eval, if present)
+    # settles, resolving the route and emitting Command(goto=...) with
+    # _route_sender / _route_include_eval state updates.
+    for node_id in synthetic_route_ids:
+        node = node_map[node_id]
+        builder.add_node(f"_route_{node_id}", _make_inline_route_node(node))
 
     # Evaluation nodes for every gated node (top-level, dynamic parents,
     # and gated final nodes). Dynamic parents' eval runs before the fan-
@@ -407,16 +584,12 @@ def build_workflow_graph(
 
     # Goto targets of routes: a node reached only by Command(goto=) must
     # not get a START → node fallback edge (would fire it unconditionally
-    # regardless of routing).
+    # regardless of routing). Covers legacy `Execute.type=route`,
+    # standalone `Node.route`, and `_route_<id>` synthetic dispatchers
+    # (their goto targets are also Command-driven).
     route_goto_targets: set[str] = set()
     for node in config.nodes:
-        if not _is_route(node):
-            continue
-        for case in node.execute.cases:
-            if case.goto != "__end__":
-                route_goto_targets.add(case.goto)
-        if node.execute.else_ != "__end__":
-            route_goto_targets.add(node.execute.else_)
+        route_goto_targets |= _collect_route_targets(node)
 
     has_incoming: set[str] = set()
 
@@ -441,8 +614,26 @@ def build_workflow_graph(
     for node in config.nodes:
         if node.id not in gated_node_ids or node.id in dynamic_fan_out_ids:
             continue
-        deps_of = [p.id for p in config.nodes if node.id in p.depends_on]
-        _wire_evaluation_pair(builder, node.id, deps_of or [END])
+        if node.id in synthetic_route_ids:
+            # execute + eval + route: pass target is the synthetic
+            # `_route_<id>` dispatcher, which then emits Command(goto=)
+            # to the actual route case target. Dependents-via-depends_on
+            # is forbidden for inline-route nodes (validated in schema),
+            # so deps_of is guaranteed empty.
+            _wire_evaluation_pair(builder, node.id, [f"_route_{node.id}"])
+        else:
+            deps_of = [p.id for p in config.nodes if node.id in p.depends_on]
+            _wire_evaluation_pair(builder, node.id, deps_of or [END])
+
+    # ----- Inline-route synthetic node wiring (ungated execute+route) -----
+    # For nodes with execute + route but NO eval, plain edge from the
+    # execute node to the synthetic dispatcher. Gated case is already
+    # wired above via the eval pair's pass target.
+
+    for node_id in synthetic_route_ids:
+        if node_id in gated_node_ids:
+            continue
+        builder.add_edge(node_id, f"_route_{node_id}")
 
     # ----- Dynamic node wiring -----
 
@@ -493,12 +684,19 @@ def build_workflow_graph(
         builder.add_conditional_edges(dynamic_source, router, route_map)
 
     # ----- Terminal plain-end edges for ungated, non-dynamic nodes -----
+    # Inline-route nodes (standalone or execute+route) drive their exit
+    # via Command(goto=...), so they must not get a static node→END
+    # edge — that would create a parallel path to END alongside the
+    # Command-driven path. Legacy route nodes are excluded by route_node_ids
+    # check; new inline forms are excluded by inline_route_ids.
 
     for node in config.nodes:
         if (
             node.id in terminal_ids
             and node.id not in gated_node_ids
             and node.id not in dynamic_fan_out_ids
+            and node.id not in route_node_ids
+            and node.id not in inline_route_ids
         ):
             builder.add_edge(node.id, END)
 

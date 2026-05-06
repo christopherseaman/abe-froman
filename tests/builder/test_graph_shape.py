@@ -196,6 +196,96 @@ class TestGateRouting:
         }
 
 
+class TestInlineRouteShape:
+    """Stage 5c: `Node.route` block compiles to expected LangGraph shape."""
+
+    def test_standalone_inline_route(self):
+        """Inline route with no execute body: node IS the dispatcher."""
+        config = make_config([
+            {"id": "produce", "name": "P", "execute": {"url": "p.md"}},
+            {"id": "dispatch", "name": "D", "depends_on": ["produce"],
+             "route": {
+                 "cases": [{"when": "True", "goto": "ship"}],
+                 "else": "__end__",
+             }},
+            {"id": "ship", "name": "S", "execute": {"url": "s.md"}},
+        ])
+        graph = build_workflow_graph(config)
+        nodes = graph.get_graph().nodes
+        # No synthetic _route_<id> for standalone form — the node fn itself dispatches.
+        assert "_route_dispatch" not in nodes
+        assert "dispatch" in nodes
+        assert "produce" in nodes
+        assert "ship" in nodes
+
+    def test_execute_plus_route_creates_synthetic(self):
+        """execute + route: _route_<id> synthetic dispatcher fires post-execute."""
+        config = make_config([
+            {"id": "classify", "name": "C", "execute": {"url": "c.md"},
+             "route": {"goto": "ship"}},
+            {"id": "ship", "name": "S", "execute": {"url": "s.md"}},
+        ])
+        graph = build_workflow_graph(config)
+        nodes = graph.get_graph().nodes
+        assert "classify" in nodes
+        assert "_route_classify" in nodes
+        edges = _edges(graph)
+        # Plain edge: execute → synthetic dispatcher
+        assert ("classify", "_route_classify") in edges
+
+    def test_execute_plus_eval_plus_route_chains_through_eval(self):
+        """execute + eval + route: pass target of _eval_<id> is _route_<id>."""
+        config = make_config([
+            {"id": "classify", "name": "C",
+             "execute": {"url": "c.md"},
+             "evaluation": {"validator": "v.py", "threshold": 0.8},
+             "route": {"goto": "ship"}},
+            {"id": "ship", "name": "S", "execute": {"url": "s.md"}},
+        ])
+        graph = build_workflow_graph(config)
+        nodes = graph.get_graph().nodes
+        assert {"classify", "_eval_classify", "_route_classify", "ship"} <= set(nodes)
+        edges = _edges(graph)
+        # execute → eval (plain), eval has conditional edges that include _route_classify
+        assert ("classify", "_eval_classify") in edges
+        cond = _conditional_edges(graph)
+        assert ("_eval_classify", "_route_classify") in cond
+
+    def test_list_valued_goto_no_terminal_end_edge(self):
+        """`route: { goto: [a, b] }` produces Command(goto=[a,b]); the
+        source node must NOT get a static node→END edge."""
+        config = make_config([
+            {"id": "src", "name": "S", "execute": {"url": "s.md"},
+             "route": {"goto": ["a", "b"]}},
+            {"id": "a", "name": "A", "execute": {"url": "a.md"}},
+            {"id": "b", "name": "B", "execute": {"url": "b.md"}},
+        ])
+        graph = build_workflow_graph(config)
+        edges = _edges(graph)
+        assert ("src", "_route_src") in edges
+        # No spurious static src→END (would compete with Command(goto=)).
+        # LangGraph may infer _route_src→END as a graph-introspection
+        # artifact since the synthetic node returns Command without
+        # static edges; that's a framework display detail, not a
+        # routing bug, so we don't assert against it.
+        assert ("src", END) not in edges
+
+    def test_inline_route_targets_skip_start_fallback(self):
+        """Goto targets that are otherwise unreached should not get a
+        START → fallback edge — they're meant to be reached only via
+        Command(goto=...) from the route."""
+        config = make_config([
+            {"id": "src", "name": "S", "execute": {"url": "s.md"},
+             "route": {"goto": "tgt"}},
+            {"id": "tgt", "name": "T", "execute": {"url": "t.md"}},
+        ])
+        graph = build_workflow_graph(config)
+        edges = _edges(graph)
+        # src is the only entry node; tgt is reached via Command.
+        assert (START, "src") in edges
+        assert (START, "tgt") not in edges
+
+
 class TestModelConfig:
     def test_model_passthrough_in_config(self):
         config = make_config(

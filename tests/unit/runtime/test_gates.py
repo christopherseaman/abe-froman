@@ -896,7 +896,9 @@ class TestRetryWithFeedback:
         rendered = render_template(template, ctx)
         assert "more depth please" in rendered
         assert "- depth" in rendered
-        assert "Attempt 1 failed" in rendered
+        assert "Attempt 1 of 3" in rendered
+        # Neutral preamble — no "failed" framing.
+        assert "failed" not in rendered.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -931,8 +933,9 @@ class TestInjectRetryReasonFeedback:
             },
         }
         ctx = inject_retry_reason({}, node, state, 3)
-        assert "Attempt 1 failed" in ctx["_retry_reason"]
+        assert "Attempt 1 of 3" in ctx["_retry_reason"]
         assert "Feedback:" not in ctx["_retry_reason"]
+        assert "failed" not in ctx["_retry_reason"].lower()
 
     def test_retry_reason_with_feedback_includes_it(self):
         from abe_froman.compile.nodes import inject_retry_reason
@@ -978,3 +981,117 @@ class TestInjectRetryReasonFeedback:
         ctx = inject_retry_reason({"x": 1}, node, state, 3)
         assert ctx == {"x": 1}
         assert "_retry_reason" not in ctx
+
+
+# ---------------------------------------------------------------------------
+# Parser: <dim>_reason fields preserve per-dimension rationale
+# ---------------------------------------------------------------------------
+
+
+class TestEvaluationReasons:
+    """Stage 5c: LLM gates can return per-dimension reasons via the
+    `<dim>_reason` JSON field convention; parser captures them into
+    `EvaluationResult.reasons`."""
+
+    def test_dim_reason_field_captured(self):
+        from abe_froman.runtime.gates import _parse_evaluation_output
+        raw = json.dumps({
+            "score": 0.55,
+            "coverage": 0.7,
+            "coverage_reason": "missing definitions for X",
+            "quality": 0.4,
+            "quality_reason": "shallow analysis",
+            "feedback": "see per-dim reasons",
+        })
+        result = _parse_evaluation_output(raw)
+        assert result.score == 0.55
+        assert result.scores == {"coverage": 0.7, "quality": 0.4}
+        assert result.reasons == {
+            "coverage": "missing definitions for X",
+            "quality": "shallow analysis",
+        }
+        assert result.feedback == "see per-dim reasons"
+
+    def test_no_reason_fields_means_empty_dict(self):
+        from abe_froman.runtime.gates import _parse_evaluation_output
+        raw = json.dumps({"score": 0.8, "coverage": 0.9})
+        result = _parse_evaluation_output(raw)
+        assert result.reasons == {}
+
+    def test_non_string_reason_is_ignored(self):
+        # `<dim>_reason: <number>` shouldn't crash the parser; it's
+        # neither a numeric dim score (suffix is "_reason") nor a string
+        # reason. Drop silently rather than capture noise.
+        from abe_froman.runtime.gates import _parse_evaluation_output
+        raw = json.dumps({"score": 0.5, "x": 0.7, "x_reason": 42})
+        result = _parse_evaluation_output(raw)
+        assert result.scores == {"x": 0.7}
+        assert "x" not in result.reasons
+
+
+# ---------------------------------------------------------------------------
+# Preamble builder: structural / neutral output
+# ---------------------------------------------------------------------------
+
+
+class TestEvalPreamble:
+    """Stage 5c: build_eval_preamble produces neutral structural text;
+    no "failed" framing; per-dimension reasons surfaced inline."""
+
+    def test_no_dimensions_simple_score(self):
+        from abe_froman.runtime.gates import build_eval_preamble
+        from abe_froman.schema.models import Evaluation
+        evaluation = Evaluation(validator="v.md", threshold=0.8)
+        result = {"score": 0.42, "feedback": None}
+        text = build_eval_preamble(result, evaluation)
+        assert "score=0.42" in text
+        assert "threshold=0.8" in text
+        assert "failed" not in text.lower()
+
+    def test_with_dimensions_and_reasons(self):
+        from abe_froman.runtime.gates import build_eval_preamble
+        from abe_froman.schema.models import Evaluation, DimensionCheck
+        evaluation = Evaluation(
+            validator="v.md",
+            dimensions=[
+                DimensionCheck(field="coverage", min=0.6),
+                DimensionCheck(field="quality", min=0.6),
+            ],
+        )
+        result = {
+            "scores": {"coverage": 0.7, "quality": 0.4},
+            "reasons": {"coverage": "missing X", "quality": "shallow"},
+            "feedback": "see per-dim",
+        }
+        text = build_eval_preamble(result, evaluation)
+        assert "coverage=0.70 (min=0.6): missing X" in text
+        assert "quality=0.40 (min=0.6): shallow" in text
+        assert "Feedback: see per-dim" in text
+        assert "failed" not in text.lower()
+
+    def test_attempt_footer_only_when_provided(self):
+        from abe_froman.runtime.gates import build_eval_preamble
+        result = {"score": 0.5, "feedback": None}
+        without = build_eval_preamble(result, None)
+        with_attempt = build_eval_preamble(
+            result, None, attempt=2, total_attempts=3,
+        )
+        assert "Attempt" not in without
+        assert "Attempt 2 of 3" in with_attempt
+
+    def test_extra_dimensions_surfaced(self):
+        # Gate returned a dimension the evaluation didn't declare —
+        # surface it rather than drop, so unexpected coverage is visible.
+        from abe_froman.runtime.gates import build_eval_preamble
+        from abe_froman.schema.models import Evaluation, DimensionCheck
+        evaluation = Evaluation(
+            validator="v.md",
+            dimensions=[DimensionCheck(field="coverage", min=0.6)],
+        )
+        result = {
+            "scores": {"coverage": 0.7, "extras": 0.3},
+            "reasons": {"extras": "unexpected"},
+        }
+        text = build_eval_preamble(result, evaluation)
+        assert "coverage=0.70" in text
+        assert "extras=0.30: unexpected" in text
