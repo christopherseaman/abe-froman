@@ -33,14 +33,18 @@ Stage 4 → Stage 5b (collapse to execute.url):
 - ``execution: { type: gate_only }`` → omit ``execute:`` (gate-only by elision)
 - ``execution: { type: join }`` → ``execute: { type: "join" }``
 - ``execution: { type: route, cases, else }`` →
-  ``execute: { type: "route", cases, else }``
+  ``route: { cases, else }`` (top-level Node.route, no execute block)
 - ``config: x.yaml`` + top-level ``inputs:`` + ``outputs:`` →
   ``execute: { url: x.yaml, params: { inputs, outputs } }``
 - ``fan_out.template.prompt_file`` → ``fan_out.template.execute: { url }``
 - ``FanOutFinalNode.prompt_file`` / ``.execution`` → ``.execute: ...``
 
+Stage 5b → Stage 5c (inline route):
+- ``execute: { type: route, cases, else }`` → ``route: { cases, else }``
+  on the same node; the ``execute:`` block is dropped entirely.
+
 Stage transforms chain automatically: feeding pre-Stage-4 YAML runs
-both rounds. Idempotent: re-running on Stage-5b YAML is a no-op.
+all rounds. Idempotent: re-running on Stage-5c YAML is a no-op.
 """
 from __future__ import annotations
 
@@ -277,6 +281,53 @@ def _migrate_node_to_execute(
         changes.append(f"{path}: prompt_file → execute.url")
 
 
+def _migrate_legacy_route_to_inline(
+    node: CommentedMap, changes: list[str], path: str,
+) -> None:
+    """Stage 5b → Stage 5c transform: lift ``execute: { type: route }``
+    to a top-level ``route:`` block on the same node, dropping the
+    ``execute:`` block entirely.
+
+    Idempotent: if no legacy route execute is present, returns unchanged.
+    If the node already has a ``route:`` AND a legacy ``execute: route``,
+    that's a mistake — log a warning and skip (validators downstream
+    will surface it to the user).
+    """
+    execute = node.get("execute")
+    if not isinstance(execute, CommentedMap):
+        return
+    if execute.get("type") != "route":
+        return
+
+    if "route" in node:
+        # Both shapes set on the same node — the schema validator already
+        # forbids this combination. Skip the migration and let the
+        # validator surface the error rather than silently overwriting.
+        changes.append(
+            f"{path}: WARNING — node has both legacy `execute: type=route` "
+            f"and inline `route:`; skipping route migration (resolve manually)"
+        )
+        return
+
+    new_route: CommentedMap = CommentedMap()
+    if "cases" in execute:
+        new_route["cases"] = execute["cases"]
+    if "else" in execute:
+        new_route["else"] = execute["else"]
+
+    # Replace `execute:` with `route:` at the same key position so the
+    # rewrite preserves field ordering and any surrounding comments.
+    keys = list(node.keys())
+    pos = keys.index("execute")
+    items = list(node.items())
+    items.pop(pos)
+    items.insert(pos, ("route", new_route))
+    node.clear()
+    for k, v in items:
+        node[k] = v
+    changes.append(f"{path}: execute.type=route → route (inline)")
+
+
 def _migrate_fan_out_template_to_execute(
     fan_out: CommentedMap, changes: list[str], path: str,
 ) -> None:
@@ -339,6 +390,14 @@ def _walk_and_migrate(root: CommentedMap, changes: list[str]) -> None:
             for sib in siblings:
                 sib_id = str(sib.get("id", "?"))
                 _migrate_node_to_execute(sib, changes, f"nodes[{sib_id}]")
+
+            # Stage 5c: lift legacy `execute: { type: route }` to inline
+            # `route:`. Runs AFTER Stage 4→5b so freshly-translated route
+            # executes also get lifted in the same migrate invocation.
+            _migrate_legacy_route_to_inline(node, changes, path)
+            for sib in siblings:
+                sib_id = str(sib.get("id", "?"))
+                _migrate_legacy_route_to_inline(sib, changes, f"nodes[{sib_id}]")
 
             fan_out = node.get("fan_out")
             if isinstance(fan_out, CommentedMap):

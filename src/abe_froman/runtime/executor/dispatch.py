@@ -42,9 +42,11 @@ class DispatchExecutor:
     - execute.url with script extension → _dispatch_script
     - execute.url else (binary path) → _dispatch_binary
     - execute.type=join → no-op (topology marker)
-    - execute.type=route → never reached at runtime (compile-time only)
     - execute.url with .yaml → never reached at runtime (compile-time only)
     - execute=None → no-op (gate-only by elision)
+
+    Inline routes (``Node.route``) are dispatched at compile time via
+    Command(goto=...) and never reach this executor.
     """
 
     def __init__(
@@ -82,14 +84,6 @@ class DispatchExecutor:
 
         if execute.type == "join":
             return ExecutionResult(success=True, output="")
-
-        if execute.type == "route":
-            # Compile-time only — _make_route_node handles routing via
-            # Command(goto=). Reaching here is a programming error.
-            return ExecutionResult(
-                success=False,
-                error=f"Route node '{node.id}' should not reach DispatchExecutor",
-            )
 
         # URL mode
         effective_workdir = workdir or self._workdir

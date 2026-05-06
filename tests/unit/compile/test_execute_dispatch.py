@@ -3,7 +3,7 @@
 Function-level tests cover compile-time recognition of:
     - execute.url=*.yaml → subgraph reference
     - execute.type=join → join sentinel
-    - execute.type=route → route node
+    - inline ``Node.route`` → route node (Stage 5c)
     - cycle detection across execute.url refs
     - subgraph state projection via execute.params.{inputs,outputs}
 
@@ -29,7 +29,9 @@ from abe_froman.schema.models import (
     Execute,
     Graph,
     Node,
+    Route,
     RouteCase,
+    RouteElse,
 )
 
 _ECHO = shutil.which("echo") or "/bin/echo"
@@ -56,18 +58,17 @@ class TestSubgraphRefDetection:
 
 
 class TestRouteDetection:
-    def test_execute_route_recognized(self):
+    def test_inline_route_recognized(self):
         n = Node(
             id="r", name="R",
-            execute=Execute(
-                type="route",
+            route=Route(
                 cases=[RouteCase(when="x > 0", goto="ship")],
-                else_="produce",
+                else_=RouteElse(goto="produce"),
             ),
         )
         assert _is_route(n) is True
-        assert n.execute.cases[0].when == "x > 0"
-        assert n.execute.else_ == "produce"
+        assert n.route.cases[0].when == "x > 0"
+        assert n.route.else_.goto == "produce"
 
     def test_url_node_not_route(self):
         n = Node(id="a", name="A", execute=Execute(url="x.md"))
@@ -168,12 +169,12 @@ class TestCycleDetectionAcrossShapes:
             build_workflow_graph(config, executor=None, _base_dir=tmp_path)
 
 
-class TestRouteCompileViaExecuteShape:
-    """A route authored in execute.{type:route, cases, else} compiles and
-    dispatches via Command(goto=)."""
+class TestRouteCompileViaInlineRoute:
+    """A standalone route authored as inline ``Node.route`` (no execute
+    body) compiles and dispatches via Command(goto=). Stage 5c shape."""
 
     @pytest.mark.asyncio
-    async def test_route_via_execute_shape_dispatches(self, tmp_path):
+    async def test_inline_route_dispatches(self, tmp_path):
         config = Graph(
             name="t", version="1.0",
             nodes=[
@@ -183,10 +184,9 @@ class TestRouteCompileViaExecuteShape:
                 ),
                 Node(
                     id="decide", name="decide", depends_on=["produce"],
-                    execute=Execute(
-                        type="route",
+                    route=Route(
                         cases=[RouteCase(when="True", goto="ship")],
-                        else_="__end__",
+                        else_=RouteElse(goto="__end__"),
                     ),
                 ),
                 Node(

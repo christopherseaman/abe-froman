@@ -1,7 +1,10 @@
-"""Unit tests for the Stage 5b `execute:` schema.
+"""Unit tests for the Stage 5b ``execute:`` schema.
+
+After Stage 5c, ``Execute`` only models URL mode and the join sentinel
+(route lifted to ``Node.route`` — see ``test_route_schema.py`` for that).
 
 Function-level tests cover:
-    - Execute.validate_shape: each of the three modes parses cleanly
+    - Execute.validate_shape: URL and join modes parse cleanly
     - Mutual exclusion of mode-specific fields
     - Node mutual-exclusion validator: execute / execution / config
     - Settings extension parses with new remote-URL fields
@@ -16,7 +19,6 @@ from pydantic import ValidationError
 from abe_froman.schema.models import (
     Execute,
     Node,
-    RouteCase,
     Settings,
 )
 
@@ -32,14 +34,6 @@ class TestExecuteURLMode:
         e = Execute(url="prompts/x.md", params={"model": "opus"})
         assert e.params == {"model": "opus"}
 
-    def test_url_rejects_cases(self):
-        with pytest.raises(ValidationError):
-            Execute(url="x.md", cases=[RouteCase(when="True", goto="y")])
-
-    def test_url_rejects_else(self):
-        with pytest.raises(ValidationError):
-            Execute(url="x.md", else_="y")
-
 
 class TestExecuteJoinMode:
     def test_join_only_parses(self):
@@ -51,62 +45,9 @@ class TestExecuteJoinMode:
         with pytest.raises(ValidationError):
             Execute(type="join", url="x.md")
 
-    def test_join_rejects_cases(self):
-        with pytest.raises(ValidationError):
-            Execute(type="join", cases=[RouteCase(when="True", goto="y")])
-
     def test_join_rejects_params(self):
         with pytest.raises(ValidationError):
             Execute(type="join", params={"x": "y"})
-
-
-class TestExecuteRouteMode:
-    def test_route_with_cases_and_else(self):
-        e = Execute(
-            type="route",
-            cases=[RouteCase(when="x > 0", goto="ship")],
-            else_="produce",
-        )
-        assert e.type == "route"
-        assert len(e.cases) == 1
-        assert e.else_ == "produce"
-
-    def test_route_else_only_legal(self):
-        e = Execute(type="route", cases=[], else_="anywhere")
-        assert e.cases == []
-        assert e.else_ == "anywhere"
-
-    def test_route_missing_else_rejected(self):
-        with pytest.raises(ValidationError) as ei:
-            Execute(type="route", cases=[RouteCase(when="True", goto="x")])
-        assert "else" in str(ei.value).lower()
-
-    def test_route_rejects_url(self):
-        with pytest.raises(ValidationError):
-            Execute(type="route", url="x.md", else_="y")
-
-    def test_route_rejects_params(self):
-        with pytest.raises(ValidationError):
-            Execute(type="route", params={"x": "y"}, else_="y")
-
-
-class TestExecuteAlias:
-    def test_else_alias_in_yaml(self):
-        src = """
-        type: route
-        cases:
-          - when: "True"
-            goto: ship
-        else: produce
-        """
-        e = Execute.model_validate(yaml.safe_load(src))
-        assert e.else_ == "produce"
-
-    def test_else_round_trip_via_alias(self):
-        e = Execute(cases=[], else_="x", type="route")
-        dumped = e.model_dump(by_alias=True)
-        assert "else" in dumped
-        assert "else_" not in dumped
 
 
 class TestExecuteEmpty:
@@ -117,7 +58,7 @@ class TestExecuteEmpty:
 
 
 class TestExecuteModeOverride:
-    """`execute.mode:` forces dispatch routing when the URL extension
+    """``execute.mode:`` forces dispatch routing when the URL extension
     is missing or misleading. Only legal in URL mode."""
 
     def test_url_mode_with_python_override_parses(self):
@@ -142,16 +83,6 @@ class TestExecuteModeOverride:
         with pytest.raises(ValidationError) as ei:
             Execute(type="join", mode="prompt")
         assert "join" in str(ei.value).lower()
-
-    def test_mode_on_route_rejected(self):
-        with pytest.raises(ValidationError) as ei:
-            Execute(
-                type="route",
-                cases=[{"when": "True", "goto": "x"}],
-                else_="y",
-                mode="prompt",
-            )
-        assert "route" in str(ei.value).lower()
 
 
 class TestNodeExecuteShape:
@@ -218,92 +149,6 @@ class TestSettingsExtension:
             "Authorization": "Bearer x"
         }
         assert s.max_remote_fetch_bytes == 1_000_000
-
-
-class TestGraphValidatorOnExecuteRoutes:
-    """Stage-5b routes (execute.type=route) get the same Graph-level
-    validation as Stage-5a routes (execution.type=route)."""
-
-    def test_resolves_real_goto_target(self):
-        from abe_froman.schema.models import Graph
-
-        Graph(
-            name="t", version="1.0",
-            nodes=[
-                Node(id="a", name="A", execute=Execute(url="/usr/bin/echo")),
-                Node(
-                    id="r", name="R", depends_on=["a"],
-                    execute=Execute(
-                        type="route",
-                        cases=[{"when": "True", "goto": "a"}],
-                        else_="__end__",
-                    ),
-                ),
-            ],
-        )
-
-    def test_rejects_unresolved_goto(self):
-        from abe_froman.schema.models import Graph
-
-        with pytest.raises(ValidationError) as ei:
-            Graph(
-                name="t", version="1.0",
-                nodes=[
-                    Node(id="a", name="A", execute=Execute(url="/usr/bin/echo")),
-                    Node(
-                        id="r", name="R", depends_on=["a"],
-                        execute=Execute(
-                            type="route",
-                            cases=[{"when": "True", "goto": "ghost"}],
-                            else_="__end__",
-                        ),
-                    ),
-                ],
-            )
-        assert "ghost" in str(ei.value)
-        assert "Route 'r'" in str(ei.value)
-
-    def test_rejects_unresolved_else(self):
-        from abe_froman.schema.models import Graph
-
-        with pytest.raises(ValidationError) as ei:
-            Graph(
-                name="t", version="1.0",
-                nodes=[
-                    Node(id="a", name="A", execute=Execute(url="/usr/bin/echo")),
-                    Node(
-                        id="r", name="R", depends_on=["a"],
-                        execute=Execute(
-                            type="route",
-                            cases=[],
-                            else_="ghost-else",
-                        ),
-                    ),
-                ],
-            )
-        assert "ghost-else" in str(ei.value)
-
-    def test_rejects_depends_on_execute_route(self):
-        from abe_froman.schema.models import Graph
-
-        with pytest.raises(ValidationError) as ei:
-            Graph(
-                name="t", version="1.0",
-                nodes=[
-                    Node(id="a", name="A", execute=Execute(url="/usr/bin/echo")),
-                    Node(
-                        id="r", name="R", depends_on=["a"],
-                        execute=Execute(type="route", cases=[], else_="__end__"),
-                    ),
-                    Node(
-                        id="downstream", name="D", depends_on=["r"],
-                        execute=Execute(url="/usr/bin/echo"),
-                    ),
-                ],
-            )
-        msg = str(ei.value)
-        assert "downstream" in msg
-        assert "route 'r'" in msg
 
 
 class TestExecuteFromYAML:

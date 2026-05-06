@@ -48,23 +48,16 @@ def _is_subgraph_ref(node: Node) -> bool:
     return node_subgraph_path(node) is not None
 
 
-def _has_legacy_route(node: Node) -> bool:
-    """Pre-Stage-5c standalone route: `execute: { type: route, ... }`."""
-    return node.execute is not None and node.execute.type == "route"
-
-
 def _has_inline_route(node: Node) -> bool:
     """Stage 5c inline route: `Node.route` block. Coexists with execute,
-    or stands alone (replaces legacy `Execute.type=route`)."""
+    or stands alone."""
     return node.route is not None
 
 
 def _is_route(node: Node) -> bool:
     """Standalone route — node whose only forward dispatch is a route
-    block, no execute body. Either spelling counts."""
-    return _has_legacy_route(node) or (
-        _has_inline_route(node) and node.execute is None
-    )
+    block, no execute body."""
+    return _has_inline_route(node) and node.execute is None
 
 
 def _has_synthetic_route(node: Node) -> bool:
@@ -75,9 +68,9 @@ def _has_synthetic_route(node: Node) -> bool:
 
 
 def _collect_route_targets(node: Node) -> set[str]:
-    """Every node id this node's route block (legacy or inline) can
-    dispatch to. Used to mark goto-targets so they don't get a stray
-    START → fallback edge.
+    """Every node id this node's inline route block can dispatch to.
+    Used to mark goto-targets so they don't get a stray START →
+    fallback edge.
     """
     targets: set[str] = set()
 
@@ -87,11 +80,7 @@ def _collect_route_targets(node: Node) -> set[str]:
             if t != "__end__" and t is not None:
                 targets.add(t)
 
-    if _has_legacy_route(node):
-        for case in node.execute.cases:
-            _add(case.goto)
-        _add(node.execute.else_)
-    elif _has_inline_route(node):
+    if _has_inline_route(node):
         r = node.route
         if r.goto is not None:
             _add(r.goto)
@@ -100,35 +89,6 @@ def _collect_route_targets(node: Node) -> set[str]:
         if r.else_ is not None:
             _add(r.else_.goto)
     return targets
-
-
-def _make_route_node(node: Node):
-    """Build the async fn for a LEGACY standalone route node
-    (`execute: { type: route, ... }`). Returns Command(goto=<id>).
-
-    Kept for backwards compatibility until commit 3 removes
-    `Execute.type=route`. Inline route (Node.route) uses
-    `_make_inline_route_node` instead.
-    """
-    assert _has_legacy_route(node)
-    cases = node.execute.cases
-    else_target = node.execute.else_
-
-    async def node_fn(state: WorkflowState) -> Command:
-        ns = build_route_namespace(state, node.depends_on)
-        for case in cases:
-            try:
-                matched = evaluate_case(case.when, ns)
-            except Exception as e:
-                raise ValueError(
-                    f"Route '{node.id}' case {case.when!r}: {e}"
-                ) from e
-            if matched:
-                return Command(goto=_resolve_goto(case.goto))
-        return Command(goto=_resolve_goto(else_target))
-
-    node_fn.__name__ = f"route_{node.id}"
-    return node_fn
 
 
 def _make_inline_route_node(node: Node):
@@ -486,13 +446,9 @@ def build_workflow_graph(
             )
             builder.add_node(node.id, wrapper)
         elif node.id in route_node_ids:
-            # Standalone route: legacy `Execute.type=route` OR new
-            # inline `Node.route` with no execute. Dispatched via
-            # Command from the node fn itself.
-            if _has_inline_route(node):
-                builder.add_node(node.id, _make_inline_route_node(node))
-            else:
-                builder.add_node(node.id, _make_route_node(node))
+            # Standalone inline `Node.route` with no execute. Dispatched
+            # via Command from the node fn itself.
+            builder.add_node(node.id, _make_inline_route_node(node))
         else:
             builder.add_node(
                 node.id,
@@ -584,9 +540,9 @@ def build_workflow_graph(
 
     # Goto targets of routes: a node reached only by Command(goto=) must
     # not get a START → node fallback edge (would fire it unconditionally
-    # regardless of routing). Covers legacy `Execute.type=route`,
-    # standalone `Node.route`, and `_route_<id>` synthetic dispatchers
-    # (their goto targets are also Command-driven).
+    # regardless of routing). Covers standalone `Node.route` and
+    # `_route_<id>` synthetic dispatchers (their goto targets are also
+    # Command-driven).
     route_goto_targets: set[str] = set()
     for node in config.nodes:
         route_goto_targets |= _collect_route_targets(node)
@@ -687,8 +643,8 @@ def build_workflow_graph(
     # Inline-route nodes (standalone or execute+route) drive their exit
     # via Command(goto=...), so they must not get a static node→END
     # edge — that would create a parallel path to END alongside the
-    # Command-driven path. Legacy route nodes are excluded by route_node_ids
-    # check; new inline forms are excluded by inline_route_ids.
+    # Command-driven path. Excluded by route_node_ids and
+    # inline_route_ids.
 
     for node in config.nodes:
         if (

@@ -7,8 +7,9 @@ Function-level + small e2e tests cover the four dispatch branches:
     - join sentinel → no-op output
 
 Plus negative cases: subgraph URL at runtime (compile-time error
-escape), route at runtime (programming error escape), per-mode params
-typo (catches `args:` on a prompt URL), bad commands surfacing OSError.
+escape), per-mode params typo (catches `args:` on a prompt URL), bad
+commands surfacing OSError. Route is dispatched at compile time only
+(via Command(goto=)) and never reaches the runtime dispatcher.
 
 The legacy Stage-4 path (node.execution discriminated union) is
 covered by existing tests and remains green during dual-mode.
@@ -43,24 +44,6 @@ class TestExecuteJoinDispatch:
         result = await executor.execute(node, {}, workdir=str(tmp_path))
         assert result.success is True
         assert result.output == ""
-
-
-class TestExecuteRouteDispatch:
-    @pytest.mark.asyncio
-    async def test_route_at_runtime_is_programming_error(self, tmp_path):
-        """Route nodes are wired at compile time; reaching dispatch is a bug."""
-        node = Node(
-            id="r", name="R",
-            execute=Execute(
-                type="route",
-                cases=[],
-                else_="__end__",
-            ),
-        )
-        executor = DispatchExecutor(workdir=str(tmp_path))
-        result = await executor.execute(node, {}, workdir=str(tmp_path))
-        assert result.success is False
-        assert "should not reach DispatchExecutor" in result.error
 
 
 class TestBinaryDispatch:

@@ -40,10 +40,10 @@ _ECHO = shutil.which("echo") or "/bin/echo"
 
 
 def _route_node(id, depends_on, cases, else_target):
+    """Stage 5c: standalone inline route (no execute body)."""
     return {
         "id": id, "name": id, "depends_on": depends_on,
-        "execute": {
-            "type": "route",
+        "route": {
             "cases": cases,
             "else": else_target,
         },

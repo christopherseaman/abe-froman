@@ -14,7 +14,6 @@ from abe_froman.schema.models import (
     Node,
     OutputContract,
     Route,
-    RouteCase,
     RouteElse,
     Settings,
 )
@@ -108,55 +107,9 @@ class TestExecuteJoin:
         with pytest.raises(ValidationError):
             Execute(type="join", params={"foo": "bar"})
 
-    def test_join_rejects_cases(self):
-        with pytest.raises(ValidationError):
-            Execute(type="join", cases=[RouteCase(when="x", goto="y")])
-
-    def test_join_rejects_else(self):
-        with pytest.raises(ValidationError):
-            Execute.model_validate({"type": "join", "else": "fallback"})
-
-
-class TestExecuteRoute:
-    def test_route_basic(self):
-        ex = Execute.model_validate(
-            {
-                "type": "route",
-                "cases": [{"when": "x >= 0.8", "goto": "ship"}],
-                "else": "produce",
-            }
-        )
-        assert ex.type == "route"
-        assert len(ex.cases) == 1
-        assert ex.cases[0].when == "x >= 0.8"
-        assert ex.cases[0].goto == "ship"
-        assert ex.else_ == "produce"
-
-    def test_route_requires_else(self):
-        with pytest.raises(ValidationError):
-            Execute(
-                type="route",
-                cases=[RouteCase(when="x", goto="ship")],
-            )
-
-    def test_route_rejects_params(self):
-        with pytest.raises(ValidationError):
-            Execute.model_validate(
-                {
-                    "type": "route",
-                    "params": {"foo": "bar"},
-                    "else": "fallback",
-                }
-            )
-
-    def test_route_else_only_is_valid(self):
-        ex = Execute.model_validate({"type": "route", "else": "fallback"})
-        assert ex.cases == []
-        assert ex.else_ == "fallback"
-
 
 class TestExecuteShapeValidator:
-    """Execute must set exactly one of: url, type=join, type=route."""
+    """Execute must set exactly one of: url, type=join."""
 
     def test_no_modes_set_rejected(self):
         with pytest.raises(ValidationError):
@@ -165,20 +118,6 @@ class TestExecuteShapeValidator:
     def test_url_and_join_rejected(self):
         with pytest.raises(ValidationError):
             Execute(url="x.md", type="join")
-
-    def test_url_and_route_rejected(self):
-        with pytest.raises(ValidationError):
-            Execute.model_validate(
-                {"url": "x.md", "type": "route", "else": "z"}
-            )
-
-    def test_url_mode_rejects_cases(self):
-        with pytest.raises(ValidationError):
-            Execute(url="x.md", cases=[RouteCase(when="a", goto="b")])
-
-    def test_url_mode_rejects_else(self):
-        with pytest.raises(ValidationError):
-            Execute.model_validate({"url": "x.md", "else": "fallback"})
 
 
 class TestQualityGate:
@@ -328,7 +267,7 @@ class TestInlineRoute:
     """Stage 5c: `Node.route` block (inline forward dispatch).
 
     Coexists with `execute:` (executes, evaluates, then routes) or
-    stands alone (no execute, replaces legacy `Execute.type=route`).
+    stands alone (node has no execute body, just a route).
     """
 
     def test_unconditional_goto_str(self):
@@ -474,25 +413,9 @@ class TestInlineRoute:
                 ],
             )
 
-    def test_node_cannot_have_both_route_and_legacy_route_execute(self):
-        with pytest.raises(ValidationError, match="both `route:` and"):
-            Graph(
-                name="T", version="1.0.0",
-                nodes=[
-                    {"id": "a", "name": "A", "depends_on": [],
-                     "execute": {
-                         "type": "route",
-                         "cases": [{"when": "x", "goto": "b"}],
-                         "else": "b",
-                     },
-                     "route": {"goto": "b"}},
-                    {"id": "b", "name": "B", "execute": {"url": "b.md"}},
-                ],
-            )
-
     def test_standalone_inline_route(self):
-        # Node with route but no execute — replaces legacy
-        # Execute.type=route. Validates the same way (target resolution).
+        # Node with route but no execute — pure forward-edge dispatcher.
+        # Validates target resolution like any other route.
         config = Graph(
             name="T", version="1.0.0",
             nodes=[
@@ -559,76 +482,6 @@ class TestDependencyValidation:
     def test_no_dependencies(self):
         node = Node(id="p1", name="P1", execute=Execute(url="t.md"))
         assert node.depends_on == []
-
-
-class TestRouteValidation:
-    """Graph-level route validation (Stage 5a, retained in Stage 5b)."""
-
-    def test_route_unknown_goto_rejected(self):
-        with pytest.raises(ValidationError, match="nonexistent"):
-            Graph(
-                name="T",
-                version="1.0.0",
-                nodes=[
-                    {"id": "a", "name": "A", "execute": {"url": "a.md"}},
-                    {
-                        "id": "r",
-                        "name": "R",
-                        "depends_on": ["a"],
-                        "execute": {
-                            "type": "route",
-                            "cases": [{"when": "True", "goto": "ghost"}],
-                            "else": "a",
-                        },
-                    },
-                ],
-            )
-
-    def test_route_cannot_be_dep_target(self):
-        with pytest.raises(ValidationError, match="route"):
-            Graph(
-                name="T",
-                version="1.0.0",
-                nodes=[
-                    {"id": "a", "name": "A", "execute": {"url": "a.md"}},
-                    {
-                        "id": "r",
-                        "name": "R",
-                        "depends_on": ["a"],
-                        "execute": {
-                            "type": "route",
-                            "cases": [],
-                            "else": "a",
-                        },
-                    },
-                    {
-                        "id": "b",
-                        "name": "B",
-                        "execute": {"url": "b.md"},
-                        "depends_on": ["r"],
-                    },
-                ],
-            )
-
-    def test_route_end_sentinel_accepted(self):
-        config = Graph(
-            name="T",
-            version="1.0.0",
-            nodes=[
-                {"id": "a", "name": "A", "execute": {"url": "a.md"}},
-                {
-                    "id": "r",
-                    "name": "R",
-                    "depends_on": ["a"],
-                    "execute": {
-                        "type": "route",
-                        "cases": [{"when": "True", "goto": "__end__"}],
-                        "else": "__end__",
-                    },
-                },
-            ],
-        )
-        assert config.nodes[1].execute.cases[0].goto == "__end__"
 
 
 class TestFanOut:

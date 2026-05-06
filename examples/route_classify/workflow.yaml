@@ -30,8 +30,7 @@ nodes:
   - id: decide
     name: "Route by category"
     depends_on: [triage]
-    execute:
-      type: route
+    route:
       # `triage` in the namespace is the dep's raw stdout (no structured
       # output from script nodes), so case predicates compare strings.
       cases:

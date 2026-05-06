@@ -54,16 +54,12 @@ class TestJoinExecuteSchema:
         assert node.execute.type == "join"
         assert node.evaluation is not None
 
-    def test_join_rejects_cases(self):
-        with pytest.raises(ValidationError):
-            Execute(type="join", cases=[{"when": "True", "goto": "x"}])
-
     def test_join_rejects_params(self):
         with pytest.raises(ValidationError):
             Execute(type="join", params={"args": ["nope"]})
 
     def test_join_with_url_is_invalid(self):
-        """Exactly one of {url, type=join, type=route} must be set."""
+        """Exactly one of {url, type=join} must be set."""
         with pytest.raises(ValidationError):
             Execute(type="join", url="x.md")
 

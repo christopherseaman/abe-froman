@@ -42,7 +42,7 @@ class Route(BaseModel):
     Lives on `Node.route`. When the source node also has `execute:`,
     the route fires after execute (and after eval, if present)
     settles. When `execute:` is omitted, the node is a standalone
-    router (replaces today's `Execute.type="route"`).
+    router.
     """
     model_config = ConfigDict(populate_by_name=True)
     # Unconditional shorthand:
@@ -107,9 +107,9 @@ ExecuteMode = Literal[
 
 
 class Execute(BaseModel):
-    """Stage 5b unified execution shape.
+    """Stage 5b/5c execution shape.
 
-    Three orthogonal modes, exactly one of which is active per node:
+    Two orthogonal modes, exactly one of which is active per node:
 
       1. URL mode (`url:` set, `type:` unset) — dispatched by URL
          extension/scheme to one of: prompt, subgraph, script, exec.
@@ -117,49 +117,33 @@ class Execute(BaseModel):
          ``mode:`` when the URL doesn't carry a recognizable extension
          (or carries a misleading one).
       2. Join sentinel (`type: "join"`) — no-op topology marker.
-      3. Route ladder (`type: "route"`, `cases:`, `else:`) — pure
-         Command(goto=...) dispatch over structured state.
+
+    Forward-edge dispatch (``cases:`` / ``else:``) lives on
+    ``Node.route`` (a separate ``Route`` block), not on Execute.
+    Stage 5c lifted route out of Execute so a single node can both
+    execute AND dispatch downstream from a route ladder.
     """
     model_config = ConfigDict(populate_by_name=True)
     url: str | None = None
-    type: Literal["join", "route"] | None = None
+    type: Literal["join"] | None = None
     mode: ExecuteMode | None = None
     params: dict[str, Any] = Field(default_factory=dict)
-    cases: list[RouteCase] = []
-    else_: str | None = Field(default=None, alias="else")
 
     @model_validator(mode="after")
     def validate_shape(self) -> Self:
         modes_set = sum([
             self.url is not None,
             self.type == "join",
-            self.type == "route",
         ])
         if modes_set != 1:
             raise ValueError(
-                "Execute must set exactly one of: url, type=join, type=route "
+                "Execute must set exactly one of: url, type=join "
                 f"(got url={self.url!r}, type={self.type!r})"
             )
         if self.type == "join":
-            if self.cases or self.else_ is not None or self.params or self.mode:
+            if self.params or self.mode:
                 raise ValueError(
-                    "Execute type=join takes no cases, else, params, or mode"
-                )
-        elif self.type == "route":
-            if self.else_ is None:
-                raise ValueError("Execute type=route requires else: target")
-            if self.params:
-                raise ValueError(
-                    "Execute type=route takes no params (use cases / else)"
-                )
-            if self.mode:
-                raise ValueError(
-                    "Execute type=route takes no mode (mode applies to URL mode only)"
-                )
-        else:  # url mode
-            if self.cases or self.else_ is not None:
-                raise ValueError(
-                    "Execute url mode takes no cases or else (those are route-only)"
+                    "Execute type=join takes no params or mode"
                 )
         return self
 
@@ -291,22 +275,6 @@ class Graph(BaseModel):
                         f"which references nonexistent node"
                     )
 
-        # Forbid double-spelling: a node cannot carry BOTH inline
-        # `route:` AND legacy `execute: { type: route }`. They're
-        # equivalent forward-edge mechanisms; pick one.
-        for node in self.nodes:
-            has_inline_route = node.route is not None
-            has_legacy_route = (
-                node.execute is not None and node.execute.type == "route"
-            )
-            if has_inline_route and has_legacy_route:
-                raise ValueError(
-                    f"Node '{node.id}' has both `route:` and "
-                    f"`execute: {{ type: route }}`; pick one. "
-                    f"`route:` is the canonical form; "
-                    f"`execute.type=route` is deprecated."
-                )
-
         # Validate inline-route goto/else targets resolve.
         def _check_targets(source_id: str, where: str, targets: Any) -> None:
             ids = targets if isinstance(targets, list) else [targets]
@@ -330,34 +298,13 @@ class Graph(BaseModel):
             if r.else_ is not None:
                 _check_targets(node.id, "else goto", r.else_.goto)
 
-        # Route nodes: identified union of legacy + inline. Both
-        # dispatch via Command(goto=); neither can appear in another
-        # node's `depends_on:` (would double-trigger the goto target).
-        legacy_route_ids: set[str] = {
-            n.id for n in self.nodes
-            if n.execute is not None and n.execute.type == "route"
-        }
+        # Inline-route nodes dispatch via Command(goto=); they cannot
+        # appear in another node's `depends_on:` (would double-trigger
+        # the goto target).
         inline_route_ids: set[str] = {n.id for n in self.nodes if n.route is not None}
-        route_ids: set[str] = legacy_route_ids | inline_route_ids
-
-        for node in self.nodes:
-            if node.execute is None or node.execute.type != "route":
-                continue
-            for case in node.execute.cases:
-                if case.goto != "__end__" and case.goto not in node_ids:
-                    raise ValueError(
-                        f"Route '{node.id}' case goto '{case.goto}' "
-                        f"references nonexistent node"
-                    )
-            else_target = node.execute.else_
-            if else_target != "__end__" and else_target not in node_ids:
-                raise ValueError(
-                    f"Route '{node.id}' else goto '{else_target}' "
-                    f"references nonexistent node"
-                )
         for node in self.nodes:
             for dep in node.depends_on:
-                if dep in route_ids:
+                if dep in inline_route_ids:
                     raise ValueError(
                         f"Node '{node.id}' depends on route '{dep}'; "
                         f"routes dispatch via Command(goto=), so they "

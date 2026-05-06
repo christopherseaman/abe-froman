@@ -317,7 +317,11 @@ class TestStage5bTransforms:
         assert "execution" not in node
         assert node["execute"]["type"] == "join"
 
-    def test_execution_route_to_execute_type(self):
+    def test_execution_route_to_inline_route(self):
+        """Stage 4 ``execution.type=route`` chains through Stage 5b
+        (``execute.type=route``) and Stage 5c (inline ``route:``) in one
+        migrate invocation; the final shape has no ``execute:`` block on
+        the route node."""
         before = (
             "name: T\nversion: '1.0'\n"
             "nodes:\n"
@@ -331,9 +335,10 @@ class TestStage5bTransforms:
         data = _parse(after)
         route = data["nodes"][1]
         assert "execution" not in route
-        assert route["execute"]["type"] == "route"
-        assert route["execute"]["cases"][0]["when"] == "True"
-        assert route["execute"]["else"] == "__end__"
+        assert "execute" not in route
+        assert "route" in route
+        assert route["route"]["cases"][0]["when"] == "True"
+        assert route["route"]["else"] == "__end__"
 
     def test_config_with_inputs_outputs_lifts_to_params(self):
         before = (
@@ -369,20 +374,77 @@ class TestStage5bTransforms:
         assert "prompt_file" not in template
         assert template["execute"]["url"] == "rev.md"
 
-    def test_idempotent_on_stage5b_yaml(self):
+    def test_idempotent_on_stage5c_yaml(self):
+        """Stage-5c shape (inline ``route:``) is the new fixed point."""
         before = (
             "name: T\nversion: '1.0'\n"
             "nodes:\n"
             "  - id: a\n    name: A\n"
             "    execute:\n      url: t.md\n      params:\n        model: opus\n"
             "  - id: r\n    name: R\n    depends_on: [a]\n"
-            "    execute:\n      type: route\n"
+            "    route:\n"
             "      cases:\n        - when: 'True'\n          goto: a\n"
             "      else: __end__\n"
         )
         after, changes = migrate_yaml(before)
         assert changes == []
         assert after == before
+
+
+class TestStage5cInlineRoute:
+    """Stage 5b → Stage 5c: lift ``execute.type=route`` to inline ``route:``."""
+
+    def test_legacy_route_execute_lifts_to_inline_route(self):
+        before = (
+            "name: T\nversion: '1.0'\n"
+            "nodes:\n"
+            "  - id: a\n    name: A\n    execute:\n      url: t.md\n"
+            "  - id: r\n    name: R\n    depends_on: [a]\n"
+            "    execute:\n      type: route\n"
+            "      cases:\n        - when: 'True'\n          goto: a\n"
+            "      else: __end__\n"
+        )
+        after, changes = migrate_yaml(before)
+        assert any("execute.type=route → route (inline)" in c for c in changes)
+        data = _parse(after)
+        route = data["nodes"][1]
+        assert "execute" not in route, "legacy execute block should be dropped"
+        assert "route" in route
+        assert route["route"]["cases"][0]["when"] == "True"
+        assert route["route"]["cases"][0]["goto"] == "a"
+        assert route["route"]["else"] == "__end__"
+
+    def test_inline_route_yaml_idempotent(self):
+        before = (
+            "name: T\nversion: '1.0'\n"
+            "nodes:\n"
+            "  - id: a\n    name: A\n    execute:\n      url: t.md\n"
+            "  - id: r\n    name: R\n    depends_on: [a]\n"
+            "    route:\n"
+            "      cases:\n        - when: 'True'\n          goto: a\n"
+            "      else: __end__\n"
+        )
+        after, changes = migrate_yaml(before)
+        assert changes == []
+        assert after == before
+
+    def test_both_route_and_legacy_execute_warns_and_skips(self):
+        """Defensive: a node with BOTH inline ``route:`` AND legacy
+        ``execute: { type: route }`` is a user mistake. Migrate logs a
+        warning and leaves both shapes intact so the schema validator
+        can surface the conflict to the user."""
+        before = (
+            "name: T\nversion: '1.0'\n"
+            "nodes:\n"
+            "  - id: a\n    name: A\n    execute:\n      url: t.md\n"
+            "  - id: r\n    name: R\n    depends_on: [a]\n"
+            "    execute:\n      type: route\n"
+            "      cases:\n        - when: 'True'\n          goto: a\n"
+            "      else: __end__\n"
+            "    route:\n      goto: a\n"
+        )
+        _, changes = migrate_yaml(before)
+        assert any("WARNING" in c and "skipping route migration" in c for c in changes)
 
 
 class TestRoundTripInRepoExamples:
