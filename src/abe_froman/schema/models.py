@@ -196,9 +196,9 @@ class Settings(BaseModel):
     max_retries: int = 3
     default_model: str = "sonnet"
     # `None` triggers auto-detect at CLI dispatch (Anthropic key →
-    # DeepSeek key → ACP via npx → stub). Explicit choices: "stub" |
-    # "acp" | "anthropic" | "deepseek" | "openai". The CLI
-    # `--executor` flag overrides this field.
+    # DeepSeek key → ACP via npx; raises if none available).
+    # Explicit choices: "acp" | "anthropic" | "deepseek" | "openai".
+    # The CLI `--executor` flag overrides this field.
     executor: str | None = None
     default_timeout: float | None = None
     preamble_file: str | None = None

@@ -137,7 +137,10 @@ class TestScriptDispatch:
 
 class TestPromptDispatch:
     @pytest.mark.asyncio
-    async def test_prompt_stub_when_no_backend(self, tmp_path):
+    async def test_prompt_without_backend_raises(self, tmp_path):
+        """Post-stub-removal: a DispatchExecutor with no prompt_backend
+        cannot dispatch prompt URLs. The dispatcher raises a clear
+        RuntimeError rather than emitting fake output."""
         prompt = tmp_path / "p.md"
         prompt.write_text("Hello {{name}}")
         node = Node(
@@ -145,10 +148,10 @@ class TestPromptDispatch:
             execute=Execute(url=f"file://{prompt}"),
         )
         executor = DispatchExecutor(workdir=str(tmp_path))  # no backend
-        result = await executor.execute(node, {"name": "world"}, workdir=str(tmp_path))
-        # No backend → stub fallback (sanity-check, not a regression case).
-        assert result.success is True
-        assert "[prompt-stub]" in result.output
+        with pytest.raises(RuntimeError) as ei:
+            await executor.execute(node, {"name": "world"}, workdir=str(tmp_path))
+        assert "no prompt backend" in str(ei.value).lower()
+        assert "p" in str(ei.value)  # node id surfaced for debuggability
 
 
 class TestParamsValidation:
@@ -222,18 +225,24 @@ class TestExecuteModeOverride:
 
     @pytest.mark.asyncio
     async def test_prompt_mode_routes_unknown_extension_through_prompt(self, tmp_path):
-        """A URL with `.foo` suffix runs through PromptExecutor when mode=prompt."""
+        """A URL with `.foo` suffix runs through PromptExecutor when mode=prompt.
+
+        Verification signal: with no backend wired, the prompt branch
+        raises the no-backend RuntimeError. Other branches return
+        ExecutionResult(success=False, ...) instead — so the raise IS
+        the proof that mode=prompt routed this `.foo` URL through the
+        prompt dispatcher rather than the binary/script fallback.
+        """
         body = tmp_path / "instructions.foo"
         body.write_text("hello {{name}}")
         node = Node(
             id="p", name="P",
             execute=Execute(url=f"file://{body}", mode="prompt"),
         )
-        # No backend → stub path; just assert we hit the prompt branch.
         executor = DispatchExecutor(workdir=str(tmp_path))
-        result = await executor.execute(node, {"name": "world"}, workdir=str(tmp_path))
-        assert result.success is True
-        assert "[prompt-stub]" in result.output  # prompt branch was taken
+        with pytest.raises(RuntimeError) as ei:
+            await executor.execute(node, {"name": "world"}, workdir=str(tmp_path))
+        assert "no prompt backend" in str(ei.value).lower()
 
     @pytest.mark.asyncio
     async def test_exec_mode_overrides_md_extension(self, tmp_path):

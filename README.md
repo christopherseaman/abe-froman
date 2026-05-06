@@ -64,15 +64,15 @@ The validate command echoes `Valid: Joke Generator v0.1.0 (2 nodes)`. The run co
 
 Resolution order at run time: `--executor` flag, then `settings.executor` in YAML, then auto-detect. Auto-detect picks the first available real backend:
 
-1. DeepSeek key (env `DEEPSEEK_API_KEY` or `~/.pi/agent/auth.json`) → `deepseek`
-2. `npx` on `PATH` → `acp`
-3. Nothing → exit with a clear remediation message naming the env var or install command.
-
-Setting only `ANTHROPIC_API_KEY` does not auto-pick a backend — a native Anthropic backend is on the wishlist but not yet wired, so this case falls through.
+1. Anthropic key (env `ANTHROPIC_API_KEY` or `~/.pi/agent/auth.json`) → `anthropic`
+2. DeepSeek key (env `DEEPSEEK_API_KEY` or `~/.pi/agent/auth.json`) → `deepseek`
+3. `npx` on `PATH` → `acp`
+4. Nothing → raise `RuntimeError` with a clear remediation message naming each env var and install command. There is no longer a silent stub fallback.
 
 | Key         | Install                                    | Auth                                                    | Models                  | Cost                |
 |-------------|--------------------------------------------|---------------------------------------------------------|-------------------------|---------------------|
 | `acp`       | `npm i -g @zed-industries/claude-code-acp` | Claude CLI session (no API key needed)                  | Claude (opus/sonnet/haiku) | usage-billed via Anthropic |
+| `anthropic` | `uv sync --extra anthropic`                | `ANTHROPIC_API_KEY` or `~/.pi/agent/auth.json`          | Claude (opus/sonnet/haiku via the Messages API; full vendor IDs accepted) | usage-billed via Anthropic |
 | `deepseek`  | `uv sync --extra openai`                   | `DEEPSEEK_API_KEY` or `~/.pi/agent/auth.json`           | DeepSeek catalog (e.g. `deepseek-chat`, `deepseek-reasoner`, `deepseek-v4-flash`) | usage-billed via DeepSeek |
 | `openai`    | `uv sync --extra openai`                   | `OPENAI_API_KEY` (or pass `api_key=` programmatically)  | OpenAI catalog or compatible base_url | usage-billed |
 
@@ -97,7 +97,7 @@ Execute the workflow.
 | `--workdir, -w` | `.`    | Working directory for prompt files, scripts, and outputs. |
 | `--dry-run`    | `false` | Validate and trace without executing. |
 | `--model, -m`  | (none)  | Override `settings.default_model`. |
-| `--executor, -e` | (auto) | `acp` \| `deepseek` \| `openai`. Omit to auto-detect (DeepSeek key → npx/ACP). |
+| `--executor, -e` | (auto) | `acp` \| `anthropic` \| `deepseek` \| `openai`. Omit to auto-detect (Anthropic key → DeepSeek key → npx/ACP; raises if none). |
 | `--resume`     | `false` | Resume from the last checkpoint for this workflow + workdir. |
 | `--log`        | (none)  | JSONL event log path. |
 
@@ -152,7 +152,7 @@ All defaults in the table below are pulled from `Settings(BaseModel)` in `src/ab
 | Field                    | Type           | Default                            | Effect |
 |--------------------------|----------------|------------------------------------|--------|
 | `default_model`          | `str`          | `"sonnet"`                         | Used when `node.model` and `params.model` are unset. |
-| `executor`               | `str \| None`  | `None` (auto-detect)               | `"stub"` \| `"acp"` \| `"deepseek"` \| `"openai"`. |
+| `executor`               | `str \| None`  | `None` (auto-detect)               | `"acp"` \| `"anthropic"` \| `"deepseek"` \| `"openai"`. |
 | `model_downgrade_chain`  | `list[str]`    | `["opus", "sonnet", "haiku"]`      | Tier list for `OverloadError` auto-downgrade. |
 
 **Concurrency**

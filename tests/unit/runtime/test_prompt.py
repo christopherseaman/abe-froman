@@ -24,7 +24,6 @@ from abe_froman.runtime.executor.prompt import (
     render_template,
     resolve_model,
 )
-from abe_froman.runtime.executor.backends.stub import StubBackend
 from abe_froman.runtime.result import (
     ExecutionResult,
     OverloadError,
@@ -494,25 +493,6 @@ class TestDowngradeModel:
     def test_custom_chain(self):
         assert downgrade_model("a", ["a", "b", "c"]) == "b"
         assert downgrade_model("c", ["a", "b", "c"]) is None
-
-
-# ---------------------------------------------------------------------------
-# StubBackend
-# ---------------------------------------------------------------------------
-
-
-class TestStubBackend:
-    @pytest.mark.asyncio
-    async def test_returns_stub_output(self):
-        backend = StubBackend()
-        result = await backend.send_prompt("hello world", "sonnet", ".")
-        assert "prompt-stub" in result.output
-        assert "model=sonnet" in result.output
-        assert "prompt_length=11" in result.output
-
-    @pytest.mark.asyncio
-    async def test_satisfies_protocol(self):
-        assert isinstance(StubBackend(), PromptBackend)
 
 
 class TestMemoryBackendProtocol:

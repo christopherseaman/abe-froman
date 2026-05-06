@@ -93,14 +93,18 @@ class TestJoinExecuteDispatch:
 
     @pytest.mark.asyncio
     async def test_dispatch_distinguishes_from_prompt(self, tmp_path):
-        """Sanity: prompt execution still runs (and the stub backend returns a
-        recognizable placeholder), proving the dispatcher's branching actually
-        differentiates Join from URL-mode, rather than handling them the same."""
+        """Sanity: prompt execution takes a different code path than join.
+
+        Without a prompt backend wired, the prompt branch raises a
+        RuntimeError naming the missing backend — that raise is the
+        positive proof the dispatcher routed to ``_dispatch_prompt``
+        rather than treating the URL like a join (which returns
+        ExecutionResult(output='', success=True))."""
         executor = DispatchExecutor(workdir=str(tmp_path))
         prompt_node = Node(
             id="p", name="P", execute=Execute(url="missing.md"),
         )
-        prompt_result = await executor.execute(
-            prompt_node, context={}, workdir=str(tmp_path),
-        )
-        assert "[prompt-stub]" in prompt_result.output
+        with pytest.raises(RuntimeError, match="no prompt backend"):
+            await executor.execute(
+                prompt_node, context={}, workdir=str(tmp_path),
+            )

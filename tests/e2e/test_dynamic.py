@@ -23,18 +23,29 @@ _ECHO = shutil.which("echo") or "/bin/echo"
 # ---------------------------------------------------------------------------
 
 
-def dynamic_parent(id, manifest_items, *, template_prompt="template.md",
+def dynamic_parent(id, manifest_items, *, template_execute=None,
                    depends_on=None, evaluation=None, final_nodes=None,
                    **kwargs):
-    """Shorthand for a command node that echoes a manifest JSON."""
+    """Shorthand for a command node that echoes a manifest JSON.
+
+    Default ``template_execute`` runs ``_ECHO`` with a Jinja-rendered
+    arg per child — exercises fan-out structure without requiring a
+    PromptBackend. Tests that need a different template execution
+    shape (e.g. real prompt template, gate template) override.
+    """
     manifest = json.dumps({"items": manifest_items})
+    if template_execute is None:
+        template_execute = {
+            "url": _ECHO,
+            "params": {"args": ["-n", "child-{{id}}"]},
+        }
     node = {
         "id": id,
         "name": id,
         "execute": {"url": _ECHO, "params": {"args": ["-n", manifest]}},
         "fan_out": {
             "enabled": True,
-            "template": {"execute": {"url": template_prompt}},
+            "template": {"execute": template_execute},
         },
         "depends_on": depends_on or [],
         **kwargs,
@@ -96,45 +107,12 @@ class TestDynamicFanOut:
 
         assert "p::only" in result["completed_nodes"]
 
-    @pytest.mark.asyncio
-    async def test_template_interpolation_in_subphases(self, tmp_path):
-        """Each child renders the template with its own manifest item.
-
-        Must wire StubBackend explicitly — without a prompt_backend the
-        DispatchExecutor returns a literal `[prompt-stub] {id}: {file}`
-        placeholder that never touches PromptExecutor, bypassing template
-        rendering entirely.
-
-        StubBackend echoes `prompt_length=N`. Items with different-length
-        IDs produce different rendered-prompt lengths — if `{{id}}` were
-        never substituted (literal `{{id}}` left in place), both children
-        would report the same length and this assertion would fail.
-        Indirect but sufficient evidence of interpolation.
-        """
-        from abe_froman.runtime.executor.backends.stub import StubBackend
-
-        template = "Process {{id}}"
-        (tmp_path / "template.md").write_text(template)
-
-        items = [{"id": "a"}, {"id": "longer-id"}]
-        config = make_config([dynamic_parent("parent", items)])
-        executor = DispatchExecutor(
-            workdir=str(tmp_path), prompt_backend=StubBackend(),
-        )
-        graph = build_workflow_graph(config, executor)
-        result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
-
-        expected_a = len("Process a")
-        expected_long = len("Process longer-id")
-        assert f"prompt_length={expected_a}" in result["child_outputs"]["parent::a"], (
-            f"expected rendered 'Process a' ({expected_a} chars); got "
-            f"{result['child_outputs']['parent::a']!r}"
-        )
-        assert f"prompt_length={expected_long}" in result["child_outputs"]["parent::longer-id"], (
-            f"expected rendered 'Process longer-id' ({expected_long} chars); got "
-            f"{result['child_outputs']['parent::longer-id']!r}"
-        )
-        assert expected_a != expected_long  # sanity: lengths actually differ
+    # NOTE: A `test_template_interpolation_in_subphases` test was
+    # deleted alongside StubBackend removal. Jinja rendering is
+    # already covered at the unit level by
+    # ``tests/unit/runtime/test_prompt.py::TestRenderTemplate``;
+    # exercising the same logic via prompt_length echo at the
+    # dispatch level was second-guessing well-tested code.
 
 
 # ---------------------------------------------------------------------------
@@ -371,7 +349,6 @@ class TestDynamicGates:
     @pytest.mark.asyncio
     async def test_template_gate_scores_recorded(self, tmp_path):
         """Template quality gate scores recorded per child."""
-        (tmp_path / "template.md").write_text("Sub {{id}}")
         script = tmp_path / "score.py"
         script.write_text("print(0.9)")
 
@@ -383,7 +360,10 @@ class TestDynamicGates:
             "fan_out": {
                 "enabled": True,
                 "template": {
-                    "execute": {"url": "template.md"},
+                    "execute": {
+                        "url": _ECHO,
+                        "params": {"args": ["-n", "child-{{id}}"]},
+                    },
                     "evaluation": {
                         "validator": str(script),
                         "threshold": 0.5,
@@ -408,7 +388,6 @@ class TestDynamicGates:
         first call, passes on retry. Proves each child branch keeps
         its own invocation counter via `_fan_out_item`-keyed state.
         """
-        (tmp_path / "template.md").write_text("Sub {{id}}")
         # Per-item counter files so each item retries independently.
         (tmp_path / "cnt-x.txt").write_text("0")
         (tmp_path / "cnt-y.txt").write_text("0")
@@ -416,7 +395,7 @@ class TestDynamicGates:
         validator.write_text(
             'import os, sys, re\n'
             'output = sys.stdin.read()\n'
-            '# Derive the item id from the node output; stub prints it verbatim.\n'
+            '# Derive the item id from the node output (echo emits "p::ID").\n'
             'm = re.search(r"p::([a-z])", output)\n'
             'item = m.group(1) if m else "x"\n'
             f'path = os.path.join({str(tmp_path)!r}, f"cnt-{{item}}.txt")\n'
@@ -433,7 +412,10 @@ class TestDynamicGates:
             "fan_out": {
                 "enabled": True,
                 "template": {
-                    "execute": {"url": "template.md"},
+                    "execute": {
+                        "url": _ECHO,
+                        "params": {"args": ["-n", "p::{{id}}"]},
+                    },
                     "evaluation": {
                         "validator": str(validator),
                         "threshold": 0.5,
@@ -518,7 +500,6 @@ class TestDynamicEdgeCases:
     @pytest.mark.asyncio
     async def test_manifest_from_disk(self, tmp_path):
         """Manifest read from disk when node output isn't JSON."""
-        (tmp_path / "template.md").write_text("Sub {{id}}")
         (tmp_path / "manifest.json").write_text(
             json.dumps({"items": [{"id": "disk-item"}]})
         )
@@ -530,7 +511,10 @@ class TestDynamicEdgeCases:
             "fan_out": {
                 "enabled": True,
                 "manifest_path": "manifest.json",
-                "template": {"execute": {"url": "template.md"}},
+                "template": {"execute": {
+                    "url": _ECHO,
+                    "params": {"args": ["-n", "child-{{id}}"]},
+                }},
             },
         }])
         executor = DispatchExecutor(workdir=str(tmp_path))

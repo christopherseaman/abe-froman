@@ -149,9 +149,12 @@ class DispatchExecutor:
     ) -> ExecutionResult:
         """Read prompt body (file or remote), render Jinja, send to backend."""
         if self._prompt_executor is None:
-            return ExecutionResult(
-                success=True,
-                output=f"[prompt-stub] {node.id}: {resolved}",
+            raise RuntimeError(
+                f"Cannot dispatch prompt node {node.id!r}: no prompt "
+                f"backend wired. DispatchExecutor was constructed without "
+                f"a prompt_backend; pass one (e.g. via "
+                f"create_prompt_backend(...)) or run via the CLI which "
+                f"auto-detects."
             )
 
         try:

@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import warnings
 from pathlib import Path
 
 from abe_froman.runtime.result import PromptBackend
@@ -67,17 +66,11 @@ def create_prompt_backend(executor_type: str, **kwargs: object) -> PromptBackend
     """Create a PromptBackend instance from a type identifier.
 
     Supported types:
-    - "stub": placeholder backend (default, no external dependencies)
     - "acp": ACP via claude-code-acp adapter
     - "anthropic": Direct Anthropic Messages API
     - "deepseek": OpenAI-compatible backend pointed at DeepSeek
     - "openai": OpenAI-compatible backend (caller supplies key/base_url)
     """
-    if executor_type == "stub":
-        from abe_froman.runtime.executor.backends.stub import StubBackend
-
-        return StubBackend()
-
     if executor_type == "acp":
         from abe_froman.runtime.executor.backends.acp import ACPBackend
 
@@ -124,13 +117,12 @@ def create_prompt_backend(executor_type: str, **kwargs: object) -> PromptBackend
 
     raise ValueError(
         f"Unknown executor type: {executor_type!r}. "
-        f"Supported: stub, acp, anthropic, deepseek, openai"
+        f"Supported: acp, anthropic, deepseek, openai"
     )
 
 
 def auto_detect_executor() -> str:
-    """Pick the first available real backend; warn + return ``"stub"``
-    on miss.
+    """Pick the first available real backend; raise on miss.
 
     Resolution order (first match wins):
       1. Anthropic key (env ``ANTHROPIC_API_KEY`` or
@@ -139,12 +131,11 @@ def auto_detect_executor() -> str:
          ``~/.pi/agent/auth.json``) → ``"deepseek"``.
       3. ``npx`` on PATH → ``"acp"`` (assumes
          ``@zed-industries/claude-code-acp`` is installed).
-      4. Nothing → ``"stub"`` with a UserWarning so the operator
-         knows prompt nodes will produce fake output.
+      4. Nothing → ``RuntimeError`` naming all three remediation
+         paths. There is no longer a silent fake-output fallback.
 
     Only called from the CLI as a *fallback* when neither ``--executor``
-    nor ``settings.executor`` was set. Explicit choices never trigger
-    this function — and so never emit the warning.
+    nor ``settings.executor`` was set.
     """
     if _resolve_anthropic_key():
         return "anthropic"
@@ -152,12 +143,9 @@ def auto_detect_executor() -> str:
         return "deepseek"
     if shutil.which("npx"):
         return "acp"
-    warnings.warn(
-        "No real backend detected (no ANTHROPIC_API_KEY, no "
-        "DEEPSEEK_API_KEY, no npx on PATH); falling back to stub. "
-        "Prompt nodes will produce fake output. Set "
-        "ANTHROPIC_API_KEY, set DEEPSEEK_API_KEY, or install npx + "
-        "@zed-industries/claude-code-acp.",
-        stacklevel=2,
+    raise RuntimeError(
+        "No prompt backend available. Set ANTHROPIC_API_KEY (recommended), "
+        "set DEEPSEEK_API_KEY, or install npx + "
+        "@zed-industries/claude-code-acp. Pass --executor explicitly "
+        "to override auto-detect."
     )
-    return "stub"

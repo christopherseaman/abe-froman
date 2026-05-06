@@ -6,8 +6,9 @@ Two layers:
     DeepSeek-without-key.
   - ``auto_detect_executor()`` resolution order — env vars masked via
     ``monkeypatch``, ``shutil.which`` masked via ``monkeypatch.setattr``.
-    The warning surface is asserted on the no-backend-available case
-    only; explicit choices never reach this function.
+    The terminal RuntimeError surface is asserted on the
+    no-backend-available case only; explicit choices never reach this
+    function.
 """
 from __future__ import annotations
 
@@ -19,7 +20,6 @@ from abe_froman.runtime.executor.backends.factory import (
     auto_detect_executor,
     create_prompt_backend,
 )
-from abe_froman.runtime.executor.backends.stub import StubBackend
 
 
 @pytest.fixture
@@ -37,9 +37,15 @@ def clean_env(monkeypatch, tmp_path):
 # ---------------------------------------------------------------------
 
 class TestCreatePromptBackend:
-    def test_stub_returns_stub(self):
-        backend = create_prompt_backend("stub")
-        assert isinstance(backend, StubBackend)
+    def test_stub_no_longer_supported(self):
+        """`stub` was removed in the StubBackend cutover. Authors who
+        relied on it must pick a real backend or rely on auto-detect."""
+        with pytest.raises(ValueError) as ei:
+            create_prompt_backend("stub")
+        assert "stub" in str(ei.value)
+        # The error message lists supported types; "stub" is NOT among them.
+        assert "anthropic" in str(ei.value)
+        assert "deepseek" in str(ei.value)
 
     def test_anthropic_with_key_returns_anthropic_backend(self):
         from abe_froman.runtime.executor.backends.anthropic import (
@@ -89,7 +95,8 @@ class TestCreatePromptBackend:
         assert "ruby" in msg
         assert "deepseek" in msg
         assert "anthropic" in msg
-        assert "stub" in msg
+        # "stub" should NOT be in the supported list anymore.
+        assert "stub" not in msg
 
 
 # ---------------------------------------------------------------------
@@ -159,27 +166,20 @@ class TestAutoDetect:
             warnings.simplefilter("error")
             assert auto_detect_executor() == "acp"
 
-    def test_stub_with_warning_when_nothing_available(
+    def test_raises_when_nothing_available(
         self, clean_env, monkeypatch,
     ):
+        """Terminal failure mode: no env, no auth.json, no npx → raise.
+        The previous behavior (silent fallback to stub with UserWarning)
+        was removed when StubBackend was deleted; production must never
+        emit fake output."""
         monkeypatch.setattr(
             "abe_froman.runtime.executor.backends.factory.shutil.which",
             lambda name: None,
         )
-        with pytest.warns(UserWarning, match="No real backend"):
-            assert auto_detect_executor() == "stub"
-
-    def test_stub_warning_mentions_remediation(
-        self, clean_env, monkeypatch,
-    ):
-        """The warning must give the operator concrete next steps."""
-        monkeypatch.setattr(
-            "abe_froman.runtime.executor.backends.factory.shutil.which",
-            lambda name: None,
-        )
-        with pytest.warns(UserWarning) as record:
+        with pytest.raises(RuntimeError) as ei:
             auto_detect_executor()
-        msg = str(record[0].message)
+        msg = str(ei.value)
         assert "ANTHROPIC_API_KEY" in msg
         assert "DEEPSEEK_API_KEY" in msg
         assert "claude-code-acp" in msg
@@ -205,10 +205,10 @@ class TestExecutorResolution:
             "abe_froman.runtime.executor.backends.factory.auto_detect_executor",
             lambda: pytest.fail("auto_detect must not be called"),
         )
-        executor = "stub"  # explicit CLI flag
+        executor = "anthropic"  # explicit CLI flag
         settings_executor = "acp"  # YAML setting
         result = executor or settings_executor or None
-        assert result == "stub"
+        assert result == "anthropic"
 
     def test_settings_wins_when_no_cli_flag(self):
         executor = None

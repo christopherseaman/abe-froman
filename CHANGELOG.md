@@ -3,7 +3,75 @@
 All notable changes to abe-froman are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] — Stage 5c: Inline Route
+## [Unreleased] — Native event stream + Anthropic backend + StubBackend removal
+
+### Added
+
+- **`AnthropicBackend`** (`runtime/executor/backends/anthropic.py`) —
+  fourth `PromptBackend` after `acp` / `openai` / `deepseek`. Talks
+  to Anthropic's Messages API directly via `AsyncAnthropic`. Generic
+  model alias table (`sonnet` / `opus` / `haiku` → vendor IDs) with
+  pass-through for explicit model pins. `OverloadError` mapping for
+  transient failures (status 429 / 502 / 503 / 504 / 529 + class-name
+  fallback) so the model-downgrade chain activates as designed.
+  Optional dependency `anthropic = ["anthropic>=0.40"]`; install with
+  `uv sync --extra anthropic`.
+- **CLI `--executor anthropic`** and **YAML `settings.executor:
+  anthropic`** select the new backend explicitly. `_resolve_anthropic_key()`
+  reads `ANTHROPIC_API_KEY` first, falling back to
+  `~/.pi/agent/auth.json` carrying `{"anthropic": {"key": "..."}}`.
+
+### Changed
+
+- **`auto_detect_executor()` now picks Anthropic first.** Resolution
+  order is: Anthropic key → DeepSeek key → `npx` (ACP). Users with
+  both Anthropic and DeepSeek keys configured will see workloads
+  routed to Anthropic by default; pin explicitly with `-e deepseek`
+  to opt out. Mixed-tier authoring (Claude for some nodes, DeepSeek
+  for others) still works through the per-node `model:` field plus
+  `--executor` overrides.
+- **Logging stream switched to `stream_mode=["updates", "values"]`**
+  in `runtime/runner.py` and `compile/subgraph.py`. The 6 emitted
+  event types (`workflow_start`, `workflow_end`, `node_completed`,
+  `node_failed`, `gate_evaluated`, `node_retried`) and their schema
+  are unchanged; the internal source is now LangGraph's native
+  partial-update payloads instead of state diffs over successive
+  cumulative snapshots. `JsonlLogger.log_snapshot(prev, curr)` was
+  replaced with `log_update(node_name, update)`. The
+  `SubgraphLogger` `parent::child` prefix mechanism still applies,
+  via the new entry point.
+
+### Removed
+
+- **`StubBackend`** (`runtime/executor/backends/stub.py`) — DELETED.
+  The deterministic `[prompt-stub] model=X prompt_length=N`
+  placeholder previously wired as the auto-detect last-resort
+  fallback was the same antipattern `feedback_no_fake_backends.md`
+  forbids in tests, just shipped in production. **Breaking
+  changes:**
+  - `--executor stub` and `settings.executor: stub` are no longer
+    accepted; `create_prompt_backend("stub")` raises `ValueError`
+    listing the supported types.
+  - `auto_detect_executor()` raises `RuntimeError` with concrete
+    remediation when no backend resolves (set `ANTHROPIC_API_KEY`,
+    set `DEEPSEEK_API_KEY`, or install `npx +
+    @zed-industries/claude-code-acp`).
+  - `DispatchExecutor` constructed without a `prompt_backend` no
+    longer emits a fake success for prompt URLs — it raises
+    `RuntimeError` naming the offending node id.
+
+### Migration notes
+
+- If your YAML carried `executor: stub`, switch to
+  `executor: acp` (no API key needed once `npx
+  @zed-industries/claude-code-acp` is installed) or to
+  `executor: anthropic` with `ANTHROPIC_API_KEY` set.
+- If you embedded `DispatchExecutor(prompt_backend=StubBackend())`
+  in a custom harness, instantiate a real backend via
+  `create_prompt_backend("anthropic" | "deepseek" | "acp" |
+  "openai", ...)` instead.
+
+## [Pre-Stage-5d] — Stage 5c: Inline Route
 
 ### Added
 

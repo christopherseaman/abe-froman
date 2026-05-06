@@ -104,7 +104,7 @@ langgraph-free).
 - `executor/dispatch.py` — `DispatchExecutor` (10-row URL dispatch).
 - `executor/prompt.py` — `PromptExecutor` (template render, model
   downgrade).
-- `executor/backends/{stub,acp,openai,factory}.py`.
+- `executor/backends/{acp,anthropic,openai,factory}.py`.
 
 **`src/abe_froman/cli/`** — entry points.
 - `main.py` — Click CLI; wires `AsyncSqliteSaver`, `ForemanExecutor`,

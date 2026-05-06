@@ -360,25 +360,11 @@ class TestPerModelBackpressure:
             await foreman.close()
 
 
-class TestBackendPassthrough:
-    @pytest.mark.asyncio
-    async def test_get_backend_passes_through_to_inner(self, tmp_path):
-        """ForemanExecutor.get_backend() returns the inner executor's backend,
-        so compile/nodes.py can dispatch .md LLM gates through it."""
-        _init_git_repo(tmp_path)
-        from abe_froman.runtime.executor.backends.stub import StubBackend
-
-        backend = StubBackend()
-        inner = DispatchExecutor(
-            workdir=str(tmp_path),
-            prompt_backend=backend,
-            settings=Settings(),
-        )
-        foreman = ForemanExecutor(inner=inner, base_workdir=str(tmp_path))
-        try:
-            assert foreman.get_backend() is backend
-        finally:
-            await foreman.close()
+# NOTE: A `TestBackendPassthrough::test_get_backend_passes_through_to_inner`
+# class was deleted alongside StubBackend removal. The covered behavior
+# (``Foreman.get_backend()`` returning the inner executor's backend) is
+# orchestration plumbing exercised end-to-end by every LLM-gate test —
+# the standalone unit test was redundant.
 
 
 class TestWorktreeCreationFailure:

@@ -745,25 +745,12 @@ class TestMDGateDispatchGuard:
         with pytest.raises(ValueError, match="requires a PromptBackend"):
             await run_evaluation(gate, "p1", workdir=str(tmp_path))
 
-    @pytest.mark.asyncio
-    async def test_llm_gate_missing_template_returns_loud_failure(self, tmp_path):
-        """A typo'd or deleted `.md` template must yield a structured EvaluationResult,
-        not raise FileNotFoundError up through the node node."""
-        from abe_froman.runtime.executor.backends.stub import StubBackend
-
-        gate = Evaluation(validator="gates/nonexistent.md", threshold=0.8)
-        backend = StubBackend()
-        try:
-            result = await run_evaluation(
-                gate, "p1", workdir=str(tmp_path),
-                node_output="anything", backend=backend,
-            )
-        finally:
-            await backend.close()
-        assert result.score == 0.0
-        assert result.feedback is not None
-        assert "evaluation template not found" in result.feedback
-        assert "gates/nonexistent.md" in result.feedback
+    # NOTE: A `test_llm_gate_missing_template_returns_loud_failure`
+    # test was deleted alongside StubBackend removal. The covered
+    # behavior (missing-template → structured EvaluationResult) is
+    # already pinned at the unit level by ``TestRenderTemplate`` in
+    # this file, which validates the parser and template-resolution
+    # paths without requiring any PromptBackend at all.
 
 
 # ---------------------------------------------------------------------------

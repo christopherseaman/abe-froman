@@ -381,13 +381,13 @@ class TestDispatchExecutor:
         assert "gate-only" in result.output
 
     @pytest.mark.asyncio
-    async def test_prompt_without_backend_returns_stub(self):
-        """DispatchExecutor with no backend returns inline stub for prompts."""
+    async def test_prompt_without_backend_raises(self):
+        """Post-stub-removal: prompt URL with no backend → RuntimeError.
+        The previous behavior (silent fake output) was an antipattern."""
         executor = DispatchExecutor()
         node = Node(id="p1", name="P1", execute=Execute(url="t.md"))
-        result = await executor.execute(node, {})
-        assert result.success is True
-        assert "prompt-stub" in result.output
+        with pytest.raises(RuntimeError, match="no prompt backend"):
+            await executor.execute(node, {})
 
 
 # ---------------------------------------------------------------------------

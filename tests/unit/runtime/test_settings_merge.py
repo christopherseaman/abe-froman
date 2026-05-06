@@ -49,11 +49,11 @@ class TestExplicitDefaultStillWins:
         merged = merge_settings(parent, child)
         assert merged.max_retries == 3
 
-    def test_child_explicitly_sets_executor_to_stub(self):
+    def test_child_explicitly_overrides_executor(self):
         parent = Settings(executor="acp")
-        child = Settings(executor="stub")
+        child = Settings(executor="anthropic")
         merged = merge_settings(parent, child)
-        assert merged.executor == "stub"
+        assert merged.executor == "anthropic"
 
 
 class TestComposesNested:

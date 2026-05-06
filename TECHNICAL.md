@@ -337,18 +337,19 @@ the slot for the *declared* model.
 `PromptBackend` Protocol (`runtime/result.py:40`): `async
 send_prompt(prompt, model, workdir, timeout)` and `async close()`.
 
-- `stub.py::StubBackend` — deterministic placeholder used as the
-  auto-detect last-resort fallback. Returns `[prompt-stub] model=...
-  prompt_length=...` so prompt-substitution can be observed without a
-  real backend. Open question (per the no-fakes rule): whether this
-  belongs in production code at all — see `WISHLIST.md`.
 - `acp.py::ACPBackend` — `npx @zed-industries/claude-code-acp`.
   See Section 9.
+- `anthropic.py::AnthropicBackend` — direct Anthropic Messages API
+  via the `anthropic` SDK. Generic model aliases (`sonnet` / `opus`
+  / `haiku` → vendor IDs) with pass-through; OverloadError mapping
+  for transient failures so the model-downgrade chain activates.
 - `openai.py::OpenAIBackend` — OpenAI-compatible client; reused for
   DeepSeek (`base_url=https://api.deepseek.com/v1`).
 - `factory.py::create_prompt_backend(executor_type, **kwargs)` —
-  string → instance. `auto_detect_executor()` picks DeepSeek key →
-  `"deepseek"`, else `npx` on PATH → `"acp"`, else warns + `"stub"`.
+  string → instance. `auto_detect_executor()` picks Anthropic key →
+  `"anthropic"`, else DeepSeek key → `"deepseek"`, else `npx` on
+  PATH → `"acp"`, else raises `RuntimeError` with concrete
+  remediation (no silent stub fallback).
 
 ### `runtime/gates.py`
 

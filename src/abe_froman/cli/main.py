@@ -272,9 +272,9 @@ async def _execute_workflow(
 @click.option(
     "--executor", "-e",
     help=(
-        "Prompt executor backend. Choices: stub | acp | anthropic | "
+        "Prompt executor backend. Choices: acp | anthropic | "
         "deepseek | openai. Omit to auto-detect (Anthropic key → "
-        "DeepSeek key → npx/ACP → stub)."
+        "DeepSeek key → npx/ACP; raises if none available)."
     ),
 )
 @click.option(

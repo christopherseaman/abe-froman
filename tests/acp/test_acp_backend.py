@@ -72,13 +72,6 @@ class TestACPCallbacks:
 
 
 class TestFactory:
-    def test_stub_backend_created(self):
-        from abe_froman.runtime.executor.backends.factory import create_prompt_backend
-        from abe_froman.runtime.executor.backends.stub import StubBackend
-
-        backend = create_prompt_backend("stub")
-        assert isinstance(backend, StubBackend)
-
     def test_acp_backend_created(self):
         from abe_froman.runtime.executor.backends.factory import create_prompt_backend
         from abe_froman.runtime.executor.backends.acp import ACPBackend
