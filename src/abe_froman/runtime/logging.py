@@ -8,6 +8,56 @@ from pathlib import Path
 from typing import IO, Any
 
 
+def _emit_update_events(emitter: Any, update: dict[str, Any]) -> None:
+    """Derive workflow events from a single super-step partial update.
+
+    A LangGraph ``stream_mode="updates"`` chunk is shaped
+    ``{node_name: partial_state_update}``; the partial update is the
+    delta the node returned (after reducer application). The four
+    event types we surface — ``node_completed``, ``node_failed``,
+    ``gate_evaluated``, ``node_retried`` — each correspond to a
+    specific shape inside that delta. We read them directly here
+    rather than diffing successive snapshots.
+
+    Free function rather than a method so ``JsonlLogger`` and
+    ``SubgraphLogger`` share the derivation logic and only differ in
+    how their ``emit()`` formats the event (``SubgraphLogger`` prefixes
+    the ``node`` field). The ``emitter`` argument duck-types ``emit()``.
+
+    Emission order is fixed to match the historical state-diff
+    ordering: ``node_completed`` → ``node_failed`` → ``gate_evaluated``
+    → ``node_retried``. Tests asserting on event order depend on this.
+    """
+    for node in update.get("completed_nodes") or []:
+        emitter.emit({"event": "node_completed", "node": node})
+
+    for node in update.get("failed_nodes") or []:
+        error = ""
+        for err in update.get("errors") or []:
+            if err.get("node") == node:
+                error = err.get("error", "")
+                break
+        emitter.emit({"event": "node_failed", "node": node, "error": error})
+
+    for node, records in (update.get("evaluations") or {}).items():
+        for record in records:
+            result = record.get("result", {}) or {}
+            event: dict[str, Any] = {
+                "event": "gate_evaluated",
+                "node": node,
+                "invocation": record.get("invocation", 0),
+                "score": result.get("score", 0.0),
+            }
+            # Multi-dim gates: emit per-dimension scores so viewers see
+            # the actual signal, not the 0.0 top-level placeholder.
+            if result.get("scores"):
+                event["scores"] = result["scores"]
+            emitter.emit(event)
+
+    for node, count in (update.get("retries") or {}).items():
+        emitter.emit({"event": "node_retried", "node": node, "attempt": count})
+
+
 class JsonlLogger:
     """Emits structured JSONL events to a file, one JSON object per line."""
 
@@ -29,66 +79,25 @@ class JsonlLogger:
         self._file.write(json.dumps(record) + "\n")
         self._file.flush()
 
-    def log_snapshot(
-        self,
-        prev: dict[str, Any],
-        curr: dict[str, Any],
-    ) -> None:
-        """Diff two state snapshots and emit events for all transitions."""
-        prev_completed = set(prev.get("completed_nodes", []))
-        curr_completed = set(curr.get("completed_nodes", []))
-        for node in curr_completed - prev_completed:
-            event: dict[str, Any] = {"event": "node_completed", "node": node}
-            self.emit(event)
-
-        prev_failed = set(prev.get("failed_nodes", []))
-        curr_failed = set(curr.get("failed_nodes", []))
-        for node in curr_failed - prev_failed:
-            error = ""
-            for err in curr.get("errors", []):
-                if err.get("node") == node:
-                    error = err.get("error", "")
-                    break
-            self.emit({"event": "node_failed", "node": node, "error": error})
-
-        prev_evals = prev.get("evaluations", {})
-        curr_evals = curr.get("evaluations", {})
-        for node, records in curr_evals.items():
-            prev_count = len(prev_evals.get(node, []))
-            for record in records[prev_count:]:
-                result = record.get("result", {})
-                event: dict[str, Any] = {
-                    "event": "gate_evaluated",
-                    "node": node,
-                    "invocation": record.get("invocation", 0),
-                    "score": result.get("score", 0.0),
-                }
-                # Multi-dim gates: emit per-dimension scores so viewers
-                # see the actual signal, not the 0.0 top-level placeholder.
-                if result.get("scores"):
-                    event["scores"] = result["scores"]
-                self.emit(event)
-
-        prev_retries = prev.get("retries", {})
-        curr_retries = curr.get("retries", {})
-        for node, count in curr_retries.items():
-            if count > prev_retries.get(node, 0):
-                self.emit({"event": "node_retried", "node": node, "attempt": count})
+    def log_update(self, update: dict[str, Any]) -> None:
+        """Derive events from a LangGraph super-step partial update."""
+        _emit_update_events(self, update)
 
 
 class SubgraphLogger:
     """Decorate a JsonlLogger with a node-id prefix for subgraph events.
 
-    A subgraph wrapper streams its inner `astream(stream_mode="values")`
-    snapshots through this decorator: the inner state's node ids get
-    rewritten with `{prefix}::` before reaching the underlying JSONL,
-    so subgraph-internal completions appear in the parent log keyed as
-    `parent_node_id::inner_node_id`. Nested subgraphs compose naturally
-    by nesting the prefix (`paper::reconcile::step1`).
+    A subgraph wrapper streams its inner ``astream(stream_mode=
+    "updates")`` chunks through this decorator: events emitted from the
+    derived update get their ``node`` field rewritten with
+    ``{prefix}::`` before reaching the underlying JSONL, so subgraph-
+    internal events appear in the parent log keyed as
+    ``parent_node_id::inner_node_id``. Nested subgraphs compose
+    naturally by nesting the prefix (``paper::reconcile::step1``).
 
-    Stays langgraph-free; only consumes state-dict snapshots and
-    delegates writes to JsonlLogger.emit, preserving the runtime layer
-    rule.
+    Stays langgraph-free; only consumes update dicts and delegates
+    writes via ``JsonlLogger.emit`` (or another wrapped SubgraphLogger),
+    preserving the runtime layer rule.
     """
 
     def __init__(self, base: "JsonlLogger | SubgraphLogger", prefix: str) -> None:
@@ -100,28 +109,7 @@ class SubgraphLogger:
             event = {**event, "node": f"{self._prefix}::{event['node']}"}
         self._base.emit(event)
 
-    def log_snapshot(self, prev: dict[str, Any], curr: dict[str, Any]) -> None:
-        # Reuse the base logger's diff logic but rewrite node ids in
-        # each emitted event. The cheapest implementation is to
-        # construct a thin proxy that intercepts emit() calls; that
-        # avoids duplicating JsonlLogger.log_snapshot's diffing rules.
-        proxy = _PrefixingProxy(self._base, self._prefix)
-        # JsonlLogger.log_snapshot is a method on the JsonlLogger
-        # instance, but it only calls self.emit — so we can rebind it
-        # to the proxy for this single call.
-        JsonlLogger.log_snapshot(proxy, prev, curr)
-
-
-class _PrefixingProxy:
-    """Internal: presents `emit()` matching JsonlLogger but prepends a
-    prefix to the `node` field before delegating to the base logger.
-    """
-
-    def __init__(self, base: "JsonlLogger | SubgraphLogger", prefix: str) -> None:
-        self._base = base
-        self._prefix = prefix
-
-    def emit(self, event: dict[str, Any]) -> None:
-        if "node" in event:
-            event = {**event, "node": f"{self._prefix}::{event['node']}"}
-        self._base.emit(event)
+    def log_update(self, update: dict[str, Any]) -> None:
+        # Same derivation logic as JsonlLogger; events flow through
+        # this instance's prefixing emit().
+        _emit_update_events(self, update)

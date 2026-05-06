@@ -52,13 +52,15 @@ class TestEmit:
         assert json.loads(lines[1])["event"] == "b"
 
 
-class TestLogSnapshot:
+class TestLogUpdate:
+    """log_update consumes the partial state delta a node returned (per
+    LangGraph stream_mode='updates'); each match in the delta produces
+    an event."""
+
     def test_detects_completed(self):
         buf = StringIO()
         logger = JsonlLogger(buf)
-        prev = {"completed_nodes": [], "failed_nodes": [], "retries": {}, "errors": []}
-        curr = {**prev, "completed_nodes": ["research"]}
-        logger.log_snapshot(prev, curr)
+        logger.log_update({"completed_nodes": ["research"]})
         events = [json.loads(l) for l in buf.getvalue().strip().split("\n")]
         assert len(events) == 1
         assert events[0]["event"] == "node_completed"
@@ -67,13 +69,10 @@ class TestLogSnapshot:
     def test_detects_failed(self):
         buf = StringIO()
         logger = JsonlLogger(buf)
-        prev = {"completed_nodes": [], "failed_nodes": [], "retries": {}, "errors": []}
-        curr = {
-            **prev,
+        logger.log_update({
             "failed_nodes": ["build"],
             "errors": [{"node": "build", "error": "exit code 1"}],
-        }
-        logger.log_snapshot(prev, curr)
+        })
         events = [json.loads(l) for l in buf.getvalue().strip().split("\n")]
         assert len(events) == 1
         assert events[0]["event"] == "node_failed"
@@ -81,17 +80,18 @@ class TestLogSnapshot:
         assert events[0]["error"] == "exit code 1"
 
     def test_detects_gate(self):
-        """gate_evaluated sources from state.evaluations (real scores)."""
+        """gate_evaluated sources from update.evaluations (real scores)."""
         buf = StringIO()
         logger = JsonlLogger(buf)
-        prev = {"completed_nodes": [], "failed_nodes": [], "evaluations": {}, "retries": {}, "errors": []}
-        curr = {
-            **prev,
+        logger.log_update({
             "evaluations": {
-                "research": [{"invocation": 0, "result": {"score": 0.95}, "timestamp": "t"}]
+                "research": [{
+                    "invocation": 0,
+                    "result": {"score": 0.95},
+                    "timestamp": "t",
+                }],
             },
-        }
-        logger.log_snapshot(prev, curr)
+        })
         events = [json.loads(l) for l in buf.getvalue().strip().split("\n")]
         assert len(events) == 1
         assert events[0]["event"] == "gate_evaluated"
@@ -103,18 +103,15 @@ class TestLogSnapshot:
         """Per-dimension scores flow through (closes multi-dim log bug)."""
         buf = StringIO()
         logger = JsonlLogger(buf)
-        prev = {"completed_nodes": [], "failed_nodes": [], "evaluations": {}, "retries": {}, "errors": []}
-        curr = {
-            **prev,
+        logger.log_update({
             "evaluations": {
                 "p": [{
                     "invocation": 0,
                     "result": {"score": 0.0, "scores": {"rigor": 0.8, "humor": 0.5}},
                     "timestamp": "t",
-                }]
+                }],
             },
-        }
-        logger.log_snapshot(prev, curr)
+        })
         events = [json.loads(l) for l in buf.getvalue().strip().split("\n")]
         assert events[0]["event"] == "gate_evaluated"
         assert events[0]["scores"] == {"rigor": 0.8, "humor": 0.5}
@@ -122,23 +119,40 @@ class TestLogSnapshot:
     def test_detects_retry(self):
         buf = StringIO()
         logger = JsonlLogger(buf)
-        prev = {"completed_nodes": [], "failed_nodes": [], "retries": {}, "errors": []}
-        curr = {**prev, "retries": {"research": 2}}
-        logger.log_snapshot(prev, curr)
+        logger.log_update({"retries": {"research": 2}})
         events = [json.loads(l) for l in buf.getvalue().strip().split("\n")]
         assert len(events) == 1
         assert events[0]["event"] == "node_retried"
         assert events[0]["node"] == "research"
         assert events[0]["attempt"] == 2
 
-    def test_no_events_on_identical_snapshots(self):
+    def test_no_events_on_empty_update(self):
+        """A super-step that returns no event-bearing fields produces
+        no log lines."""
         buf = StringIO()
         logger = JsonlLogger(buf)
-        state = {"completed_nodes": ["a"], "failed_nodes": [], "retries": {}, "errors": []}
-        logger.log_snapshot(state, state)
-        # Parse rather than string-compare so stray whitespace can't silently pass.
+        # node_outputs is not event-bearing — only completed/failed/
+        # evaluations/retries trigger events.
+        logger.log_update({"node_outputs": {"foo": "bar"}})
         events = [json.loads(l) for l in buf.getvalue().splitlines() if l.strip()]
         assert events == []
+
+    def test_emits_multiple_events_per_update(self):
+        """A single update can carry both an evaluation record AND a
+        completion (the gated-pass case). Both events fire from the
+        one log_update call, in deterministic order."""
+        buf = StringIO()
+        logger = JsonlLogger(buf)
+        logger.log_update({
+            "evaluations": {"p": [{"invocation": 0, "result": {"score": 0.9}}]},
+            "completed_nodes": ["p"],
+        })
+        events = [json.loads(l) for l in buf.getvalue().strip().split("\n")]
+        types = [e["event"] for e in events]
+        # node_completed comes BEFORE gate_evaluated per the
+        # _emit_update_events ordering contract — preserved from the
+        # legacy state-diff order so test assertions remain stable.
+        assert types == ["node_completed", "gate_evaluated"]
 
 
 # ---------------------------------------------------------------------------
@@ -301,16 +315,13 @@ class TestSubgraphLogger:
         record = json.loads(buf.getvalue())
         assert record["node"] == "paper::reconcile::step1"
 
-    def test_log_snapshot_diffs_with_prefix(self):
+    def test_log_update_emits_with_prefix(self):
         from abe_froman.runtime.logging import SubgraphLogger
 
         buf = StringIO()
         base = JsonlLogger(buf)
         sub = SubgraphLogger(base, prefix="paper")
-        sub.log_snapshot(
-            {"completed_nodes": []},
-            {"completed_nodes": ["step1", "step2"]},
-        )
+        sub.log_update({"completed_nodes": ["step1", "step2"]})
         records = [json.loads(l) for l in buf.getvalue().strip().split("\n")]
         nodes = sorted(r["node"] for r in records)
         assert nodes == ["paper::step1", "paper::step2"]

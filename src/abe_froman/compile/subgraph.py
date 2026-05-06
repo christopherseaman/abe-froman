@@ -151,14 +151,15 @@ def make_subgraph_node(
         if logger is not None:
             from abe_froman.runtime.logging import SubgraphLogger
             sub_logger = SubgraphLogger(logger, prefix=parent_id)
-            sub_prev = sub_state
             sub_result = sub_state
-            async for snapshot in sub_graph.astream(
-                sub_state, stream_mode="values"
+            async for chunk_type, payload in sub_graph.astream(
+                sub_state, stream_mode=["updates", "values"],
             ):
-                sub_logger.log_snapshot(sub_prev, snapshot)
-                sub_prev = snapshot
-                sub_result = snapshot
+                if chunk_type == "values":
+                    sub_result = payload
+                elif chunk_type == "updates":
+                    for _name, update in payload.items():
+                        sub_logger.log_update(update)
         else:
             sub_result = await sub_graph.ainvoke(sub_state)
 
@@ -254,14 +255,15 @@ def make_fan_out_subgraph_invoker(
             if logger is not None and prefix is not None:
                 from abe_froman.runtime.logging import SubgraphLogger
                 sub_logger = SubgraphLogger(logger, prefix=prefix)
-                sub_prev = sub_state
                 sub_result = sub_state
-                async for snapshot in sub_compiled.astream(
-                    sub_state, stream_mode="values"
+                async for chunk_type, payload in sub_compiled.astream(
+                    sub_state, stream_mode=["updates", "values"],
                 ):
-                    sub_logger.log_snapshot(sub_prev, snapshot)
-                    sub_prev = snapshot
-                    sub_result = snapshot
+                    if chunk_type == "values":
+                        sub_result = payload
+                    elif chunk_type == "updates":
+                        for _name, update in payload.items():
+                            sub_logger.log_update(update)
             else:
                 sub_result = await sub_compiled.ainvoke(sub_state)
         except Exception as e:

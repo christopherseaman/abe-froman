@@ -49,18 +49,24 @@ async def run_workflow(
         owns_logger = True
 
     last_state = initial_state
-    prev_state = initial_state
     run_config = (
         {"configurable": {"thread_id": thread_id}} if thread_id else {}
     )
 
-    async for snapshot in compiled_graph.astream(
-        initial_state, config=run_config, stream_mode="values"
+    # Tuple stream_mode: each chunk is ``(mode, payload)``.
+    #   - ``("updates", {node_name: partial_update})`` per super-step;
+    #     events derive from the partial update directly (no diffing).
+    #   - ``("values", cumulative_state_dict)`` snapshots; tracked here
+    #     only to capture the final state for ``workflow_end`` counts.
+    async for chunk_type, payload in compiled_graph.astream(
+        initial_state, config=run_config,
+        stream_mode=["updates", "values"],
     ):
-        last_state = snapshot
-        if logger is not None:
-            logger.log_snapshot(prev_state, snapshot)
-            prev_state = snapshot
+        if chunk_type == "values":
+            last_state = payload
+        elif chunk_type == "updates" and logger is not None:
+            for _node_name, update in payload.items():
+                logger.log_update(update)
 
     if owns_logger:
         logger.emit({
