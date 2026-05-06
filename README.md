@@ -20,7 +20,22 @@ npm i -g @zed-industries/claude-code-acp # for ACP backend
 
 Python 3.11+ is required. The project develops on 3.14.
 
-For the DeepSeek backend, set `DEEPSEEK_API_KEY` in the environment, or place a JSON file at `~/.pi/agent/auth.json` shaped as `{"deepseek": {"key": "..."}}`. Either source resolves to the same key.
+### API keys
+
+Copy `.env.example` to `.env` (gitignored) and fill in any of the backends you plan to use:
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-...    # used by --executor anthropic; auto-detect picks this first
+DEEPSEEK_API_KEY=sk-...         # used by --executor deepseek
+OPENAI_API_KEY=sk-...           # used by --executor openai
+OPENAI_BASE_URL=...             # optional; lets the openai backend talk to OpenRouter / Ollama / LM Studio / LiteLLM
+```
+
+Load via `uv run --env-file .env abe-froman run <config.yaml>`, or `set -a; source .env; set +a` in your shell.
+
+Anthropic and DeepSeek keys can alternatively live in `~/.pi/agent/auth.json` shaped as `{"anthropic": {"key": "..."}, "deepseek": {"key": "..."}}`. Env vars take precedence when both are set.
+
+For OpenAI-compatible providers, set `OPENAI_API_KEY` to that provider's key and `OPENAI_BASE_URL` to its endpoint. Examples: `https://openrouter.ai/api/v1` (OpenRouter), `http://localhost:11434/v1` (Ollama), `http://localhost:1234/v1` (LM Studio), `http://localhost:4000` (LiteLLM proxy).
 
 ## Quickstart
 
@@ -74,7 +89,7 @@ Resolution order at run time: `--executor` flag, then `settings.executor` in YAM
 | `acp`       | `npm i -g @zed-industries/claude-code-acp` | Claude CLI session (no API key needed)                  | Claude (opus/sonnet/haiku) | usage-billed via Anthropic |
 | `anthropic` | `uv sync --extra anthropic`                | `ANTHROPIC_API_KEY` or `~/.pi/agent/auth.json`          | Claude (opus/sonnet/haiku via the Messages API; full vendor IDs accepted) | usage-billed via Anthropic |
 | `deepseek`  | `uv sync --extra openai`                   | `DEEPSEEK_API_KEY` or `~/.pi/agent/auth.json`           | DeepSeek catalog (e.g. `deepseek-chat`, `deepseek-reasoner`, `deepseek-v4-flash`) | usage-billed via DeepSeek |
-| `openai`    | `uv sync --extra openai`                   | `OPENAI_API_KEY` (or pass `api_key=` programmatically)  | OpenAI catalog or compatible base_url | usage-billed |
+| `openai`    | `uv sync --extra openai`                   | `OPENAI_API_KEY` + optional `OPENAI_BASE_URL` (OpenRouter / Ollama / LM Studio / LiteLLM / Azure OpenAI / vLLM ...) | Whatever the configured endpoint serves | usage-billed by the provider |
 
 ## CLI reference
 

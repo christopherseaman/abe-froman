@@ -88,6 +88,29 @@ class TestCreatePromptBackend:
         assert isinstance(backend, OpenAIBackend)
         assert backend._base_url == "https://custom/"
 
+    def test_openai_picks_up_base_url_from_env(self, monkeypatch):
+        """``OPENAI_BASE_URL`` env var lets OpenRouter / Ollama /
+        LM Studio / LiteLLM / etc. work via the openai backend without
+        passing kwargs at construction time."""
+        from abe_froman.runtime.executor.backends.openai import OpenAIBackend
+
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-or-v1-fake")
+        monkeypatch.setenv(
+            "OPENAI_BASE_URL", "https://openrouter.ai/api/v1",
+        )
+        backend = create_prompt_backend("openai")
+        assert isinstance(backend, OpenAIBackend)
+        assert backend._base_url == "https://openrouter.ai/api/v1"
+
+    def test_openai_explicit_base_url_overrides_env(self, monkeypatch):
+        """Caller-supplied ``base_url`` wins over the env var."""
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-fake")
+        monkeypatch.setenv("OPENAI_BASE_URL", "https://from-env/")
+        backend = create_prompt_backend(
+            "openai", base_url="https://from-arg/",
+        )
+        assert backend._base_url == "https://from-arg/"
+
     def test_unknown_type_raises_with_supported_list(self):
         with pytest.raises(ValueError) as ei:
             create_prompt_backend("ruby")

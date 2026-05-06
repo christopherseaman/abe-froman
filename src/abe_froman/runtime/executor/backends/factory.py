@@ -113,7 +113,16 @@ def create_prompt_backend(executor_type: str, **kwargs: object) -> PromptBackend
                 "OpenAI backend requested but no API key found "
                 "(set OPENAI_API_KEY or pass api_key=...)."
             )
-        return OpenAIBackend(api_key=api_key, base_url=kwargs.get("base_url"))
+        # ``OPENAI_BASE_URL`` env var lets OpenAI-compatible providers
+        # work with the same backend without a code change. Examples:
+        #   OpenRouter:  https://openrouter.ai/api/v1
+        #   Ollama:      http://localhost:11434/v1
+        #   LM Studio:   http://localhost:1234/v1
+        #   LiteLLM:     http://localhost:4000
+        # In the OpenRouter / paid-provider cases, set OPENAI_API_KEY
+        # to the provider's key and OPENAI_BASE_URL to its endpoint.
+        base_url = kwargs.get("base_url") or os.getenv("OPENAI_BASE_URL")
+        return OpenAIBackend(api_key=api_key, base_url=base_url)
 
     raise ValueError(
         f"Unknown executor type: {executor_type!r}. "
