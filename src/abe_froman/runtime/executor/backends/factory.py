@@ -11,6 +11,28 @@ from abe_froman.runtime.result import PromptBackend
 DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
 
 
+def _resolve_key_from_auth_json(provider: str) -> str | None:
+    """Read ``~/.pi/agent/auth.json`` and extract ``{provider: {key: ...}}``.
+
+    Returns ``None`` if the file is missing, malformed, or has no key
+    for the requested provider. Shared by the per-provider resolvers
+    so they don't duplicate the file-IO + JSON-parse + shape-check.
+    """
+    auth_path = Path.home() / ".pi" / "agent" / "auth.json"
+    if not auth_path.exists():
+        return None
+    try:
+        data = json.loads(auth_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    section = data.get(provider) if isinstance(data, dict) else None
+    if isinstance(section, dict):
+        key = section.get("key")
+        if isinstance(key, str) and key:
+            return key
+    return None
+
+
 def _resolve_deepseek_key() -> str | None:
     """Resolve a DeepSeek API key, env-first then on-disk auth.json.
 
@@ -23,19 +45,22 @@ def _resolve_deepseek_key() -> str | None:
     env_key = os.getenv("DEEPSEEK_API_KEY")
     if env_key:
         return env_key
-    auth_path = Path.home() / ".pi" / "agent" / "auth.json"
-    if not auth_path.exists():
-        return None
-    try:
-        data = json.loads(auth_path.read_text())
-    except (OSError, json.JSONDecodeError):
-        return None
-    deepseek = data.get("deepseek") if isinstance(data, dict) else None
-    if isinstance(deepseek, dict):
-        key = deepseek.get("key")
-        if isinstance(key, str) and key:
-            return key
-    return None
+    return _resolve_key_from_auth_json("deepseek")
+
+
+def _resolve_anthropic_key() -> str | None:
+    """Resolve an Anthropic API key, env-first then on-disk auth.json.
+
+    Priority:
+      1. ``ANTHROPIC_API_KEY`` env var (standard Anthropic SDK contract).
+      2. ``~/.pi/agent/auth.json`` carrying ``{"anthropic": {"key": "..."}}``.
+
+    Returns ``None`` if neither source has a key.
+    """
+    env_key = os.getenv("ANTHROPIC_API_KEY")
+    if env_key:
+        return env_key
+    return _resolve_key_from_auth_json("anthropic")
 
 
 def create_prompt_backend(executor_type: str, **kwargs: object) -> PromptBackend:
@@ -44,6 +69,7 @@ def create_prompt_backend(executor_type: str, **kwargs: object) -> PromptBackend
     Supported types:
     - "stub": placeholder backend (default, no external dependencies)
     - "acp": ACP via claude-code-acp adapter
+    - "anthropic": Direct Anthropic Messages API
     - "deepseek": OpenAI-compatible backend pointed at DeepSeek
     - "openai": OpenAI-compatible backend (caller supplies key/base_url)
     """
@@ -59,6 +85,20 @@ def create_prompt_backend(executor_type: str, **kwargs: object) -> PromptBackend
             program=kwargs.get("program", "npx"),
             args=kwargs.get("args", ("@zed-industries/claude-code-acp",)),
         )
+
+    if executor_type == "anthropic":
+        from abe_froman.runtime.executor.backends.anthropic import (
+            AnthropicBackend,
+        )
+
+        api_key = kwargs.get("api_key") or _resolve_anthropic_key()
+        if not api_key:
+            raise ValueError(
+                "Anthropic backend requested but no API key found "
+                "(set ANTHROPIC_API_KEY or place key in "
+                "~/.pi/agent/auth.json)."
+            )
+        return AnthropicBackend(api_key=api_key)
 
     if executor_type == "deepseek":
         from abe_froman.runtime.executor.backends.openai import OpenAIBackend
@@ -84,7 +124,7 @@ def create_prompt_backend(executor_type: str, **kwargs: object) -> PromptBackend
 
     raise ValueError(
         f"Unknown executor type: {executor_type!r}. "
-        f"Supported: stub, acp, deepseek, openai"
+        f"Supported: stub, acp, anthropic, deepseek, openai"
     )
 
 
@@ -93,31 +133,30 @@ def auto_detect_executor() -> str:
     on miss.
 
     Resolution order (first match wins):
-      1. DeepSeek key (env ``DEEPSEEK_API_KEY`` or
+      1. Anthropic key (env ``ANTHROPIC_API_KEY`` or
+         ``~/.pi/agent/auth.json``) → ``"anthropic"``.
+      2. DeepSeek key (env ``DEEPSEEK_API_KEY`` or
          ``~/.pi/agent/auth.json``) → ``"deepseek"``.
-      2. ``npx`` on PATH → ``"acp"`` (assumes
+      3. ``npx`` on PATH → ``"acp"`` (assumes
          ``@zed-industries/claude-code-acp`` is installed).
-      3. Nothing → ``"stub"`` with a UserWarning so the operator
+      4. Nothing → ``"stub"`` with a UserWarning so the operator
          knows prompt nodes will produce fake output.
-
-    A native ``anthropic`` API backend is on the wishlist but not yet
-    wired; setting only ``ANTHROPIC_API_KEY`` falls through to whichever
-    of the above is available rather than picking a non-existent
-    backend. Once the Anthropic backend lands, this function gains a
-    branch above DeepSeek.
 
     Only called from the CLI as a *fallback* when neither ``--executor``
     nor ``settings.executor`` was set. Explicit choices never trigger
     this function — and so never emit the warning.
     """
+    if _resolve_anthropic_key():
+        return "anthropic"
     if _resolve_deepseek_key():
         return "deepseek"
     if shutil.which("npx"):
         return "acp"
     warnings.warn(
-        "No real backend detected (no DEEPSEEK_API_KEY, no npx on "
-        "PATH); falling back to stub. Prompt nodes will produce fake "
-        "output. Set DEEPSEEK_API_KEY or install npx + "
+        "No real backend detected (no ANTHROPIC_API_KEY, no "
+        "DEEPSEEK_API_KEY, no npx on PATH); falling back to stub. "
+        "Prompt nodes will produce fake output. Set "
+        "ANTHROPIC_API_KEY, set DEEPSEEK_API_KEY, or install npx + "
         "@zed-industries/claude-code-acp.",
         stacklevel=2,
     )

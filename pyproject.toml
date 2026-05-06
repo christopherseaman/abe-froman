@@ -19,6 +19,7 @@ abe-froman = "abe_froman.cli.main:cli"
 
 [project.optional-dependencies]
 openai = ["openai>=1.40"]
+anthropic = ["anthropic>=0.40"]
 
 [build-system]
 requires = ["hatchling"]

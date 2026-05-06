@@ -41,6 +41,20 @@ class TestCreatePromptBackend:
         backend = create_prompt_backend("stub")
         assert isinstance(backend, StubBackend)
 
+    def test_anthropic_with_key_returns_anthropic_backend(self):
+        from abe_froman.runtime.executor.backends.anthropic import (
+            AnthropicBackend,
+        )
+
+        backend = create_prompt_backend("anthropic", api_key="sk-fake")
+        assert isinstance(backend, AnthropicBackend)
+        assert backend._api_key == "sk-fake"
+
+    def test_anthropic_without_key_raises(self, clean_env):
+        with pytest.raises(ValueError) as ei:
+            create_prompt_backend("anthropic")
+        assert "ANTHROPIC_API_KEY" in str(ei.value)
+
     def test_deepseek_with_key_returns_openai_backend(self):
         from abe_froman.runtime.executor.backends.openai import OpenAIBackend
 
@@ -74,6 +88,7 @@ class TestCreatePromptBackend:
         msg = str(ei.value)
         assert "ruby" in msg
         assert "deepseek" in msg
+        assert "anthropic" in msg
         assert "stub" in msg
 
 
@@ -82,12 +97,12 @@ class TestCreatePromptBackend:
 # ---------------------------------------------------------------------
 
 class TestAutoDetect:
-    def test_anthropic_key_alone_falls_through(self, clean_env, monkeypatch):
-        """ANTHROPIC_API_KEY alone does NOT auto-pick — the native
-        anthropic backend isn't wired yet, so picking it would surface
-        as a confusing ValueError at workflow startup. Resolution falls
-        through to the next available real backend (or stub)."""
+    def test_anthropic_key_wins(self, clean_env, monkeypatch):
+        """ANTHROPIC_API_KEY auto-picks the native Anthropic backend —
+        even when DeepSeek and npx are also available, Anthropic is
+        first in the resolution chain."""
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-anthropic")
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek")
         monkeypatch.setattr(
             "abe_froman.runtime.executor.backends.factory.shutil.which",
             lambda name: "/usr/bin/npx" if name == "npx" else None,
@@ -95,9 +110,22 @@ class TestAutoDetect:
 
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            # ACP via npx is what actually gets picked — the user's
-            # ANTHROPIC_API_KEY is irrelevant to that decision.
-            assert auto_detect_executor() == "acp"
+            assert auto_detect_executor() == "anthropic"
+
+    def test_anthropic_via_disk_when_no_env(self, clean_env, monkeypatch):
+        """auth.json is the env-fallback for Anthropic too —
+        ``{"anthropic": {"key": "..."}}`` is the same shape used by
+        DeepSeek."""
+        auth = clean_env / ".pi" / "agent" / "auth.json"
+        auth.parent.mkdir(parents=True)
+        auth.write_text('{"anthropic": {"key": "sk-from-disk"}}')
+        monkeypatch.setattr(
+            "abe_froman.runtime.executor.backends.factory.shutil.which",
+            lambda name: None,
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            assert auto_detect_executor() == "anthropic"
 
     def test_deepseek_key_when_no_anthropic(self, clean_env, monkeypatch):
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek")
@@ -152,6 +180,7 @@ class TestAutoDetect:
         with pytest.warns(UserWarning) as record:
             auto_detect_executor()
         msg = str(record[0].message)
+        assert "ANTHROPIC_API_KEY" in msg
         assert "DEEPSEEK_API_KEY" in msg
         assert "claude-code-acp" in msg
 
@@ -193,3 +222,69 @@ class TestExecutorResolution:
         settings_executor = None
         result = executor or settings_executor or auto_detect_executor()
         assert result == "deepseek"
+
+
+# ---------------------------------------------------------------------
+# _resolve_anthropic_key — env-first, auth.json fallback
+# ---------------------------------------------------------------------
+
+class TestResolveAnthropicKey:
+    """Mirrors `TestKeyResolution` for DeepSeek over in
+    `test_openai_backend.py`. Same shape; different provider section
+    in auth.json."""
+
+    def test_env_var_wins(self, monkeypatch, tmp_path):
+        from abe_froman.runtime.executor.backends.factory import (
+            _resolve_anthropic_key,
+        )
+
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-from-env")
+        assert _resolve_anthropic_key() == "sk-from-env"
+
+    def test_falls_back_to_auth_json(self, monkeypatch, tmp_path):
+        from abe_froman.runtime.executor.backends.factory import (
+            _resolve_anthropic_key,
+        )
+
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        auth = tmp_path / ".pi" / "agent" / "auth.json"
+        auth.parent.mkdir(parents=True)
+        auth.write_text('{"anthropic": {"key": "sk-from-disk"}}')
+        assert _resolve_anthropic_key() == "sk-from-disk"
+
+    def test_returns_none_when_neither_present(self, monkeypatch, tmp_path):
+        from abe_froman.runtime.executor.backends.factory import (
+            _resolve_anthropic_key,
+        )
+
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        assert _resolve_anthropic_key() is None
+
+    def test_malformed_auth_json_returns_none(self, monkeypatch, tmp_path):
+        from abe_froman.runtime.executor.backends.factory import (
+            _resolve_anthropic_key,
+        )
+
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        auth = tmp_path / ".pi" / "agent" / "auth.json"
+        auth.parent.mkdir(parents=True)
+        auth.write_text("{not valid json")
+        assert _resolve_anthropic_key() is None
+
+    def test_missing_anthropic_key_in_auth_json_returns_none(
+        self, monkeypatch, tmp_path,
+    ):
+        from abe_froman.runtime.executor.backends.factory import (
+            _resolve_anthropic_key,
+        )
+
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        auth = tmp_path / ".pi" / "agent" / "auth.json"
+        auth.parent.mkdir(parents=True)
+        auth.write_text('{"deepseek": {"key": "x"}}')
+        assert _resolve_anthropic_key() is None
