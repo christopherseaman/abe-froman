@@ -49,12 +49,13 @@ def _resolve_model(model: str) -> str:
 # Anthropic SDK exception classes that don't always carry a numeric
 # status_code but should still trigger downgrade. Class-name string
 # match (vs class import) keeps this robust to SDK version churn.
+# Verified against anthropic 0.99.0 — extend if a future version adds
+# a transient-failure class not covered by the status-code path.
 _OVERLOAD_EXCEPTION_NAMES = frozenset({
     "RateLimitError",        # 429
     "APIConnectionError",    # transient network
     "APITimeoutError",       # request timeout
     "InternalServerError",   # 5xx
-    "OverloadedError",       # 529 (newer SDK versions)
 })
 
 
@@ -120,19 +121,24 @@ class AnthropicBackend:
 
         # The Messages API response carries content as a list of
         # blocks (text / tool_use / etc.). For prompt-mode dispatch we
-        # expect a text block; concatenate any text blocks present.
+        # expect a text block; concatenate any non-empty text blocks
+        # present. An empty-string text block is treated as no text
+        # (asymmetry with "no text block" → loud failure would be a
+        # silent-empty-success footgun otherwise).
         text_parts = [
             getattr(block, "text", "")
             for block in resp.content
             if getattr(block, "type", None) == "text"
+            and getattr(block, "text", "")
         ]
         if not text_parts:
             return ExecutionResult(
                 success=False,
                 error=(
                     f"Anthropic API returned content blocks but no "
-                    f"text block (model={resolved_model!r}). Got "
-                    f"types: {[getattr(b, 'type', '?') for b in resp.content]!r}."
+                    f"non-empty text block (model={resolved_model!r}). "
+                    f"Got types: "
+                    f"{[getattr(b, 'type', '?') for b in resp.content]!r}."
                 ),
             )
         return ExecutionResult(output="".join(text_parts))

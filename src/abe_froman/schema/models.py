@@ -89,6 +89,14 @@ class Route(BaseModel):
                 raise ValueError(
                     "Route with `cases:` requires `else:` target"
                 )
+            if has_else and not has_cases:
+                # `else:` without `cases:` would be a silent unconditional
+                # redirect — confusing structure, identical to `goto:`
+                # shorthand. Reject so authors pick the unambiguous form.
+                raise ValueError(
+                    "Route with `else:` requires `cases:` — use `goto:` "
+                    "shorthand for unconditional dispatch"
+                )
             if self.include_eval:
                 # include_eval at the route level only meaningful for
                 # the goto-shorthand form; cases/else carry their own.
@@ -197,9 +205,10 @@ class Settings(BaseModel):
     default_model: str = "sonnet"
     # `None` triggers auto-detect at CLI dispatch (Anthropic key →
     # DeepSeek key → ACP via npx; raises if none available).
-    # Explicit choices: "acp" | "anthropic" | "deepseek" | "openai".
-    # The CLI `--executor` flag overrides this field.
-    executor: str | None = None
+    # Explicit choices below. The CLI `--executor` flag overrides this
+    # field. Typo'd values (e.g. "stub" post-StubBackend removal) fail
+    # at `validate` time rather than late at `run`.
+    executor: Literal["acp", "anthropic", "deepseek", "openai"] | None = None
     default_timeout: float | None = None
     preamble_file: str | None = None
     retry_backoff: list[float] = []

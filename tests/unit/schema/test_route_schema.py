@@ -57,12 +57,13 @@ def test_route_missing_else_raises():
     assert "else" in str(ei.value).lower()
 
 
-def test_route_empty_cases_with_else_is_legal():
-    """``cases: []`` with an ``else:`` target is treated as unconditional
-    fall-through — preserves Stage 5b semantics."""
-    parsed = Route.model_validate({"cases": [], "else": "always_here"})
-    assert parsed.cases == []
-    assert parsed.else_.goto == "always_here"
+def test_route_empty_cases_with_else_rejected():
+    """``cases: []`` with an ``else:`` target is now rejected — confusing
+    structure identical to ``goto:`` shorthand. Authors should write
+    ``goto:`` for unconditional dispatch."""
+    with pytest.raises(ValidationError) as ei:
+        Route.model_validate({"cases": [], "else": "always_here"})
+    assert "cases" in str(ei.value).lower()
 
 
 def test_route_populate_by_name():

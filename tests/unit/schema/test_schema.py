@@ -338,6 +338,13 @@ class TestInlineRoute:
                 "cases": [{"when": "x", "goto": "b"}],
             })
 
+    def test_else_without_cases_rejected(self):
+        """Bare `else:` without `cases:` is a silent unconditional
+        redirect — confusing structure identical to `goto:` shorthand.
+        Reject so authors pick the unambiguous form."""
+        with pytest.raises(ValidationError, match="requires `cases"):
+            Route.model_validate({"else": "fallback"})
+
     def test_route_must_set_at_least_one_form(self):
         with pytest.raises(ValidationError, match="requires either"):
             Route()

@@ -187,16 +187,14 @@ class TestErrorMapping:
             "APIConnectionError",
             "APITimeoutError",
             "InternalServerError",
-            "OverloadedError",
         ],
     )
     async def test_exception_class_name_maps_to_overload(
         self, exc_class_name, tmp_path,
     ):
-        """Anthropic SDK errors don't always carry status_code as int —
-        name-based fallback covers the common transient classes,
-        including 529-style ``OverloadedError`` that some SDK versions
-        emit."""
+        """Anthropic SDK transient-failure classes (verified against
+        anthropic 0.99.0) — name-based fallback covers cases where the
+        exception doesn't carry a numeric ``status_code``."""
         exc_class = type(exc_class_name, (Exception,), {})
         backend = _backend_with_fake_client(exc_class("transient"))
         with pytest.raises(OverloadError):
@@ -304,7 +302,20 @@ class TestResponseHandling:
             workdir=str(tmp_path), timeout=10.0,
         )
         assert result.success is False
-        assert "no text block" in result.error
+        assert "non-empty text block" in result.error
+
+    async def test_empty_text_block_returns_failure(self, tmp_path):
+        """Asymmetry guard: a text block with `text=""` (refusal /
+        truncation / filter edge case) must not silently succeed
+        with empty output. Treat it like no text block at all."""
+        resp = _FakeResponse([_FakeBlock("text", "")])
+        backend = _backend_with_fake_client(response=resp)
+        result = await backend.send_prompt(
+            prompt="x", model="haiku",
+            workdir=str(tmp_path), timeout=10.0,
+        )
+        assert result.success is False
+        assert "non-empty text block" in result.error
 
 
 # ---------------------------------------------------------------------

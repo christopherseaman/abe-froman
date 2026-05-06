@@ -155,9 +155,15 @@ async def test_route_node_unconditional_goto_shorthand():
     assert cmd.goto == "always_here"
 
 
-async def test_route_node_empty_cases_falls_through_to_else():
-    """``cases: []`` with an ``else:`` target falls through to else."""
-    fn = _make_inline_route_node(_route_node([], else_target="always_here"))
+async def test_route_node_unconditional_goto_shorthand():
+    """The unconditional-dispatch shape is `goto:` shorthand. (`cases: []`
+    + `else:` is rejected at the schema layer — see
+    ``test_route_empty_cases_with_else_rejected``.)"""
+    node = Node(
+        id="r", name="R", depends_on=[],
+        route=Route(goto="always_here"),
+    )
+    fn = _make_inline_route_node(node)
     cmd = await fn({})
     assert cmd.goto == "always_here"
 
