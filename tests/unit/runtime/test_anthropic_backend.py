@@ -30,7 +30,7 @@ from abe_froman.runtime.result import OverloadError
 ANTHROPIC_KEY = _resolve_anthropic_key()
 LIVE_REASON = (
     "Anthropic API key not available "
-    "(set ANTHROPIC_API_KEY or place key in ~/.pi/agent/auth.json)"
+    "(set ANTHROPIC_API_KEY in the environment; see .env.example)"
 )
 
 

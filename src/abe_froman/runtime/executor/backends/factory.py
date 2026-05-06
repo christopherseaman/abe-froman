@@ -1,65 +1,23 @@
 from __future__ import annotations
 
-import json
-import os
 import shutil
-from pathlib import Path
 
 from abe_froman.runtime.result import PromptBackend
+from abe_froman.runtime.secrets import resolve_secret
 
 DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
 
 
-def _resolve_key_from_auth_json(provider: str) -> str | None:
-    """Read ``~/.pi/agent/auth.json`` and extract ``{provider: {key: ...}}``.
-
-    Returns ``None`` if the file is missing, malformed, or has no key
-    for the requested provider. Shared by the per-provider resolvers
-    so they don't duplicate the file-IO + JSON-parse + shape-check.
-    """
-    auth_path = Path.home() / ".pi" / "agent" / "auth.json"
-    if not auth_path.exists():
-        return None
-    try:
-        data = json.loads(auth_path.read_text())
-    except (OSError, json.JSONDecodeError):
-        return None
-    section = data.get(provider) if isinstance(data, dict) else None
-    if isinstance(section, dict):
-        key = section.get("key")
-        if isinstance(key, str) and key:
-            return key
-    return None
-
-
 def _resolve_deepseek_key() -> str | None:
-    """Resolve a DeepSeek API key, env-first then on-disk auth.json.
-
-    Priority:
-      1. ``DEEPSEEK_API_KEY`` env var.
-      2. ``~/.pi/agent/auth.json`` carrying ``{"deepseek": {"key": "..."}}``.
-
-    Returns ``None`` if neither source has a key.
-    """
-    env_key = os.getenv("DEEPSEEK_API_KEY")
-    if env_key:
-        return env_key
-    return _resolve_key_from_auth_json("deepseek")
+    """Thin wrapper for backward compatibility / readability — the
+    real resolution chain lives in ``runtime/secrets.py``."""
+    return resolve_secret("DEEPSEEK_API_KEY")
 
 
 def _resolve_anthropic_key() -> str | None:
-    """Resolve an Anthropic API key, env-first then on-disk auth.json.
-
-    Priority:
-      1. ``ANTHROPIC_API_KEY`` env var (standard Anthropic SDK contract).
-      2. ``~/.pi/agent/auth.json`` carrying ``{"anthropic": {"key": "..."}}``.
-
-    Returns ``None`` if neither source has a key.
-    """
-    env_key = os.getenv("ANTHROPIC_API_KEY")
-    if env_key:
-        return env_key
-    return _resolve_key_from_auth_json("anthropic")
+    """Thin wrapper for backward compatibility / readability — the
+    real resolution chain lives in ``runtime/secrets.py``."""
+    return resolve_secret("ANTHROPIC_API_KEY")
 
 
 def create_prompt_backend(executor_type: str, **kwargs: object) -> PromptBackend:
@@ -88,8 +46,7 @@ def create_prompt_backend(executor_type: str, **kwargs: object) -> PromptBackend
         if not api_key:
             raise ValueError(
                 "Anthropic backend requested but no API key found "
-                "(set ANTHROPIC_API_KEY or place key in "
-                "~/.pi/agent/auth.json)."
+                "(set ANTHROPIC_API_KEY in the environment; see .env.example)."
             )
         return AnthropicBackend(api_key=api_key)
 
@@ -100,28 +57,28 @@ def create_prompt_backend(executor_type: str, **kwargs: object) -> PromptBackend
         if not api_key:
             raise ValueError(
                 "DeepSeek backend requested but no API key found "
-                "(set DEEPSEEK_API_KEY or place key in ~/.pi/agent/auth.json)."
+                "(set DEEPSEEK_API_KEY in the environment; see .env.example)."
             )
         return OpenAIBackend(api_key=api_key, base_url=DEEPSEEK_BASE_URL)
 
     if executor_type == "openai":
         from abe_froman.runtime.executor.backends.openai import OpenAIBackend
 
-        api_key = kwargs.get("api_key") or os.getenv("OPENAI_API_KEY")
+        api_key = kwargs.get("api_key") or resolve_secret("OPENAI_API_KEY")
         if not api_key:
             raise ValueError(
                 "OpenAI backend requested but no API key found "
-                "(set OPENAI_API_KEY or pass api_key=...)."
+                "(set OPENAI_API_KEY in the environment; see .env.example)."
             )
-        # ``OPENAI_BASE_URL`` env var lets OpenAI-compatible providers
-        # work with the same backend without a code change. Examples:
+        # ``OPENAI_BASE_URL`` lets OpenAI-compatible providers work
+        # with the same backend without a code change. Examples:
         #   OpenRouter:  https://openrouter.ai/api/v1
         #   Ollama:      http://localhost:11434/v1
         #   LM Studio:   http://localhost:1234/v1
         #   LiteLLM:     http://localhost:4000
-        # In the OpenRouter / paid-provider cases, set OPENAI_API_KEY
-        # to the provider's key and OPENAI_BASE_URL to its endpoint.
-        base_url = kwargs.get("base_url") or os.getenv("OPENAI_BASE_URL")
+        # Set OPENAI_API_KEY to the provider's key and OPENAI_BASE_URL
+        # to its endpoint.
+        base_url = kwargs.get("base_url") or resolve_secret("OPENAI_BASE_URL")
         return OpenAIBackend(api_key=api_key, base_url=base_url)
 
     raise ValueError(
@@ -134,14 +91,12 @@ def auto_detect_executor() -> str:
     """Pick the first available real backend; raise on miss.
 
     Resolution order (first match wins):
-      1. Anthropic key (env ``ANTHROPIC_API_KEY`` or
-         ``~/.pi/agent/auth.json``) → ``"anthropic"``.
-      2. DeepSeek key (env ``DEEPSEEK_API_KEY`` or
-         ``~/.pi/agent/auth.json``) → ``"deepseek"``.
+      1. ``ANTHROPIC_API_KEY`` env var → ``"anthropic"``.
+      2. ``DEEPSEEK_API_KEY`` env var → ``"deepseek"``.
       3. ``npx`` on PATH → ``"acp"`` (assumes
          ``@zed-industries/claude-code-acp`` is installed).
       4. Nothing → ``RuntimeError`` naming all three remediation
-         paths. There is no longer a silent fake-output fallback.
+         paths. There is no silent fake-output fallback.
 
     Only called from the CLI as a *fallback* when neither ``--executor``
     nor ``settings.executor`` was set.

@@ -33,7 +33,7 @@ OPENAI_BASE_URL=...             # optional; lets the openai backend talk to Open
 
 Load via `uv run --env-file .env abe-froman run <config.yaml>`, or `set -a; source .env; set +a` in your shell.
 
-Anthropic and DeepSeek keys can alternatively live in `~/.pi/agent/auth.json` shaped as `{"anthropic": {"key": "..."}, "deepseek": {"key": "..."}}`. Env vars take precedence when both are set.
+Resolution order: workflow YAML setting (when a binding exists) → process env (`os.environ`) → project-local `.env` file (auto-discovered by walking up from CWD). abe-froman never reads from machine-global keystores; keys live in the project's environment.
 
 For OpenAI-compatible providers, set `OPENAI_API_KEY` to that provider's key and `OPENAI_BASE_URL` to its endpoint. Examples: `https://openrouter.ai/api/v1` (OpenRouter), `http://localhost:11434/v1` (Ollama), `http://localhost:1234/v1` (LM Studio), `http://localhost:4000` (LiteLLM proxy).
 
@@ -79,16 +79,16 @@ The validate command echoes `Valid: Joke Generator v0.1.0 (2 nodes)`. The run co
 
 Resolution order at run time: `--executor` flag, then `settings.executor` in YAML, then auto-detect. Auto-detect picks the first available real backend:
 
-1. Anthropic key (env `ANTHROPIC_API_KEY` or `~/.pi/agent/auth.json`) → `anthropic`
-2. DeepSeek key (env `DEEPSEEK_API_KEY` or `~/.pi/agent/auth.json`) → `deepseek`
+1. `ANTHROPIC_API_KEY` (env or `.env`) → `anthropic`
+2. `DEEPSEEK_API_KEY` (env or `.env`) → `deepseek`
 3. `npx` on `PATH` → `acp`
 4. Nothing → raise `RuntimeError` with a clear remediation message naming each env var and install command. There is no longer a silent stub fallback.
 
 | Key         | Install                                    | Auth                                                    | Models                  | Cost                |
 |-------------|--------------------------------------------|---------------------------------------------------------|-------------------------|---------------------|
 | `acp`       | `npm i -g @zed-industries/claude-code-acp` | Claude CLI session (no API key needed)                  | Claude (opus/sonnet/haiku) | usage-billed via Anthropic |
-| `anthropic` | `uv sync --extra anthropic`                | `ANTHROPIC_API_KEY` or `~/.pi/agent/auth.json`          | Claude (opus/sonnet/haiku via the Messages API; full vendor IDs accepted) | usage-billed via Anthropic |
-| `deepseek`  | `uv sync --extra openai`                   | `DEEPSEEK_API_KEY` or `~/.pi/agent/auth.json`           | DeepSeek catalog (e.g. `deepseek-chat`, `deepseek-reasoner`, `deepseek-v4-flash`) | usage-billed via DeepSeek |
+| `anthropic` | `uv sync --extra anthropic`                | `ANTHROPIC_API_KEY` (env or `.env`)                     | Claude (opus/sonnet/haiku via the Messages API; full vendor IDs accepted) | usage-billed via Anthropic |
+| `deepseek`  | `uv sync --extra openai`                   | `DEEPSEEK_API_KEY` (env or `.env`)                      | DeepSeek catalog (e.g. `deepseek-chat`, `deepseek-reasoner`, `deepseek-v4-flash`) | usage-billed via DeepSeek |
 | `openai`    | `uv sync --extra openai`                   | `OPENAI_API_KEY` + optional `OPENAI_BASE_URL` (OpenRouter / Ollama / LM Studio / LiteLLM / Azure OpenAI / vLLM ...) | Whatever the configured endpoint serves | usage-billed by the provider |
 
 ## CLI reference

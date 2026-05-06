@@ -24,11 +24,22 @@ from abe_froman.runtime.executor.backends.factory import (
 
 @pytest.fixture
 def clean_env(monkeypatch, tmp_path):
-    """Strip every env source the auto-detector reads, and point HOME at
-    a fresh tmp dir so on-disk auth.json lookups miss."""
+    """Strip every secret source the auto-detector reads.
+
+    Three layers in the resolver: process env, project-local `.env`,
+    and (when used) YAML settings. We isolate process env via
+    ``monkeypatch.delenv``, push CWD into a fresh tmp dir so the
+    `.env` walk-up can't reach a real one, and reset the dotenv
+    cache so any prior call doesn't leak across tests.
+    """
+    from abe_froman.runtime.secrets import _reset_dotenv_cache
+
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    monkeypatch.chdir(tmp_path)
+    _reset_dotenv_cache()
     return tmp_path
 
 
@@ -155,39 +166,12 @@ class TestAutoDetect:
             warnings.simplefilter("error")
             assert auto_detect_executor() == "anthropic"
 
-    def test_anthropic_via_disk_when_no_env(self, clean_env, monkeypatch):
-        """auth.json is the env-fallback for Anthropic too —
-        ``{"anthropic": {"key": "..."}}`` is the same shape used by
-        DeepSeek."""
-        auth = clean_env / ".pi" / "agent" / "auth.json"
-        auth.parent.mkdir(parents=True)
-        auth.write_text('{"anthropic": {"key": "sk-from-disk"}}')
-        monkeypatch.setattr(
-            "abe_froman.runtime.executor.backends.factory.shutil.which",
-            lambda name: None,
-        )
-        with warnings.catch_warnings():
-            warnings.simplefilter("error")
-            assert auto_detect_executor() == "anthropic"
-
     def test_deepseek_key_when_no_anthropic(self, clean_env, monkeypatch):
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek")
         # npx may or may not be present; deepseek still wins over acp.
         monkeypatch.setattr(
             "abe_froman.runtime.executor.backends.factory.shutil.which",
             lambda name: "/usr/bin/npx" if name == "npx" else None,
-        )
-        with warnings.catch_warnings():
-            warnings.simplefilter("error")
-            assert auto_detect_executor() == "deepseek"
-
-    def test_deepseek_via_disk_when_no_env(self, clean_env, monkeypatch):
-        auth = clean_env / ".pi" / "agent" / "auth.json"
-        auth.parent.mkdir(parents=True)
-        auth.write_text('{"deepseek": {"key": "sk-from-disk"}}')
-        monkeypatch.setattr(
-            "abe_froman.runtime.executor.backends.factory.shutil.which",
-            lambda name: None,
         )
         with warnings.catch_warnings():
             warnings.simplefilter("error")
@@ -230,10 +214,10 @@ class TestAutoDetect:
     def test_raises_when_nothing_available(
         self, clean_env, monkeypatch,
     ):
-        """Terminal failure mode: no env, no auth.json, no npx → raise.
-        The previous behavior (silent fallback to stub with UserWarning)
-        was removed when StubBackend was deleted; production must never
-        emit fake output."""
+        """Terminal failure mode: no env, no npx → raise. The previous
+        behavior (silent fallback to stub with UserWarning) was removed
+        when StubBackend was deleted; production must never emit fake
+        output."""
         monkeypatch.setattr(
             "abe_froman.runtime.executor.backends.factory.shutil.which",
             lambda name: None,
@@ -286,66 +270,34 @@ class TestExecutorResolution:
 
 
 # ---------------------------------------------------------------------
-# _resolve_anthropic_key — env-first, auth.json fallback
+# _resolve_anthropic_key — wraps the generic resolver
 # ---------------------------------------------------------------------
 
 class TestResolveAnthropicKey:
-    """Mirrors `TestKeyResolution` for DeepSeek over in
-    `test_openai_backend.py`. Same shape; different provider section
-    in auth.json."""
+    """`_resolve_anthropic_key` is a thin alias for
+    ``resolve_secret("ANTHROPIC_API_KEY")``. The full resolver
+    semantics (env > .env > settings) are tested in
+    ``tests/unit/runtime/test_secrets.py``; here we just pin the
+    provider-name binding and the env-var path."""
 
-    def test_env_var_wins(self, monkeypatch, tmp_path):
+    def test_env_var_returns_value(self, monkeypatch):
         from abe_froman.runtime.executor.backends.factory import (
             _resolve_anthropic_key,
         )
+        from abe_froman.runtime.secrets import _reset_dotenv_cache
 
-        monkeypatch.setenv("HOME", str(tmp_path))
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-from-env")
+        _reset_dotenv_cache()
         assert _resolve_anthropic_key() == "sk-from-env"
 
-    def test_falls_back_to_auth_json(self, monkeypatch, tmp_path):
+    def test_unset_returns_none(self, monkeypatch, tmp_path):
         from abe_froman.runtime.executor.backends.factory import (
             _resolve_anthropic_key,
         )
+        from abe_froman.runtime.secrets import _reset_dotenv_cache
 
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-        monkeypatch.setenv("HOME", str(tmp_path))
-        auth = tmp_path / ".pi" / "agent" / "auth.json"
-        auth.parent.mkdir(parents=True)
-        auth.write_text('{"anthropic": {"key": "sk-from-disk"}}')
-        assert _resolve_anthropic_key() == "sk-from-disk"
-
-    def test_returns_none_when_neither_present(self, monkeypatch, tmp_path):
-        from abe_froman.runtime.executor.backends.factory import (
-            _resolve_anthropic_key,
-        )
-
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-        monkeypatch.setenv("HOME", str(tmp_path))
-        assert _resolve_anthropic_key() is None
-
-    def test_malformed_auth_json_returns_none(self, monkeypatch, tmp_path):
-        from abe_froman.runtime.executor.backends.factory import (
-            _resolve_anthropic_key,
-        )
-
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-        monkeypatch.setenv("HOME", str(tmp_path))
-        auth = tmp_path / ".pi" / "agent" / "auth.json"
-        auth.parent.mkdir(parents=True)
-        auth.write_text("{not valid json")
-        assert _resolve_anthropic_key() is None
-
-    def test_missing_anthropic_key_in_auth_json_returns_none(
-        self, monkeypatch, tmp_path,
-    ):
-        from abe_froman.runtime.executor.backends.factory import (
-            _resolve_anthropic_key,
-        )
-
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-        monkeypatch.setenv("HOME", str(tmp_path))
-        auth = tmp_path / ".pi" / "agent" / "auth.json"
-        auth.parent.mkdir(parents=True)
-        auth.write_text('{"deepseek": {"key": "x"}}')
+        # CWD with no .env so the file fallback misses too.
+        monkeypatch.chdir(tmp_path)
+        _reset_dotenv_cache()
         assert _resolve_anthropic_key() is None

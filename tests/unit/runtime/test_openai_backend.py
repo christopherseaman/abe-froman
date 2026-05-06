@@ -29,7 +29,7 @@ from abe_froman.runtime.result import OverloadError
 DEEPSEEK_KEY = _resolve_deepseek_key()
 LIVE_REASON = (
     "DeepSeek API key not available "
-    "(set DEEPSEEK_API_KEY or place key in ~/.pi/agent/auth.json)"
+    "(set DEEPSEEK_API_KEY in the environment; see .env.example)"
 )
 
 
@@ -170,42 +170,24 @@ class TestErrorMapping:
 
 
 class TestKeyResolution:
-    """`_resolve_deepseek_key` must check env first then fall back to
-    on-disk auth.json."""
+    """`_resolve_deepseek_key` is a thin wrapper for
+    ``resolve_secret("DEEPSEEK_API_KEY")``. Full resolver semantics
+    (yaml > env > .env, no machine-global keystore access) are
+    pinned in ``tests/unit/runtime/test_secrets.py``; here we just
+    exercise the env path."""
 
-    def test_env_var_wins(self, monkeypatch, tmp_path):
-        # Point HOME at a fresh tmp dir with no auth.json so disk path is empty.
-        monkeypatch.setenv("HOME", str(tmp_path))
+    def test_env_var_returns_value(self, monkeypatch):
+        from abe_froman.runtime.secrets import _reset_dotenv_cache
+
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-from-env")
+        _reset_dotenv_cache()
         assert _resolve_deepseek_key() == "sk-from-env"
 
-    def test_falls_back_to_auth_json(self, monkeypatch, tmp_path):
-        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-        monkeypatch.setenv("HOME", str(tmp_path))
-        auth = tmp_path / ".pi" / "agent" / "auth.json"
-        auth.parent.mkdir(parents=True)
-        auth.write_text('{"deepseek": {"key": "sk-from-disk"}}')
-        assert _resolve_deepseek_key() == "sk-from-disk"
+    def test_unset_returns_none(self, monkeypatch, tmp_path):
+        from abe_froman.runtime.secrets import _reset_dotenv_cache
 
-    def test_returns_none_when_neither_present(self, monkeypatch, tmp_path):
         monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-        monkeypatch.setenv("HOME", str(tmp_path))
-        assert _resolve_deepseek_key() is None
-
-    def test_malformed_auth_json_returns_none(self, monkeypatch, tmp_path):
-        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-        monkeypatch.setenv("HOME", str(tmp_path))
-        auth = tmp_path / ".pi" / "agent" / "auth.json"
-        auth.parent.mkdir(parents=True)
-        auth.write_text("{not valid json")
-        assert _resolve_deepseek_key() is None
-
-    def test_missing_deepseek_key_in_auth_json_returns_none(
-        self, monkeypatch, tmp_path,
-    ):
-        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-        monkeypatch.setenv("HOME", str(tmp_path))
-        auth = tmp_path / ".pi" / "agent" / "auth.json"
-        auth.parent.mkdir(parents=True)
-        auth.write_text('{"anthropic": {"key": "x"}}')
+        # CWD with no .env so the file fallback misses too.
+        monkeypatch.chdir(tmp_path)
+        _reset_dotenv_cache()
         assert _resolve_deepseek_key() is None

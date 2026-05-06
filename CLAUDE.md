@@ -196,9 +196,12 @@ mapping (we're testing our wrapping code, not the SDK).
 - **`tests/__init__.py` must NOT exist** — its presence breaks
   `from helpers import ...` and `from mock_executor import ...` in
   tests. Removing it is the supported state.
-- **DeepSeek key location** — env `DEEPSEEK_API_KEY` first, then JSON
-  at `~/.pi/agent/auth.json` (`{"deepseek": {"key": "..."}}`). The
-  factory's `_resolve_deepseek_key()` is the source of truth.
+- **API key resolution** — generic resolver at
+  `runtime/secrets.py::resolve_secret(name, *, settings, settings_attr)`.
+  Layers: workflow YAML setting → `os.environ[name]` → project-local
+  `.env` file (auto-discovered by walking up from CWD). abe-froman
+  never reads from machine-global keystores. Both `_resolve_deepseek_key`
+  and `_resolve_anthropic_key` are thin wrappers over this resolver.
 - **`pyproject.toml`** marker for ACP tests: `acp` (used in
   `pytest -m`).
 
