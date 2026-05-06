@@ -12,13 +12,15 @@ version: "0.1.0"
 #     in the same step. `settings.max_parallel_jobs` (default 4) caps
 #     concurrency via foreman's asyncio.Semaphore.
 #
-# Subgraphs inherit the parent's executor — set `--executor acp` on
-# this file to run every demo through ACP, or omit for stub.
+# Subgraphs inherit the parent's executor. Auto-detect picks the
+# first available real backend (Anthropic key → DeepSeek key → ACP);
+# raises if none are configured. Override per-run with `--executor`.
 #
 # Usage:
-#   uv run abe-froman run examples/run_all_examples.yaml             # stub
-#   uv run abe-froman run examples/run_all_examples.yaml -e acp     # real LLM
-#   uv run abe-froman run examples/run_all_examples.yaml --dry-run  # topology only
+#   uv run abe-froman run examples/run_all_examples.yaml             # auto-detect
+#   uv run abe-froman run examples/run_all_examples.yaml -e acp      # force ACP
+#   uv run abe-froman run examples/run_all_examples.yaml -e anthropic
+#   uv run abe-froman run examples/run_all_examples.yaml --dry-run   # topology only
 
 nodes:
   - id: smoke

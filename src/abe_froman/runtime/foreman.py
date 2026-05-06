@@ -83,8 +83,13 @@ class ForemanExecutor:
 
         # Memory back-pressure runs OUTSIDE the semaphores so that gated
         # acquisitions don't sit holding a slot while waiting for memory
-        # to drop. The gate is opt-in; ``None`` disables it.
-        await self._wait_for_memory(s.memory_threshold_pct, node.id)
+        # to drop. Both gates default to ``None`` (disabled) and AND-
+        # compose when both set.
+        await self._wait_for_memory(
+            threshold_pct=s.memory_threshold_pct,
+            min_available_bytes=s.memory_min_available_bytes,
+            node_id=node.id,
+        )
 
         async with self._global_sem:
             async with (model_sem or _null_async_cm()):
@@ -95,23 +100,40 @@ class ForemanExecutor:
                 )
 
     async def _wait_for_memory(
-        self, threshold_pct: float | None, node_id: str,
+        self,
+        *,
+        threshold_pct: float | None,
+        min_available_bytes: int | None,
+        node_id: str,
     ) -> None:
-        """Block until host memory percent is at or below ``threshold_pct``.
+        """Block until BOTH memory gates allow dispatch.
 
-        ``None`` is the disable sentinel and returns immediately. The
-        check runs in a tight loop with a short interval; in-flight jobs
-        are never affected — only new acquisitions wait.
+        ``None`` for either argument disables that gate; ``None`` for
+        both is a fast no-op. Gates AND-compose: dispatch only proceeds
+        when every set gate is satisfied. In-flight jobs are never
+        affected — only new acquisitions wait.
         """
-        if threshold_pct is None:
+        if threshold_pct is None and min_available_bytes is None:
             return
         first_block = True
-        while psutil.virtual_memory().percent > threshold_pct:
+        while True:
+            mem = psutil.virtual_memory()
+            pct_blocked = (
+                threshold_pct is not None and mem.percent > threshold_pct
+            )
+            avail_blocked = (
+                min_available_bytes is not None
+                and mem.available < min_available_bytes
+            )
+            if not (pct_blocked or avail_blocked):
+                return
             if first_block:
                 logger.info(
                     "foreman: memory back-pressure gating dispatch of %r "
-                    "(percent=%.1f > threshold=%.1f)",
-                    node_id, psutil.virtual_memory().percent, threshold_pct,
+                    "(percent=%.1f, available=%.0f MB; "
+                    "pct_blocked=%s, avail_blocked=%s)",
+                    node_id, mem.percent, mem.available / 1e6,
+                    pct_blocked, avail_blocked,
                 )
                 first_block = False
             await asyncio.sleep(self._memory_poll_s)

@@ -96,7 +96,8 @@ langgraph-free).
 - `logging.py` — `JsonlLogger`, `SubgraphLogger` (prefix decorator).
 - `gates.py` — `run_evaluation_script`, `run_evaluation_llm`,
   output parsing, `EvaluationResult`.
-- `foreman.py` — `ForemanExecutor` (semaphores + worktree pool).
+- `foreman.py` — `ForemanExecutor` (semaphores + memory back-pressure
+  + worktree pool).
 - `settings_merge.py` — `merge_settings(parent, child)` for
   scope-aware inheritance.
 - `url.py` — `resolve_url`, `fetch_url`, `_RemoteFetchCache`,

@@ -699,21 +699,31 @@ class TestMultiDimensionParser:
         assert result.score == 0.7
         assert result.scores == {"correctness": 0.8, "style": 0.6}
 
-    def test_no_score_with_dimensions_when_not_required(self):
+    def test_no_score_with_dimensions_derives_min(self):
+        """When the JSON omits top-level `score` but supplies per-dim
+        numbers, the headline `score` is derived as `min(dim_scores)`.
+        Routing for multi-dim gates uses per-dim threshold clauses
+        directly (see `compile/evaluation.py::evaluation_to_routes`),
+        so this derivation is purely cosmetic — but it makes JSONL log
+        events meaningful instead of misleadingly showing 0.0 for
+        passing gates."""
         from abe_froman.runtime.gates import _parse_evaluation_output
 
         raw = json.dumps({"correctness": 0.8, "style": 0.6})
         result = _parse_evaluation_output(raw, require_score=False)
-        assert result.score == 0.0
+        # min of [0.8, 0.6] = 0.6 (weakest-link, mirrors
+        # `dimensions[].min` semantics).
+        assert result.score == 0.6
         assert result.scores == {"correctness": 0.8, "style": 0.6}
         assert result.feedback is None
 
-    def test_no_score_no_dimensions_fails_by_default(self):
+    def test_single_dimension_no_score_derives_min(self):
+        """One dim, no top-level score: derived score == that dim's value."""
         from abe_froman.runtime.gates import _parse_evaluation_output
 
         raw = json.dumps({"correctness": 0.8})
         result = _parse_evaluation_output(raw)
-        assert result.score == 0.0
+        assert result.score == 0.8
         assert result.feedback is None
         assert result.scores == {"correctness": 0.8}
 

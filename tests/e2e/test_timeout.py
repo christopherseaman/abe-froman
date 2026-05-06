@@ -214,7 +214,6 @@ class TestSubphaseTimeout:
                     "execute": {"url": _ECHO, "params": {"args": ["-n", "ok"]}},
                     "timeout": 0.3,
                     "fan_out": {
-                        "enabled": True,
                         "manifest_path": "manifest.json",
                         "template": {"execute": {"url": "template.md"}},
                     },

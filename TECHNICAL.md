@@ -464,10 +464,19 @@ the parent. Subgraph callers always parse a fresh child from YAML.
 
 `runtime/foreman.py::ForemanExecutor` wraps an inner `NodeExecutor`
 and adds: global semaphore (`Semaphore(max_parallel_jobs)`, default
-4); per-model semaphores layered inside; per-`node.id` git worktree
-at `<workdir>/.abe-foreman/wt-<safe_id>-<uuid8>/`. Worktrees are
-allocated on first `execute()` and retained across retries (subphases
-use composite keys `parent_id::item_id`).
+4); per-model semaphores layered inside; two optional memory back-
+pressure gates (`settings.memory_threshold_pct` reads
+`psutil.virtual_memory().percent`; `settings.memory_min_available_bytes`
+reads `.available`, accepts suffixed strings like `"4GB"`); per-
+`node.id` git worktree at `<workdir>/.abe-foreman/wt-<safe_id>-<uuid8>/`.
+Worktrees are allocated on first `execute()` and retained across
+retries (subphases use composite keys `parent_id::item_id`).
+
+The memory gates run *outside* the semaphores so a gated acquisition
+doesn't sit holding a slot waiting for memory to drop. Both gates
+AND-compose with the semaphores: every gate must allow dispatch.
+`None` (the default for both) disables the checks entirely so pre-
+existing workflows see no behavior change.
 
 `_acquire_worktree` takes the per-foreman `asyncio.Lock`, returns
 the existing path if still on disk, else calls `git -C <base>
@@ -623,6 +632,27 @@ framing — see `build_eval_preamble` docstring), different surface
 to the author. `build_eval_preamble` lives in `runtime/gates.py`
 so the compile-side route dispatcher can import it without
 violating the layer split (compile → runtime allowed; reverse not).
+
+### 11.8. Goto re-entry executes the body again
+
+A node reached via `Command(goto=X)` executes its body — there is no
+"already-completed → skip" guard. This matters for the wave-driven
+dynamic-task pattern: a fan-out parent re-entered via an inline-route
+loop reads its manifest from the (post-reconcile) state, dispatches
+the next wave, and lets newly-discovered tasks be picked up without
+restarting upstream work. The framework dispatches the procedure on
+every reach; idempotence is the procedure's responsibility.
+
+Three guards (in `compile/nodes.py::_make_execution_node`,
+`compile/nodes.py::_make_evaluation_node`, and
+`compile/dynamic.py::_make_subphase_node`) used to short-circuit
+re-entry — leftovers from a pre-LangGraph-checkpointer resume
+mechanism that rehydrated `completed_phases` and re-ran the graph.
+Once `AsyncSqliteSaver` replaced that path (resume picks up at
+super-step boundaries cleanly), the guards became dead code; with
+Stage 5c routes they became actively wrong. Removed in the
+post-Stage-5c audit. The `failed_nodes` checks are kept (those
+guard re-attempts of hard-failed nodes — semantically distinct).
 
 ## 12. Where to start reading
 

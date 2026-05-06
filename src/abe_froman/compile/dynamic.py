@@ -316,7 +316,7 @@ def _make_final_fan_out_node(
     # First-final barrier: wait until every manifest item's child has
     # landed in completed_nodes (or failed_nodes — failures count as
     # "settled" so we don't wait forever on a hung child).
-    from abe_froman.compile.graph import _read_manifest
+    from abe_froman.compile._manifest import _read_manifest
 
     parent_id = parent_node.id
 

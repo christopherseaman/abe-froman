@@ -3,7 +3,7 @@
 All notable changes to abe-froman are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] — Native event stream + Anthropic backend + StubBackend removal
+## [Unreleased] — Native event stream + Anthropic backend + StubBackend removal + wave-driven re-execution + Foreman memory back-pressure
 
 ### Added
 
@@ -20,6 +20,29 @@ All notable changes to abe-froman are documented here. Format follows
   anthropic`** select the new backend explicitly. `_resolve_anthropic_key()`
   reads `ANTHROPIC_API_KEY` first, falling back to
   `~/.pi/agent/auth.json` carrying `{"anthropic": {"key": "..."}}`.
+- **Memory back-pressure in Foreman**
+  (`runtime/foreman.py::ForemanExecutor._wait_for_memory`). Two
+  complementary gates, AND-composed:
+    - `settings.memory_threshold_pct` (float | None) — blocks new
+      dispatches while `psutil.virtual_memory().percent` is above
+      the threshold.
+    - `settings.memory_min_available_bytes` (int | str | None) —
+      blocks new dispatches while available bytes are below the
+      threshold. Accepts raw bytes (`4_294_967_296`) or a string
+      with a binary-multiplier suffix (`"4GB"`, `"500MiB"`, `"2T"`).
+      Case-insensitive; `KB = 1024` (binary semantics, matches
+      `free -h` / `psutil`).
+  Both compose (AND) with `max_parallel_jobs` and `per_model_limits`;
+  in-flight jobs are never aborted by the gates. `None` (the default
+  for both) disables the checks. ``psutil>=5.9`` added as a core dep.
+- **Wave-driven dynamic-task re-execution**: dropping the
+  pre-LangGraph-checkpointer `# Skip if already completed (resume
+  mode)` guards (3 sites in `compile/nodes.py` and `compile/dynamic.py`)
+  unblocks fan-out parents being re-entered via inline-route
+  `Command(goto=...)`. A node reached via goto now executes its body
+  again — idempotence is the procedure's responsibility, not the
+  framework's. The `failed_nodes` checks are kept (those guard
+  re-attempts of hard-failed nodes; semantically distinct).
 
 ### Changed
 
@@ -43,6 +66,15 @@ All notable changes to abe-froman are documented here. Format follows
 
 ### Removed
 
+- **`FanOut.enabled`** — DELETED. The presence of the `fan_out:` block
+  on a node IS the activation; the legacy bool flag was an author
+  footgun (a present `fan_out: { template: ... }` block silently
+  no-op'd when `enabled` defaulted to `false`). Schema gained
+  `extra="forbid"` so legacy YAML carrying `enabled: true|false`
+  fails at `validate` time with a clear ValidationError.
+  **Breaking change**: author migration is "delete the line"
+  (`enabled: true` was redundant; `enabled: false` was the silent
+  footgun this removal fixes).
 - **`StubBackend`** (`runtime/executor/backends/stub.py`) — DELETED.
   The deterministic `[prompt-stub] model=X prompt_length=N`
   placeholder previously wired as the auto-detect last-resort
@@ -70,6 +102,16 @@ All notable changes to abe-froman are documented here. Format follows
   in a custom harness, instantiate a real backend via
   `create_prompt_backend("anthropic" | "deepseek" | "acp" |
   "openai", ...)` instead.
+- If your YAML carried `fan_out: { enabled: true | false, ... }`,
+  remove the `enabled` line. To disable fan-out, remove the entire
+  `fan_out:` block instead.
+- If your YAML carried `route: { else: <target> }` without a
+  `cases:` list, switch to `route: { goto: <target> }` — the bare-
+  `else:` form is now rejected at validate time as confusing
+  redundant structure. (Multi-dim evaluations: no migration needed;
+  the parser now derives `score = min(dim_scores)` automatically
+  when the JSON omits a top-level `score` field — passing gates
+  no longer surface as misleading `score=0.0` in JSONL events.)
 
 ## [Pre-Stage-5d] — Stage 5c: Inline Route
 

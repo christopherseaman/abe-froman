@@ -234,6 +234,59 @@ class TestModelSelection:
         assert settings.default_model == "sonnet"
 
 
+class TestSettingsMemoryGates:
+    """Memory back-pressure: percent + absolute-bytes forms with
+    suffix parsing for the bytes form."""
+
+    def test_defaults_disabled(self):
+        s = Settings()
+        assert s.memory_threshold_pct is None
+        assert s.memory_min_available_bytes is None
+
+    def test_pct_passthrough(self):
+        s = Settings(memory_threshold_pct=80.0)
+        assert s.memory_threshold_pct == 80.0
+
+    def test_bytes_int_passthrough(self):
+        s = Settings(memory_min_available_bytes=4_294_967_296)
+        assert s.memory_min_available_bytes == 4_294_967_296
+
+    @pytest.mark.parametrize(
+        "value, expected",
+        [
+            ("8192", 8192),
+            ("8192B", 8192),
+            ("4K", 4 * 1024),
+            ("4KB", 4 * 1024),
+            ("4KiB", 4 * 1024),
+            ("500M", 500 * 1024**2),
+            ("500MB", 500 * 1024**2),
+            ("500MiB", 500 * 1024**2),
+            ("4G", 4 * 1024**3),
+            ("4GB", 4 * 1024**3),
+            ("4GiB", 4 * 1024**3),
+            ("2T", 2 * 1024**4),
+            ("2TB", 2 * 1024**4),
+            ("0.5GB", 512 * 1024**2),  # fractional
+            ("  4GB  ", 4 * 1024**3),  # whitespace
+            ("4gb", 4 * 1024**3),  # lowercase
+        ],
+    )
+    def test_bytes_string_suffixes(self, value, expected):
+        s = Settings(memory_min_available_bytes=value)
+        assert s.memory_min_available_bytes == expected
+
+    def test_bytes_unknown_suffix_rejected(self):
+        from pydantic import ValidationError
+        with pytest.raises(ValidationError, match="suffix"):
+            Settings(memory_min_available_bytes="4XYZ")
+
+    def test_bytes_malformed_rejected(self):
+        from pydantic import ValidationError
+        with pytest.raises(ValidationError, match="parse byte size"):
+            Settings(memory_min_available_bytes="four-gigabytes")
+
+
 class TestSettingsRemoteUrlGates:
     """Stage 5b: Settings extended for execute.url remote URL gates."""
 
@@ -494,16 +547,14 @@ class TestDependencyValidation:
 class TestFanOut:
     def test_dynamic_config(self):
         config = FanOut(
-            enabled=True,
             manifest_path="manifest.json",
             template={"execute": {"url": "template.md"}},
         )
-        assert config.enabled is True
         assert config.manifest_path == "manifest.json"
+        assert config.template is not None
 
     def test_template_with_evaluation(self):
         config = FanOut(
-            enabled=True,
             manifest_path="m.json",
             template={
                 "execute": {"url": "template.md"},
@@ -512,9 +563,17 @@ class TestFanOut:
         )
         assert config.template.evaluation.threshold == 0.8
 
+    def test_legacy_enabled_field_rejected(self):
+        """`enabled` was removed in the post-Stage-5c audit — the
+        block's presence is the activation. Authors carrying old YAML
+        get a loud Pydantic ValidationError pointing at the unsupported
+        field instead of silent fan-out skipping."""
+        from pydantic import ValidationError as _VE
+        with pytest.raises(_VE, match="enabled"):
+            FanOut(enabled=True, template={"execute": {"url": "t.md"}})
+
     def test_final_nodes(self):
         config = FanOut(
-            enabled=True,
             manifest_path="m.json",
             template={"execute": {"url": "t.md"}},
             final_nodes=[
@@ -529,9 +588,15 @@ class TestFanOut:
         assert config.final_nodes[0].id == "summary"
         assert config.final_nodes[0].execute.url == "s.md"
 
-    def test_disabled_by_default(self):
+    def test_empty_block_is_well_formed(self):
+        """A bare `FanOut()` is structurally valid (template is optional
+        at the schema level — runtime validates required fields when
+        the parent node is wired). Activation is by presence-of-block,
+        not by an `enabled` flag."""
         config = FanOut()
-        assert config.enabled is False
+        assert config.template is None
+        assert config.manifest_path is None
+        assert config.final_nodes == []
 
 
 class TestFullExampleParse:
@@ -606,7 +671,6 @@ class TestFullExampleParse:
 
         rp = node_map["reviewer_pool"]
         assert rp.fan_out is not None
-        assert rp.fan_out.enabled is True
         # Stage 5b: template's execute.url ends in .yaml → per-child subgraph
         assert Path(rp.fan_out.template.execute.url).suffix == ".yaml"
         assert len(rp.fan_out.final_nodes) > 0

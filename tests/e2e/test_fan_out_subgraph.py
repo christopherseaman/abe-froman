@@ -58,7 +58,6 @@ def _parent_with_fan_out_subgraph(items, sub_yaml_name="single.yaml",
                 "name": "Manifest Emitter",
                 "execute": {"url": _ECHO, "params": {"args": ["-n", manifest]}},
                 "fan_out": {
-                    "enabled": True,
                     "template": {"execute": template_execute},
                 },
             },

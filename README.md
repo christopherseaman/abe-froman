@@ -159,9 +159,13 @@ All defaults in the table below are pulled from `Settings(BaseModel)` in `src/ab
 
 | Field                | Type              | Default | Effect |
 |----------------------|-------------------|---------|--------|
-| `max_parallel_jobs`  | `int`             | `4`     | Foreman global semaphore. |
-| `per_model_limits`   | `dict[str, int]`  | `{}`    | Per-model caps layered inside the global semaphore. |
-| `max_subgraph_depth` | `int`             | `10`    | Cap on recursive subgraph nesting. |
+| `max_parallel_jobs`           | `int`               | `4`     | Foreman global semaphore. |
+| `per_model_limits`            | `dict[str, int]`    | `{}`    | Per-model caps layered inside the global semaphore. |
+| `memory_threshold_pct`        | `float \| None`     | `None`  | Foreman blocks new dispatches while host memory percent (`psutil.virtual_memory().percent`) is above this threshold. `None` disables. |
+| `memory_min_available_bytes`  | `int \| str \| None`| `None`  | Foreman blocks new dispatches while available memory is below this threshold. Accepts raw bytes (`4_294_967_296`) or a string with a binary-multiplier suffix (`"4GB"`, `"500MiB"`, `"2T"`). Case-insensitive; `KB = 1024` (binary semantics, matches `free -h`). `None` disables. |
+| `max_subgraph_depth`          | `int`               | `10`    | Cap on recursive subgraph nesting. |
+
+Both memory gates compose (AND) with each other and with the semaphores — every gate must allow dispatch. In-flight jobs are never aborted by the gates; only new acquisitions wait.
 
 **URL fetch / remote**
 
@@ -421,7 +425,7 @@ The route's `Command` payload also threads `_route_sender` (source node id), `_r
 
 ### Fan-out
 
-`fan_out.enabled: true` plus a manifest produces one `Send` per item. The manifest is read from the parent node's JSON output, falling back to `manifest_path` on disk. Each Send runs the `template.execute` (and optionally `template.evaluation`); the gate retry loop runs inline. After all Sends complete, `final_nodes` consume aggregated `child_outputs[parent::item_id]`.
+A `fan_out:` block on a node activates manifest-driven `Send` fan-out — its presence IS the activation; there is no separate enable flag. The manifest is read from the parent node's JSON output, falling back to `manifest_path` on disk. Each Send runs the `template.execute` (and optionally `template.evaluation`); the gate retry loop runs inline. After all Sends complete, `final_nodes` consume aggregated `child_outputs[parent::item_id]`. To disable fan-out, remove the `fan_out:` block.
 
 Each Send branch renders its prompt / script args against a per-item Jinja2 context:
 

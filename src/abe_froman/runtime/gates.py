@@ -175,6 +175,15 @@ def _parse_evaluation_output(
             score=0.0,
             feedback="gate response missing or non-numeric 'score' field",
         )
+    elif dim_scores:
+        # Multi-dim gate without an explicit top-level `score`: the
+        # routing decision uses per-dim `result.scores.<field> >=
+        # min` clauses (`compile/evaluation.py::evaluation_to_routes`)
+        # and never reads `result.score`, but the headline value
+        # surfaces in JSONL events. Derive `min(dim_scores)` so the
+        # operator sees the weakest-link value — matches the
+        # weakest-link semantics already encoded in `dimensions[].min`.
+        score = min(dim_scores.values())
     else:
         score = 0.0
 

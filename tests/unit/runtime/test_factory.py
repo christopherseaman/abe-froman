@@ -101,6 +101,19 @@ class TestCreatePromptBackend:
 
 # ---------------------------------------------------------------------
 # auto_detect_executor — resolution order
+#
+# Most tests here patch ``factory.shutil.which`` to control which
+# binary appears on PATH. That patch is sanctioned in
+# ``feedback_no_fake_backends.md`` as orchestration instrumentation
+# (we're not faking what an external system *would respond*; we're
+# choosing which environment-shape branch the resolver sees).
+#
+# ``test_npx_resolved_via_real_shutil_which_against_test_artifact``
+# below uses the cleaner alternative: a tmp dir with a fake `npx`
+# script + ``monkeypatch.setenv("PATH", ...)``. Real ``shutil.which``
+# runs against a controlled PATH. Use this style by preference when
+# the test only needs to gate one binary; use ``setattr`` patching
+# when controlling multiple binaries simultaneously is awkward.
 # ---------------------------------------------------------------------
 
 class TestAutoDetect:
@@ -162,6 +175,31 @@ class TestAutoDetect:
             "abe_froman.runtime.executor.backends.factory.shutil.which",
             lambda name: "/usr/bin/npx" if name == "npx" else None,
         )
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            assert auto_detect_executor() == "acp"
+
+    def test_npx_resolved_via_real_shutil_which_against_test_artifact(
+        self, clean_env, monkeypatch,
+    ):
+        """Companion to ``test_acp_when_only_npx`` using a real PATH
+        manipulation instead of patching ``shutil.which``: drop a
+        non-functional `npx` script in a tmp dir and point PATH at
+        only that dir. Real ``shutil.which("npx")`` finds it; auto-
+        detect returns ``"acp"``.
+
+        The script is non-functional by design — auto-detect only
+        checks for *presence* on PATH, not whether the binary actually
+        works. This test exercises the resolver against a real-system
+        artifact rather than a function patch.
+        """
+        bin_dir = clean_env / "fake-bin"
+        bin_dir.mkdir()
+        (bin_dir / "npx").write_text("#!/bin/sh\nexit 0\n")
+        (bin_dir / "npx").chmod(0o755)
+        # Point PATH at ONLY the tmp bin dir — real shutil.which
+        # walks this PATH and finds our fake npx.
+        monkeypatch.setenv("PATH", str(bin_dir))
         with warnings.catch_warnings():
             warnings.simplefilter("error")
             assert auto_detect_executor() == "acp"

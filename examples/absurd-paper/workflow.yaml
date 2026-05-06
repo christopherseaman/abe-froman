@@ -124,7 +124,6 @@ nodes:
     depends_on: [paper, render_pdf]
     timeout: 360.0
     fan_out:
-      enabled: true
       template:
         evaluation:
           validator: "examples/absurd-paper/gates/review_quality.py"

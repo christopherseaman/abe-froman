@@ -424,6 +424,77 @@ class TestMemoryBackPressure:
             await foreman.close()
 
     @pytest.mark.asyncio
+    async def test_min_available_bytes_holds_gate_then_releases(
+        self, tmp_path,
+    ):
+        """Companion form: gate on ``available`` bytes rather than
+        percent. Same allocation/release dance, but the threshold is
+        set to "current available - alloc_size + cushion" so the gate
+        flips closed by the allocation and re-opens on release.
+        """
+        import gc
+
+        import psutil
+
+        _init_git_repo(tmp_path)
+        avail = psutil.virtual_memory().available
+        if avail < 4 * 1024 * 1024 * 1024:
+            pytest.skip(
+                f"insufficient free memory ({avail / 1e9:.1f} GB) "
+                f"— allocation test requires ≥4 GB headroom"
+            )
+
+        baseline_avail = psutil.virtual_memory().available
+        alloc_size = min(200 * 1024 * 1024, baseline_avail // 20)
+        if alloc_size < 50 * 1024 * 1024:
+            pytest.skip(
+                f"5%% of available memory ({alloc_size / 1e6:.0f} MB) "
+                f"too small to reliably register"
+            )
+        burden_holder: list[bytearray] = [bytearray(alloc_size)]
+        for i in range(0, alloc_size, 4096):
+            burden_holder[0][i] = 1
+
+        elevated_avail = psutil.virtual_memory().available
+        if baseline_avail - elevated_avail < alloc_size // 2:
+            burden_holder.clear()
+            pytest.skip(
+                f"available memory delta ({(baseline_avail - elevated_avail) / 1e6:.0f} "
+                f"MB) too small to reliably trigger the gate"
+            )
+
+        # Threshold sits between elevated (gated) and baseline
+        # (unblocks after release). Gate fires now, releases later.
+        threshold_bytes = (baseline_avail + elevated_avail) // 2
+
+        inner = DispatchExecutor(workdir=str(tmp_path))
+        foreman = ForemanExecutor(
+            inner=inner, base_workdir=str(tmp_path),
+            settings=Settings(memory_min_available_bytes=threshold_bytes),
+            memory_poll_interval_s=0.05,
+        )
+
+        async def release_after_delay():
+            await asyncio.sleep(0.2)
+            burden_holder.clear()
+            gc.collect()
+
+        try:
+            t0 = time.monotonic()
+            result, _ = await asyncio.gather(
+                foreman.execute(_cmd_phase("alpha"), {}),
+                release_after_delay(),
+            )
+            elapsed = time.monotonic() - t0
+            assert result.success is True
+            assert elapsed >= 0.15, (
+                f"gate didn't hold for the allocation; "
+                f"elapsed={elapsed:.2f}s, threshold_bytes={threshold_bytes}"
+            )
+        finally:
+            await foreman.close()
+
+    @pytest.mark.asyncio
     async def test_real_allocation_holds_gate_then_releases(self, tmp_path):
         """Claim memory transiently to push ``psutil.virtual_memory().percent``
         above a tight threshold; confirm the gate holds dispatch; release

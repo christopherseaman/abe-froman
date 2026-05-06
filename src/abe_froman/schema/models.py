@@ -1,8 +1,50 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+
+# Binary multipliers (matches `free -h`, `dd`, `psutil` reporting
+# semantics — memory is power-of-2 in practice).
+_BYTE_SUFFIXES: dict[str, int] = {
+    "B": 1,
+    "K": 1024, "KB": 1024, "KIB": 1024,
+    "M": 1024**2, "MB": 1024**2, "MIB": 1024**2,
+    "G": 1024**3, "GB": 1024**3, "GIB": 1024**3,
+    "T": 1024**4, "TB": 1024**4, "TIB": 1024**4,
+}
+_BYTE_RE = re.compile(r"^\s*([0-9]+(?:\.[0-9]+)?)\s*([A-Za-z]*)\s*$")
+
+
+def _parse_byte_size(value: Any) -> Any:
+    """Parse a byte-size value: plain int passes through; string with
+    optional suffix (``"4GB"``, ``"500MiB"``, ``"2T"``) resolves via
+    :data:`_BYTE_SUFFIXES`. Suffixes are case-insensitive. Returns
+    ``None`` for ``None`` (the disable sentinel)."""
+    if value is None or isinstance(value, int) and not isinstance(value, bool):
+        return value
+    if not isinstance(value, str):
+        raise ValueError(
+            f"byte size must be int or str, got {type(value).__name__}"
+        )
+    m = _BYTE_RE.match(value)
+    if m is None:
+        raise ValueError(
+            f"could not parse byte size {value!r}; "
+            f"expected forms like '4GB', '500MiB', '2T', or '8192'"
+        )
+    n_str, suffix = m.groups()
+    if not suffix:
+        return int(float(n_str))
+    mult = _BYTE_SUFFIXES.get(suffix.upper())
+    if mult is None:
+        raise ValueError(
+            f"unknown byte-size suffix {suffix!r}; "
+            f"supported: {sorted(_BYTE_SUFFIXES)}"
+        )
+    return int(float(n_str) * mult)
 
 
 class RouteCase(BaseModel):
@@ -192,8 +234,15 @@ class FanOutFinalNode(BaseModel):
 
 
 class FanOut(BaseModel):
-    """Fan-out configuration: spawn N parallel instances over a manifest."""
-    enabled: bool = False
+    """Fan-out configuration: spawn N parallel instances over a manifest.
+
+    The presence of the ``fan_out:`` block on a node IS the activation —
+    there is no separate enable flag. To disable fan-out for a node,
+    remove the block entirely. (The legacy ``enabled: bool`` field was
+    removed in the post-Stage-5c audit because ``fan_out: { template:
+    ... }`` with ``enabled: false`` was a silent author footgun.)
+    """
+    model_config = ConfigDict(extra="forbid")
     manifest_path: str | None = None
     template: FanOutTemplate | None = None
     final_nodes: list[FanOutFinalNode] = []
@@ -215,12 +264,31 @@ class Settings(BaseModel):
     model_downgrade_chain: list[str] = ["opus", "sonnet", "haiku"]
     max_parallel_jobs: int = 4
     per_model_limits: dict[str, int] = {}
-    # Memory back-pressure: when set, Foreman blocks new dispatches if
-    # host memory percent exceeds this threshold. Composes (AND) with
-    # max_parallel_jobs / per_model_limits — every gate must allow
-    # dispatch. In-flight jobs are never aborted by this gate; only new
-    # acquisitions wait. ``None`` disables the check.
+    # Memory back-pressure (two complementary forms; both default
+    # ``None`` = disabled, AND-composed when both are set):
+    #
+    # - ``memory_threshold_pct`` — block new dispatches while host
+    #   memory percent is ABOVE this value (`psutil.virtual_memory()
+    #   .percent`). Useful for "don't run when we're close to OOM"
+    #   regardless of total RAM size.
+    # - ``memory_min_available_bytes`` — block new dispatches while
+    #   available bytes are BELOW this value
+    #   (`psutil.virtual_memory().available`). Useful for "always
+    #   keep ≥X GB free" on heterogeneous hosts. Accepts either a
+    #   raw int (bytes) OR a string with a binary-multiplier suffix
+    #   (``"4GB"``, ``"500MiB"``, ``"2T"``, etc.) — case-insensitive,
+    #   binary semantics (KB = 1024) matching ``free -h`` / ``psutil``.
+    #
+    # Both compose (AND) with ``max_parallel_jobs`` /
+    # ``per_model_limits`` — every gate must allow dispatch. In-flight
+    # jobs are never aborted by these gates; only new acquisitions wait.
     memory_threshold_pct: float | None = None
+    memory_min_available_bytes: int | None = None
+
+    @field_validator("memory_min_available_bytes", mode="before")
+    @classmethod
+    def _normalize_memory_bytes(cls, v: Any) -> Any:
+        return _parse_byte_size(v)
     max_subgraph_depth: int = 10  # cap on recursive subgraph nesting (Stage 4c)
     # Stage 5b — execute.url remote URL gates
     base_url: str | None = None  # default base for relative urls in execute.url
@@ -271,16 +339,17 @@ class Graph(BaseModel):
     settings: Settings = Settings()
 
     @model_validator(mode="after")
-    def validate_node_references(self) -> Self:
+    def _validate_unique_ids(self) -> Self:
+        seen: set[str] = set()
+        for n in self.nodes:
+            if n.id in seen:
+                raise ValueError(f"Duplicate node id: {n.id}")
+            seen.add(n.id)
+        return self
+
+    @model_validator(mode="after")
+    def _validate_depends_on(self) -> Self:
         node_ids = {n.id for n in self.nodes}
-
-        if len(node_ids) != len(self.nodes):
-            seen = set()
-            for n in self.nodes:
-                if n.id in seen:
-                    raise ValueError(f"Duplicate node id: {n.id}")
-                seen.add(n.id)
-
         for node in self.nodes:
             for dep in node.depends_on:
                 if dep == node.id:
@@ -290,8 +359,12 @@ class Graph(BaseModel):
                         f"Node '{node.id}' depends on '{dep}' "
                         f"which references nonexistent node"
                     )
+        return self
 
-        # Validate inline-route goto/else targets resolve.
+    @model_validator(mode="after")
+    def _validate_route_targets(self) -> Self:
+        node_ids = {n.id for n in self.nodes}
+
         def _check_targets(source_id: str, where: str, targets: Any) -> None:
             ids = targets if isinstance(targets, list) else [targets]
             for tgt in ids:
@@ -310,14 +383,21 @@ class Graph(BaseModel):
             if r.goto is not None:
                 _check_targets(node.id, "goto", r.goto)
             for case in r.cases:
-                _check_targets(node.id, f"case[when={case.when!r}] goto", case.goto)
+                _check_targets(
+                    node.id, f"case[when={case.when!r}] goto", case.goto,
+                )
             if r.else_ is not None:
                 _check_targets(node.id, "else goto", r.else_.goto)
+        return self
 
+    @model_validator(mode="after")
+    def _validate_routes_not_depended_on(self) -> Self:
         # Inline-route nodes dispatch via Command(goto=); they cannot
         # appear in another node's `depends_on:` (would double-trigger
         # the goto target).
-        inline_route_ids: set[str] = {n.id for n in self.nodes if n.route is not None}
+        inline_route_ids: set[str] = {
+            n.id for n in self.nodes if n.route is not None
+        }
         for node in self.nodes:
             for dep in node.depends_on:
                 if dep in inline_route_ids:
@@ -326,5 +406,4 @@ class Graph(BaseModel):
                         f"routes dispatch via Command(goto=), so they "
                         f"cannot appear in another node's depends_on"
                     )
-
         return self

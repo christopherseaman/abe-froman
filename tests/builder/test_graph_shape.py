@@ -313,7 +313,6 @@ class TestDynamicGraphShape:
         if template_evaluation is not None:
             template["evaluation"] = template_evaluation
         dsc = {
-            "enabled": True,
             "template": template,
             "final_nodes": [
                 {"id": "f0", "name": "F0", "execute": {"url": "f0.md"}},

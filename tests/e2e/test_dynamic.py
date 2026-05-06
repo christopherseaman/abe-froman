@@ -44,7 +44,6 @@ def dynamic_parent(id, manifest_items, *, template_execute=None,
         "name": id,
         "execute": {"url": _ECHO, "params": {"args": ["-n", manifest]}},
         "fan_out": {
-            "enabled": True,
             "template": {"execute": template_execute},
         },
         "depends_on": depends_on or [],
@@ -201,7 +200,7 @@ class TestFinalNodes:
         parent = Node(
             id="p", name="P",
             execute=Execute(url=_ECHO, params={"args": ["x"]}),
-            fan_out=FanOut(enabled=True, manifest_path=None,
+            fan_out=FanOut(manifest_path=None,
                            template={"execute": {"url": "t.md"}}),
         )
         final = type("F", (), dict(
@@ -350,7 +349,6 @@ class TestDynamicGates:
             "name": "p",
             "execute": {"url": _ECHO, "params": {"args": ["-n", json.dumps({"items": items})]}},
             "fan_out": {
-                "enabled": True,
                 "template": {
                     "execute": {
                         "url": _ECHO,
@@ -402,7 +400,6 @@ class TestDynamicGates:
             "name": "p",
             "execute": {"url": _ECHO, "params": {"args": ["-n", json.dumps({"items": items})]}},
             "fan_out": {
-                "enabled": True,
                 "template": {
                     "execute": {
                         "url": _ECHO,
@@ -469,25 +466,25 @@ class TestDynamicEdgeCases:
 
         assert "p" in result["completed_nodes"]
 
-    @pytest.mark.asyncio
-    async def test_disabled_dynamic_builds_normally(self, tmp_path):
-        """fan_out.enabled=false -> builds like a normal node."""
+    def test_legacy_enabled_false_rejected_at_validate(self, tmp_path):
+        """`fan_out: { enabled: false, template: ... }` was historically
+        a silent no-op — confusing author footgun. Post-Stage-5c audit
+        removed the field entirely; legacy YAML carrying `enabled` now
+        fails at `validate` time."""
+        from pydantic import ValidationError
         manifest = json.dumps({"items": [{"id": "a"}]})
-        config = make_config([{
-            "id": "p",
-            "name": "P",
-            "execute": {"url": _ECHO, "params": {"args": ["-n", manifest]}},
-            "fan_out": {
-                "enabled": False,
-                "template": {"execute": {"url": "t.md"}},
-            },
-        }])
-        executor = DispatchExecutor(workdir=str(tmp_path))
-        graph = build_workflow_graph(config, executor)
-        result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
-
-        assert "p" in result["completed_nodes"]
-        assert "p::a" not in result["completed_nodes"]
+        with pytest.raises(ValidationError, match="enabled"):
+            make_config([{
+                "id": "p",
+                "name": "P",
+                "execute": {
+                    "url": _ECHO, "params": {"args": ["-n", manifest]},
+                },
+                "fan_out": {
+                    "enabled": False,
+                    "template": {"execute": {"url": "t.md"}},
+                },
+            }])
 
     @pytest.mark.asyncio
     async def test_manifest_from_disk(self, tmp_path):
@@ -501,7 +498,6 @@ class TestDynamicEdgeCases:
             "name": "P",
             "execute": {"url": _ECHO, "params": {"args": ["-n", "not json"]}},
             "fan_out": {
-                "enabled": True,
                 "manifest_path": "manifest.json",
                 "template": {"execute": {
                     "url": _ECHO,

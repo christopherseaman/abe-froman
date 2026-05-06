@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from abe_froman.compile.graph import _read_manifest
+from abe_froman.compile._manifest import _read_manifest
 from abe_froman.runtime.state import make_initial_state
 from abe_froman.schema.models import Execute, FanOut, Node, FanOutTemplate
 
@@ -14,7 +14,7 @@ def _phase_with_dynamic(manifest_path=None) -> Node:
         id="p1", name="P1",
         execute=Execute(url="t.md"),
         fan_out=FanOut(
-            enabled=True,
+            
             manifest_path=manifest_path,
             template=FanOutTemplate(execute=Execute(url="sub.md")),
         ),

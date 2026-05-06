@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Callable
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, Send
 
+from abe_froman.compile._manifest import _read_manifest
 from abe_froman.compile.dynamic import _make_final_fan_out_node, _make_fan_out_node
 from abe_froman.compile.nodes import _make_evaluation_node, _make_execution_node
 from abe_froman.compile.route import build_route_namespace, evaluate_case
@@ -247,33 +248,6 @@ def _wire_evaluation_pair(
     builder.add_conditional_edges(eval_id, router, [exec_id, END, *pass_targets])
 
 
-def _read_manifest(state: WorkflowState, node: Node) -> list[dict]:
-    output = state.get("node_outputs", {}).get(node.id, "")
-    try:
-        data = json.loads(output)
-        if isinstance(data, dict) and "items" in data:
-            return data["items"]
-        if isinstance(data, list):
-            return data
-    except (json.JSONDecodeError, TypeError):
-        pass
-
-    if node.fan_out and node.fan_out.manifest_path:
-        manifest_file = (
-            Path(state.get("workdir", ".")) / node.fan_out.manifest_path
-        )
-        try:
-            data = json.loads(manifest_file.read_text())
-            if isinstance(data, dict) and "items" in data:
-                return data["items"]
-            if isinstance(data, list):
-                return data
-        except (FileNotFoundError, json.JSONDecodeError):
-            pass
-
-    return []
-
-
 def _make_dynamic_router(node: Node, config: Graph):
     template_node_id = f"_sub_{node.id}"
 
@@ -373,7 +347,7 @@ def build_workflow_graph(
     for node in config.nodes:
         if node.evaluation:
             gated_node_ids.add(node.id)
-        if node.fan_out and node.fan_out.enabled:
+        if node.fan_out is not None:
             dynamic_fan_out_ids.add(node.id)
             if node.fan_out.template.evaluation:
                 gated_fan_out_template_ids.add(node.id)
