@@ -7,6 +7,8 @@ Priority tags reflect Samus's sequencing needs; the abe-froman maintainer's own 
 ## Revision history
 
 - **2026-05-05** — Triaged against the post-Stage-5b WISHLIST. Dropped three items originally proposed as orchestrator features that are better expressed as Samus-side consumers: Task event log + projector (the existing `stream_mode="updates"` wishlist item already covers what abe-froman needs to emit; Samus-side projector consumes it), Issue tracker abstraction (Samus subscribes to the event stream directly), FastAPI SSE endpoint (YAGNI; future Samus-side daemon if needed). Reframed Delta-replan as a wave-driven dynamic-task *pattern question* rather than a new phase type. Updated the priority-tag table to reflect items that have landed (Stage 3+3b, Stage 4b/c, Stage 5a/b, OpenAI backend, scope-aware settings, ACP process-tree fix, auto-detect executor).
+- **2026-05-06** — Post-Stage-5c branch `feat/native-events-anthropic-stubectomy` lands three Samus-Phase-priority items together: native `stream_mode="updates"` event stream with the diff layer dropped (Phase 3 high), Direct Anthropic API backend (Phase 5 high — primary Samus path), and StubBackend removal from production (closes the no-fakes-in-production policy gap). Auto-detect order: Anthropic key → DeepSeek key → ACP/npx; raises `RuntimeError` if none. Breaking change: `--executor stub` and `executor: stub` no longer accepted.
+- **2026-05-06** — Wave-driven dynamic-task pattern resolved as **shippable with no new primitives**. Spike traced `Command(goto=...)` re-entry of a fan-out parent; root cause of "loop spins but bodies don't re-execute" was a 3-line resume-mode guard from the pre-LangGraph-checkpointer era (commit `1ec9ed3`, 2026-03-20) that became dead code on 2026-04-17 when `AsyncSqliteSaver` replaced the homegrown JSON-envelope resume. With those guards removed, the pattern works end-to-end against existing primitives; closes Samus's Phase 4-5 ~4-hour-restart pathology with no schema change.
 
 ## How to use this document
 
@@ -28,18 +30,16 @@ For each net-new item: copy the bullet into the appropriate section of `abe-from
 
 ### Under "Features"
 
-- **Wave-driven dynamic-task pattern (state-mutating fan_out loop)**
-    - Replaces the original "Delta-replan phase type" framing. The need: when a phase-2 task discovers a missing dependency or an AC modification mid-run, the orchestrator should pick up the new task in the next parallelizable wave without re-running completed work and without requiring a human interrupt. **This is explicitly not a HITL flow** — automatic wave-driven re-planning is the goal
-    - Pattern sketch (using existing primitives where possible):
-      1. Execute node mutates a `tasks` channel (per-task statuses + new task additions)
-      2. Fan_out node reads the current `tasks` state, dispatches over all currently-ready tasks (deps satisfied, status=pending)
-      3. Each task completes; reconcile execute node updates statuses + appends any newly-discovered tasks
-      4. Route node decides "more ready tasks?" → loop back to fan_out, vs proceed to next phase
-    - Open questions for abe-froman owner — does this require new primitives, or is it expressible with current Stage 5b + route node + a small reducer addition?
-        - **Likely needed**: a custom reducer (similar to `add_messages`) for the `tasks` channel that supports per-key updates + new-key appends without trampling concurrent writes
-        - **Likely needed**: confirmation that `fan_out:` re-reads its manifest on re-entry from a self-loop super-step (so post-update state is what the next dispatch wave sees). LangGraph super-step semantics suggest yes, but worth verifying explicitly
-        - **Probably not needed**: dynamic graph recompilation. The shape is graph-static; only the manifest the fan_out reads is dynamic
-    - Samus priority: **Phase 4-5** — eliminates the ~4-hour phase-1 full-restart pathology observed in `build-fshq-a2`
+- **Wave-driven dynamic-task pattern (state-mutating fan_out loop)** — _shippable today, no new primitives needed (resolved 2026-05-06 via spike)._
+    - The need: when a phase-2 task discovers a missing dependency or an AC modification mid-run, the orchestrator should pick up the new task in the next parallelizable wave without re-running completed work and without requiring a human interrupt. **This is explicitly not a HITL flow** — automatic wave-driven re-planning is the goal.
+    - **Spike result**: end-to-end smoke (`.temp/wave_spike.py`) ran 2 waves cleanly with zero new abe-froman primitives:
+        - Pattern: `planner → dispatcher (fan_out) → workers → reconcile → gate (route)` with `gate.route.cases[*].goto: dispatcher` for the loop edge
+        - Existing reducer (`_merge_dicts` for `node_outputs`, append for `child_outputs` per-id) handles wave-to-wave state composition correctly
+        - LangGraph's `Command(goto=...)` re-enters dispatcher; abe-froman re-reads the manifest from state on each entry; new tasks discovered in wave N get dispatched in wave N+1
+        - The only blocker (a 3-line resume-mode holdover guard in `compile/nodes.py` / `compile/dynamic.py` that turned goto re-entry into a silent no-op) was removed once its archeology was understood — it pre-dated the LangGraph checkpointer migration and was dead defensive code
+    - **Authoring constraint** (LangGraph reachability rule, not abe-froman policy): a node that's a goto target needs at least one declared static edge into it for the runtime to consider it reachable. Easiest formula: split entry from loop-target (planner has START → dep edge → dispatcher; gate's `goto: dispatcher` then resolves cleanly).
+    - **Authoring example**: `examples/wave_driven/` would walk through the pattern. State channel design is up to the author — the spike used a JSON file on disk as the shared `tasks` state because predicates can't read disk; a top-level `tasks` field on `WorkflowState` with `_merge_dicts` reducer is also viable and slightly cleaner.
+    - Samus priority: **Phase 4-5** — eliminates the ~4-hour phase-1 full-restart pathology observed in `build-fshq-a2`. Now unblocked.
 
 ### Under "Simplification candidates" or new "Observability" section
 
@@ -82,12 +82,13 @@ These items are already drafted in `abe-froman/WISHLIST.md`. Samus's needs assig
 | Unify gate-eval via outcome-as-routing-signal | Simplification candidates | Landed (Stage 3 + 3b) | Was the mechanism for multi-tier retry routing; now the foundation for Samus's J-tier-equivalent route lists |
 | Synthesis as first-class concept (`synthesis_phase:` block) | Gate-evaluation extensibility | **Phase 5 (high)** | Samus uses this as the batch-boundary primitive for phase-2 parallelization (see ADR-005) |
 | Multi-tier retry escalation (tiered route lists) | Gate-evaluation extensibility | **Phase 5 (high)** | Infra landed (Stages 3 + 3b); Samus uses J-tier-equivalent for "retry only failed upstream tasks with feedback injected"; replaces nuclear-restart for most cases (see ADR-006). Remaining: `evaluation:` YAML block for author-written routes; cross-node re-entry by name |
-| Direct Anthropic API backend | Execution engines → Backends to add | **Phase 5 (high)** | Becomes primary Samus backend (mitigates ACP process-tree leaks; direct Claude API token tracking) |
+| Direct Anthropic API backend | Execution engines → Backends to add | Landed | Becomes primary Samus backend (mitigates ACP process-tree leaks). **Open**: token-count surfacing on `ExecutionResult` not yet wired (WISHLIST audit item #13) — required for Samus token tracking |
 | OpenAI-compatible backend | Execution engines → Backends to add | Landed | Bonus: unlocks Ollama/vLLM/LiteLLM via `base_url` overrides for local dev and cost experiments |
 | Scope-aware settings inheritance | Execution engines → Backend-selection ergonomics | Landed | Subgraph settings inherit cleanly; Samus's per-phase model overrides compose correctly |
-| Default executor real, not stub | Execution engines → Backend-selection ergonomics | Landed | Auto-detect chooses real backend; stub is opt-in only |
-| `stream_mode="updates"` in runner + logging | Langgraph adoption wins | **Phase 3 (high)** | Samus's task projector consumes this stream. **Consumer requirements**: stable per-node event identity (`{node_id, event_type, timestamp, payload}`), NDJSON line-oriented format, predictable schema across versions, multi-consumer-safe (file readable concurrently with appends). Samus's projector maps the stream to Samus-domain event types (`criteria-add/-modify/-supersede`, `worker-claim`, etc.) entirely on the consumer side |
-| Stop diffing state in `runtime/logging.py` | Reimplementation debt | **Phase 3 (high)** | Pairs with the above; the diff-based approach has edge cases (new state channels confuse the diffing logic) that a Samus consumer can't safely build on. Net effect of the swap: clean per-node update events keyed on node identity, no inference required by downstream consumers |
+| Default executor real, not stub | Execution engines → Backend-selection ergonomics | Landed | Auto-detect chooses real backend; stub is now removed from production entirely (post-2026-05-06 — `--executor stub` and `executor: stub` no longer accepted) |
+| StubBackend removed from production code | Test doctrine cleanup | Landed | No more silent `[prompt-stub]` fallback. Auto-detect raises `RuntimeError` with concrete remediation when no backend resolves |
+| `stream_mode="updates"` in runner + logging | Langgraph adoption wins | Landed | Native stream switched on (LangGraph 1.0.7 `stream_mode=["updates", "values"]` tuple). 6 emitted event types and schemas unchanged for downstream consumers — Samus's projector contract is preserved |
+| Stop diffing state in `runtime/logging.py` | Reimplementation debt | Landed | `JsonlLogger.log_snapshot(prev, curr)` replaced with `log_update(node_name, update)`; `_PrefixingProxy` deleted. Multi-event-per-update emission order preserved (gate_evaluated before node_completed) |
 | Flexible output contracts (glob/JSON-schema/size) | Architectural moves | **Phase 5 (high)** | Samus's `required_files` expectations break if gates fire before outputs stabilize; glob support specifically needed for adapter outputs that emit per-component files |
 | Phase execution timeout | Schema (existing `timeout` field) | **Phase 5 (medium)** | Safety net; abe-froman already has `timeout` field on Node schema |
 | Worktree garbage collection | Top priority after simplification | **Phase 9 (high)** | Samus's `build-<name>-snapshot-*` branch proliferation must not leak disk across builds. Pairs with the new Foreman branch/commit/merge item above |
@@ -116,10 +117,10 @@ These items are already drafted in `abe-froman/WISHLIST.md`. Samus's needs assig
 
 - **4 net-new items** to add to `abe-froman/WISHLIST.md`:
     1. **Agent Teams execution mode** — pending decision (may already be covered by Stage 5b)
-    2. **Wave-driven dynamic-task pattern** — open question on whether existing primitives suffice or a new reducer is needed
+    2. **Wave-driven dynamic-task pattern** — _shippable today (resolved 2026-05-06 via spike). Existing primitives suffice once the resume-mode `# Skip if already completed` holdover guard is removed; that 3-line removal landed alongside the resolution._
     3. **Memory back-pressure in Foreman** — small focused requirement
     4. **Foreman branch/commit/merge management** — substantial; requirements + open design questions enumerated
-- **22 existing WISHLIST items** tagged with Samus priorities (a meaningful fraction now landed since the prior table revision)
+- **22 existing WISHLIST items** tagged with Samus priorities; as of 2026-05-06, six of the highest-priority Samus items have landed (Direct Anthropic backend, `stream_mode="updates"`, stop diffing state, OpenAI backend, scope-aware settings, default-executor-real-not-stub). The Anthropic backend leaves one Samus-blocking sub-item open: token-count surfacing on `ExecutionResult` (WISHLIST audit item #13)
 - **6 items** explicitly kept in Samus's own codebase (not requested of abe-froman)
 
 The bulk of Samus's platform needs are **already on the abe-froman WISHLIST** (the maintainer's own roadmap). This document largely prioritizes that backlog against Samus's specific Phase-by-Phase needs. The post-Stage-5b refresh dropped three originally-proposed orchestrator features that, on second look, are better expressed as Samus-side consumers of the abe-froman event stream rather than abe-froman concerns.

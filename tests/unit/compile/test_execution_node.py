@@ -113,12 +113,20 @@ def _config_with(node: Node, **settings_kwargs) -> Graph:
 
 class TestExecutionNodeClosure:
     @pytest.mark.asyncio
-    async def test_already_completed_returns_empty(self):
-        """Re-entering a completed node is a no-op (idempotent)."""
+    async def test_re_entry_executes_body_again(self):
+        """Re-entering a node (e.g. via inline-route `Command(goto=...)`)
+        executes the body again. The framework's job is to dispatch the
+        procedure on every reach; idempotence is a property of the
+        procedure, not the framework. (Compare: a QA step still runs
+        when a reopened bug fix routes back through it.)
+        """
         node = Node(id="p1", name="P1", execute=Execute(url="t.md"))
         node = _make_execution_node(node, _config_with(node), MockExecutor())
         state = make_initial_state(completed_nodes=["p1"])
-        assert await node(state) == {}
+        update = await node(state)
+        # Body ran: emits a new node_outputs entry and re-marks complete.
+        assert "node_outputs" in update
+        assert update["completed_nodes"] == ["p1"]
 
     @pytest.mark.asyncio
     async def test_none_executor_returns_no_executor_update(self):

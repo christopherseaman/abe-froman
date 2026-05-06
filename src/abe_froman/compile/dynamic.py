@@ -99,8 +99,6 @@ def _make_fan_out_node(
         item_id = item.get("id", "unknown")
         child_id = f"{parent_node.id}::{item_id}"
 
-        if child_id in state.get("completed_nodes", []):
-            return {}
         if child_id in state.get("failed_nodes", []):
             return {}
 

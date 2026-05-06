@@ -430,8 +430,6 @@ def _make_execution_node(
     timeout = node.effective_timeout(settings)
 
     async def node_fn(state: WorkflowState) -> dict[str, Any]:
-        if node.id in state.get("completed_nodes", []):
-            return {}
         for check in (check_dep_failed, check_dry_run):
             if (r := check(node, state)) is not None:
                 return r
@@ -534,8 +532,6 @@ def _make_evaluation_node(
     async def node_fn(state: WorkflowState) -> dict[str, Any]:
         node_id = resolve(state)
 
-        if node_id in state.get("completed_nodes", []):
-            return {}
         if node_id in state.get("failed_nodes", []):
             return {}
 
