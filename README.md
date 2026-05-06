@@ -182,12 +182,44 @@ All defaults in the table below are pulled from `Settings(BaseModel)` in `src/ab
 | `name`            | `str`          | —       | Human-readable label. |
 | `description`     | `str \| None`  | `None`  | Free text. |
 | `model`           | `str \| None`  | `None`  | Per-node model override. |
-| `depends_on`      | `list[str]`    | `[]`    | Static DAG edges. Cannot reference a `route` node. |
+| `depends_on`      | `list[str]`    | `[]`    | Static DAG edges (back-pointer). Cannot reference a `route` node. |
+| `next`            | `list[str]`    | `[]`    | Forward-pointer equivalent of `depends_on:` on the target. Schema sugar — normalized into the targets' `depends_on:` at parse time. See "Edge authoring style" below. |
 | `timeout`         | `float \| None`| `None`  | Per-node timeout (seconds). Falls back to `settings.default_timeout`. |
 | `execute`         | `Execute \| None` | `None` | Execution descriptor (see below). Omit + add `evaluation:` for gate-only-by-elision. |
 | `evaluation`      | `Evaluation \| None` | `None` | Quality gate. |
 | `output_contract` | `OutputContract \| None` | `None` | Required-files check after execution. |
 | `fan_out`         | `FanOut \| None` | `None` | Manifest-driven `Send` fan-out. |
+
+### Edge authoring style
+
+Static edges between nodes can be written from either side:
+
+- `depends_on:` (back-pointer) — list **upstream** ids on the **downstream** node.
+- `next:` (forward-pointer) — list **downstream** ids on the **upstream** node.
+
+Both compile to the same DAG. `Graph.validate_node_references` walks every node's `next:` list at parse time, appends the source id to each target's `depends_on:` (de-duped), and clears `next:` — so `compile/` and `runtime/` only ever see `depends_on:`.
+
+Same diamond `A → {B, C} → D` written two ways:
+
+```yaml
+# depends_on style — fan-in reads naturally on D
+nodes:
+  - { id: a, name: A, execute: { url: a.md } }
+  - { id: b, name: B, execute: { url: b.md }, depends_on: [a] }
+  - { id: c, name: C, execute: { url: c.md }, depends_on: [a] }
+  - { id: d, name: D, execute: { url: d.md }, depends_on: [b, c] }
+```
+
+```yaml
+# next style — fan-out reads naturally on A
+nodes:
+  - { id: a, name: A, execute: { url: a.md }, next: [b, c] }
+  - { id: b, name: B, execute: { url: b.md }, next: [d] }
+  - { id: c, name: C, execute: { url: c.md }, next: [d] }
+  - { id: d, name: D, execute: { url: d.md } }
+```
+
+Mix freely. Pick whichever reads better for the local topology — fan-in barriers want `depends_on:`, fan-out spines want `next:`. The same edge expressed from both sides is idempotent (no error, single edge). Routes and fan-out parents cannot use `next:` — those have their own forward-edge mechanisms (`cases[].goto`, `final_nodes`).
 
 ### Execute
 
@@ -400,6 +432,8 @@ evaluation:
 - `score < threshold`, retries exhausted, `blocking: true` → fail; dependents skipped.
 - `score < threshold`, retries exhausted, `blocking: false` → pass with warning; dependents continue.
 
+**Ordering under evaluation retries.** When a node `X` carries `evaluation:`, its execution sub-graph is `X → _eval_X`, with `_eval_X` self-looping back to `X` for retries. Downstream deps wire to **`_eval_X`**, not raw `X` — so a dependent only fires after `_eval_X` emits its final pass/fail/exhausted outcome. Intermediate retry attempts never interleave with downstream execution, regardless of how many retries occur. (Source: `compile/graph.py::_make_evaluation_router` and the `exit_node[]` map.)
+
 ## Foreman and worktrees
 
 Foreman is enabled when `--workdir` is inside a git working tree. It allocates a worktree per node id at `<workdir>/.abe-foreman/wt-<id>-<uuid>/`, reused across retries so prompt nodes can iterate on prior files. Subphases get worktrees keyed `{parent_id}::{item_id}`. Worktrees survive resume — `state.node_worktrees` rehydrates into a fresh `ForemanExecutor`.
@@ -426,6 +460,7 @@ Concurrency caps: `settings.max_parallel_jobs` (global semaphore) and `settings.
 | `examples/smoke_test.yaml`                 | Bare-minimum config — single prompt node. |
 | `examples/explicit_join.yaml`              | `type: join` topology marker. |
 | `examples/route_classify/workflow.yaml`    | `type: route` case ladder over structured state. |
+| `examples/pipeline_style/workflow.yaml`    | 3-node linear chain authored with `next:` (forward-pointer) rather than `depends_on:`. |
 | `examples/absurd-paper/workflow.yaml`      | 13-node multi-stage pipeline with subgraphs and per-Send subgraph fan-out (`reviewer_pool`). |
 | `examples/run_all_examples.yaml`           | Wrapper that exercises the full set in CI. |
 

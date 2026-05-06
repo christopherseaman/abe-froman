@@ -374,6 +374,155 @@ class TestDependencyValidation:
         assert node.depends_on == []
 
 
+class TestNextField:
+    """`next:` is forward-pointer schema sugar for `depends_on:`. Graph
+    validation normalizes next: into the target's depends_on, then
+    clears next: — so all downstream code reads a single canonical
+    adjacency.
+    """
+
+    def test_next_only_normalizes_to_depends_on(self):
+        config = Graph(
+            name="T",
+            version="1.0.0",
+            nodes=[
+                {
+                    "id": "a", "name": "A", "execute": {"url": "a.md"},
+                    "next": ["b"],
+                },
+                {"id": "b", "name": "B", "execute": {"url": "b.md"}},
+            ],
+        )
+        # next: cleared, depends_on populated on the target.
+        assert config.nodes[0].next == []
+        assert config.nodes[1].depends_on == ["a"]
+
+    def test_next_multi_target_fan_out(self):
+        config = Graph(
+            name="T",
+            version="1.0.0",
+            nodes=[
+                {
+                    "id": "a", "name": "A", "execute": {"url": "a.md"},
+                    "next": ["b", "c", "d"],
+                },
+                {"id": "b", "name": "B", "execute": {"url": "b.md"}},
+                {"id": "c", "name": "C", "execute": {"url": "c.md"}},
+                {"id": "d", "name": "D", "execute": {"url": "d.md"}},
+            ],
+        )
+        assert config.nodes[0].next == []
+        assert config.nodes[1].depends_on == ["a"]
+        assert config.nodes[2].depends_on == ["a"]
+        assert config.nodes[3].depends_on == ["a"]
+
+    def test_mixed_next_and_depends_on_idempotent(self):
+        # Same edge expressed both ways: a.next=[b] AND b.depends_on=[a].
+        # Result should be a single edge, not duplicated.
+        config = Graph(
+            name="T",
+            version="1.0.0",
+            nodes=[
+                {
+                    "id": "a", "name": "A", "execute": {"url": "a.md"},
+                    "next": ["b"],
+                },
+                {
+                    "id": "b", "name": "B", "execute": {"url": "b.md"},
+                    "depends_on": ["a"],
+                },
+            ],
+        )
+        assert config.nodes[0].next == []
+        assert config.nodes[1].depends_on == ["a"]
+
+    def test_next_style_matches_depends_on_style(self):
+        """A diamond authored two ways should normalize identically."""
+        next_style = Graph(
+            name="T", version="1.0.0",
+            nodes=[
+                {"id": "a", "name": "A", "execute": {"url": "a.md"},
+                 "next": ["b", "c"]},
+                {"id": "b", "name": "B", "execute": {"url": "b.md"},
+                 "next": ["d"]},
+                {"id": "c", "name": "C", "execute": {"url": "c.md"},
+                 "next": ["d"]},
+                {"id": "d", "name": "D", "execute": {"url": "d.md"}},
+            ],
+        )
+        deps_style = Graph(
+            name="T", version="1.0.0",
+            nodes=[
+                {"id": "a", "name": "A", "execute": {"url": "a.md"}},
+                {"id": "b", "name": "B", "execute": {"url": "b.md"},
+                 "depends_on": ["a"]},
+                {"id": "c", "name": "C", "execute": {"url": "c.md"},
+                 "depends_on": ["a"]},
+                {"id": "d", "name": "D", "execute": {"url": "d.md"},
+                 "depends_on": ["b", "c"]},
+            ],
+        )
+        assert next_style.model_dump() == deps_style.model_dump()
+
+    def test_next_unknown_target_rejected(self):
+        with pytest.raises(ValidationError, match="next references"):
+            Graph(
+                name="T", version="1.0.0",
+                nodes=[
+                    {"id": "a", "name": "A", "execute": {"url": "a.md"},
+                     "next": ["ghost"]},
+                ],
+            )
+
+    def test_next_self_reference_rejected(self):
+        with pytest.raises(ValidationError, match="self-edge"):
+            Graph(
+                name="T", version="1.0.0",
+                nodes=[
+                    {"id": "a", "name": "A", "execute": {"url": "a.md"},
+                     "next": ["a"]},
+                ],
+            )
+
+    def test_next_on_route_rejected(self):
+        with pytest.raises(ValidationError, match="Route 'r' cannot use"):
+            Graph(
+                name="T", version="1.0.0",
+                nodes=[
+                    {"id": "a", "name": "A", "execute": {"url": "a.md"}},
+                    {"id": "b", "name": "B", "execute": {"url": "b.md"}},
+                    {
+                        "id": "r", "name": "R",
+                        "depends_on": ["a"],
+                        "next": ["b"],
+                        "execute": {
+                            "type": "route",
+                            "cases": [{"when": "True", "goto": "b"}],
+                            "else": "b",
+                        },
+                    },
+                ],
+            )
+
+    def test_next_targeting_route_rejected(self):
+        with pytest.raises(ValidationError, match="next targets route"):
+            Graph(
+                name="T", version="1.0.0",
+                nodes=[
+                    {"id": "a", "name": "A", "execute": {"url": "a.md"},
+                     "next": ["r"]},
+                    {
+                        "id": "r", "name": "R",
+                        "execute": {
+                            "type": "route",
+                            "cases": [{"when": "True", "goto": "__end__"}],
+                            "else": "__end__",
+                        },
+                    },
+                ],
+            )
+
+
 class TestRouteValidation:
     """Graph-level route validation (Stage 5a, retained in Stage 5b)."""
 

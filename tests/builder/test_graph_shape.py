@@ -196,6 +196,57 @@ class TestGateRouting:
         }
 
 
+class TestNextStyleAuthoring:
+    """`next:` is forward-pointer schema sugar — at the LangGraph level
+    it should produce a topology indistinguishable from the equivalent
+    `depends_on:`-style fixture.
+    """
+
+    def test_fan_out_via_next(self):
+        config = make_config(
+            [
+                {"id": "a", "name": "A", "execute": {"url": "a.md"},
+                 "next": ["b", "c", "d"]},
+                {"id": "b", "name": "B", "execute": {"url": "b.md"}},
+                {"id": "c", "name": "C", "execute": {"url": "c.md"}},
+                {"id": "d", "name": "D", "execute": {"url": "d.md"}},
+            ]
+        )
+        graph = build_workflow_graph(config)
+        assert _edges(graph) == {
+            (START, "a"),
+            ("a", "b"), ("a", "c"), ("a", "d"),
+            ("b", END), ("c", END), ("d", END),
+        }
+
+    def test_next_style_topology_matches_depends_on_style(self):
+        next_cfg = make_config(
+            [
+                {"id": "a", "name": "A", "execute": {"url": "a.md"},
+                 "next": ["b", "c"]},
+                {"id": "b", "name": "B", "execute": {"url": "b.md"},
+                 "next": ["d"]},
+                {"id": "c", "name": "C", "execute": {"url": "c.md"},
+                 "next": ["d"]},
+                {"id": "d", "name": "D", "execute": {"url": "d.md"}},
+            ]
+        )
+        deps_cfg = make_config(
+            [
+                {"id": "a", "name": "A", "execute": {"url": "a.md"}},
+                {"id": "b", "name": "B", "execute": {"url": "b.md"},
+                 "depends_on": ["a"]},
+                {"id": "c", "name": "C", "execute": {"url": "c.md"},
+                 "depends_on": ["a"]},
+                {"id": "d", "name": "D", "execute": {"url": "d.md"},
+                 "depends_on": ["b", "c"]},
+            ]
+        )
+        assert _edges(build_workflow_graph(next_cfg)) == _edges(
+            build_workflow_graph(deps_cfg)
+        )
+
+
 class TestModelConfig:
     def test_model_passthrough_in_config(self):
         config = make_config(
