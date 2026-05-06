@@ -28,6 +28,13 @@ logger = logging.getLogger(__name__)
 # can use full Anthropic model IDs (e.g., ``claude-sonnet-4-6``) when
 # they want to pin a version. Update the table when Anthropic releases
 # a new headline model under one of the family names.
+#
+# Drift detection: ``tests/unit/runtime/test_anthropic_backend.py::
+# TestAnthropicLive::test_alias_table_resolves_in_live_catalog`` queries
+# ``client.models.list()`` (when an Anthropic key is on disk) and
+# fails if any of these vendor IDs is no longer in the live catalog —
+# that's the cue to bump the alias to the new headline ID for the
+# affected family.
 _MODEL_ALIASES = {
     "sonnet": "claude-sonnet-4-6",
     "opus": "claude-opus-4-7",

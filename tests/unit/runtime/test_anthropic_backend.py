@@ -15,6 +15,7 @@ from __future__ import annotations
 import pytest
 
 from abe_froman.runtime.executor.backends.anthropic import (
+    _MODEL_ALIASES,
     AnthropicBackend,
     _resolve_model,
 )
@@ -58,6 +59,43 @@ class TestAnthropicLive:
         assert result.success is True
         assert result.output  # non-empty
         assert "pong" in result.output.lower()
+
+    async def test_alias_table_resolves_in_live_catalog(self, tmp_path):
+        """Drift check: every vendor ID in ``_MODEL_ALIASES`` must still
+        appear in the live Anthropic ``models.list()`` catalog. If
+        Anthropic deprecates a model we have hardcoded as a generic
+        family alias (e.g. ``"sonnet" -> "claude-sonnet-4-6"``), this
+        fails with a clear remediation message: update the table to
+        the current headline ID for that family.
+
+        Same general pattern applies to any other backend with a model
+        alias table — for now Anthropic is the only one (the OpenAI
+        backend passes model strings through verbatim).
+        """
+        try:
+            from anthropic import AsyncAnthropic
+        except ImportError:
+            pytest.skip("anthropic SDK not installed (uv sync --extra anthropic)")
+
+        client = AsyncAnthropic(api_key=ANTHROPIC_KEY)
+        try:
+            catalog = await client.models.list()
+        finally:
+            await client.close()
+        catalog_ids = {m.id for m in catalog.data}
+
+        stale: dict[str, str] = {}
+        for alias, vendor_id in _MODEL_ALIASES.items():
+            if vendor_id not in catalog_ids:
+                stale[alias] = vendor_id
+
+        assert not stale, (
+            f"_MODEL_ALIASES has stale vendor IDs no longer in the live "
+            f"Anthropic catalog: {stale}. Update "
+            f"`runtime/executor/backends/anthropic.py::_MODEL_ALIASES` "
+            f"to the current headline IDs. Live catalog ids include: "
+            f"{sorted(i for i in catalog_ids if 'claude' in i.lower())}"
+        )
 
     async def test_close_is_idempotent(self, tmp_path):
         try:
