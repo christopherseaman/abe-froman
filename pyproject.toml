@@ -12,6 +12,7 @@ dependencies = [
     "langgraph-checkpoint-sqlite>=3.0.3",
     "ruamel.yaml>=0.17",
     "simpleeval>=0.9.13",
+    "psutil>=5.9",
 ]
 
 [project.scripts]

@@ -206,6 +206,12 @@ class Settings(BaseModel):
     model_downgrade_chain: list[str] = ["opus", "sonnet", "haiku"]
     max_parallel_jobs: int = 4
     per_model_limits: dict[str, int] = {}
+    # Memory back-pressure: when set, Foreman blocks new dispatches if
+    # host memory percent exceeds this threshold. Composes (AND) with
+    # max_parallel_jobs / per_model_limits — every gate must allow
+    # dispatch. In-flight jobs are never aborted by this gate; only new
+    # acquisitions wait. ``None`` disables the check.
+    memory_threshold_pct: float | None = None
     max_subgraph_depth: int = 10  # cap on recursive subgraph nesting (Stage 4c)
     # Stage 5b — execute.url remote URL gates
     base_url: str | None = None  # default base for relative urls in execute.url

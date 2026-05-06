@@ -391,3 +391,119 @@ class TestWorktreeCreationFailure:
             assert "beta" in str(excinfo.value) or not str(excinfo.value).startswith("foreman:")
         finally:
             await foreman.close()
+
+
+class TestMemoryBackPressure:
+    """Foreman gates new dispatches on host memory percent via real
+    ``psutil.virtual_memory()`` — no fakes, no monkeypatch.
+
+    Two tests:
+      - **Permissive threshold** smoke: a setting well above current
+        memory percent is a no-op; dispatch proceeds normally.
+      - **Real allocation**: claim ~500 MB transiently to push percent
+        above a tight threshold, hold the gate, then release and let
+        dispatch proceed. Exercises the full psutil integration.
+    """
+
+    @pytest.mark.asyncio
+    async def test_permissive_threshold_no_gate(self, tmp_path):
+        """Threshold well above current memory → gate never fires.
+        Smoke check that the integration doesn't break the happy path."""
+        _init_git_repo(tmp_path)
+        inner = DispatchExecutor(workdir=str(tmp_path))
+        foreman = ForemanExecutor(
+            inner=inner, base_workdir=str(tmp_path),
+            # 99.9 is above any realistic baseline on a healthy machine.
+            settings=Settings(memory_threshold_pct=99.9),
+            memory_poll_interval_s=0.05,
+        )
+        try:
+            result = await foreman.execute(_cmd_phase("alpha"), {})
+            assert result.success is True
+        finally:
+            await foreman.close()
+
+    @pytest.mark.asyncio
+    async def test_real_allocation_holds_gate_then_releases(self, tmp_path):
+        """Claim memory transiently to push ``psutil.virtual_memory().percent``
+        above a tight threshold; confirm the gate holds dispatch; release
+        and confirm dispatch proceeds.
+
+        Skipped automatically when system headroom makes a ~500 MB
+        allocation invisible to ``percent`` readings (huge-RAM hosts).
+        """
+        import gc
+
+        import psutil
+
+        _init_git_repo(tmp_path)
+        avail = psutil.virtual_memory().available
+        # Safety floor — refuse to run if the host's free memory is
+        # under 4 GB. We never want a test to push a developer's box
+        # into swap or OOM-killer territory.
+        if avail < 4 * 1024 * 1024 * 1024:
+            pytest.skip(
+                f"insufficient free memory ({avail / 1e9:.1f} GB) "
+                f"— allocation test requires ≥4 GB headroom"
+            )
+
+        baseline = psutil.virtual_memory().percent
+        # Cap allocation at the SMALLER of:
+        #   - 200 MB (a fixed sane upper bound; enough to register on
+        #     percent readings without straining the host)
+        #   - 5 % of available memory (scales down on tight systems)
+        # If 5 % of available is below 50 MB the test would be too
+        # noisy anyway, so skip rather than allocate something useless.
+        alloc_size = min(200 * 1024 * 1024, avail // 20)
+        if alloc_size < 50 * 1024 * 1024:
+            pytest.skip(
+                f"5%% of available memory ({alloc_size / 1e6:.0f} MB) "
+                f"too small to reliably register"
+            )
+        burden_holder: list[bytearray] = [bytearray(alloc_size)]
+        # Touch every page so the allocation isn't lazy-mapped.
+        for i in range(0, alloc_size, 4096):
+            burden_holder[0][i] = 1
+
+        elevated = psutil.virtual_memory().percent
+        if elevated <= baseline + 0.3:
+            burden_holder.clear()
+            pytest.skip(
+                f"system memory unchanged after {alloc_size / 1e6:.0f} MB "
+                f"alloc (baseline={baseline:.1f}, elevated={elevated:.1f}); "
+                f"too much headroom to reliably trigger the gate"
+            )
+
+        # Threshold sits between the two readings — current state
+        # gates, post-release state proceeds.
+        threshold = (baseline + elevated) / 2.0
+
+        inner = DispatchExecutor(workdir=str(tmp_path))
+        foreman = ForemanExecutor(
+            inner=inner, base_workdir=str(tmp_path),
+            settings=Settings(memory_threshold_pct=threshold),
+            memory_poll_interval_s=0.05,
+        )
+
+        async def release_after_delay():
+            await asyncio.sleep(0.2)
+            burden_holder.clear()
+            gc.collect()
+
+        try:
+            t0 = time.monotonic()
+            result, _ = await asyncio.gather(
+                foreman.execute(_cmd_phase("alpha"), {}),
+                release_after_delay(),
+            )
+            elapsed = time.monotonic() - t0
+            assert result.success is True
+            # Gate held until the bytearray was released and percent
+            # dropped below threshold. `pwd` itself is fast; elapsed
+            # time is dominated by the gate hold (~0.2s).
+            assert elapsed >= 0.15, (
+                f"gate didn't hold for the allocation; "
+                f"elapsed={elapsed:.2f}s, threshold={threshold:.1f}"
+            )
+        finally:
+            await foreman.close()
