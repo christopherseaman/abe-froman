@@ -20,6 +20,7 @@ from abe_froman.runtime.executor.dispatch import DispatchExecutor
 from abe_froman.runtime.executor.prompt import (
     PromptExecutor,
     downgrade_model,
+    prepend_eval_preamble,
     render_template,
     resolve_model,
 )
@@ -82,6 +83,41 @@ class TestRenderTemplate:
 
         with pytest.raises((UndefinedError, TypeError)):
             render_template("{{research-node}}", {})
+
+
+# ---------------------------------------------------------------------------
+# prepend_eval_preamble — Stage 5c auto-prepend for inline-route gotos
+# ---------------------------------------------------------------------------
+
+
+class TestPrependEvalPreamble:
+    """The pure helper called by `_dispatch_prompt` after Jinja render.
+    Tests the helper directly so the auto-prepend behavior is covered
+    without instrumenting the PromptBackend boundary.
+    """
+
+    def test_no_preamble_returns_rendered_unchanged(self):
+        assert prepend_eval_preamble("body", {}) == "body"
+
+    def test_empty_preamble_returns_rendered_unchanged(self):
+        assert prepend_eval_preamble("body", {"_route_eval_preamble": ""}) == "body"
+
+    def test_non_empty_preamble_prepends_with_blank_line(self):
+        result = prepend_eval_preamble(
+            "Rewrite from classify.",
+            {"_route_eval_preamble": "Previous evaluation: score=0.42, threshold=0.8."},
+        )
+        assert result == (
+            "Previous evaluation: score=0.42, threshold=0.8."
+            "\n\nRewrite from classify."
+        )
+
+    def test_preserves_rendered_body_verbatim(self):
+        body = "Multi-line\nbody\nwith trailing newline\n"
+        result = prepend_eval_preamble(
+            body, {"_route_eval_preamble": "P"},
+        )
+        assert result.endswith(body)
 
 
 # ---------------------------------------------------------------------------
@@ -215,16 +251,18 @@ class TestApplyPreamble:
         result = executor.apply_preamble("Do the thing")
         assert result == "SHARED CONTEXT\n\nDo the thing"
 
-    def test_missing_preamble_returns_error_result(self, tmp_path):
+    def test_missing_preamble_raises(self, tmp_path):
+        # apply_preamble surfaces missing-file as a FileNotFoundError;
+        # _dispatch_prompt translates to ExecutionResult(success=False)
+        # at the boundary so the rest of the runtime sees a single
+        # return type from apply_preamble.
         executor = PromptExecutor(
             backend=MemoryBackend(),
             settings=Settings(preamble_file="missing.md"),
             workdir=str(tmp_path),
         )
-        result = executor.apply_preamble("body")
-        assert isinstance(result, ExecutionResult)
-        assert result.success is False
-        assert "Preamble file not found" in result.error
+        with pytest.raises(FileNotFoundError):
+            executor.apply_preamble("body")
 
     def test_preamble_resolved_from_constructor_workdir(self, tmp_path):
         """Preamble lives with the config (constructor workdir), not any

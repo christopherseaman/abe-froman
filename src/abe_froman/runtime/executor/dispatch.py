@@ -6,7 +6,11 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from abe_froman.runtime.executor.prompt import PromptExecutor, render_template
+from abe_froman.runtime.executor.prompt import (
+    PromptExecutor,
+    prepend_eval_preamble,
+    render_template,
+)
 from abe_froman.runtime.result import ExecutionResult, PromptBackend
 from abe_froman.runtime.url import _RemoteFetchCache, fetch_url, resolve_url
 from abe_froman.schema.models import Execute, Node, Settings
@@ -158,21 +162,15 @@ class DispatchExecutor:
                 error=f"Failed to fetch prompt {resolved!r}: {e}",
             )
 
-        applied = self._prompt_executor.apply_preamble(body, settings=settings)
-        if isinstance(applied, ExecutionResult):
-            return applied
+        try:
+            applied = self._prompt_executor.apply_preamble(body, settings=settings)
+        except FileNotFoundError as e:
+            return ExecutionResult(
+                success=False,
+                error=f"Preamble file not found: {e}",
+            )
         rendered = render_template(applied, context)
-
-        # Stage 5c: auto-prepend the eval preamble for inline-route
-        # goto targets that opted in via `include_eval: true`. The
-        # synthetic `_route_<id>` builds the string and writes it to
-        # state; build_context surfaces it as `_route_eval_preamble`.
-        # Concatenated AFTER Jinja render so author-template content
-        # is preserved verbatim — preamble appears as a system-style
-        # block before the body.
-        eval_preamble = context.get("_route_eval_preamble")
-        if eval_preamble:
-            rendered = f"{eval_preamble}\n\n{rendered}"
+        rendered = prepend_eval_preamble(rendered, context)
 
         # PromptParams.model overrides Node.model overrides Settings.default.
         # Explicit-None tests (not `or`) so an authored zero/empty value

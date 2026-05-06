@@ -34,6 +34,26 @@ def render_template(template: str, context: dict[str, Any]) -> str:
     return Template(template, keep_trailing_newline=True).render(**context)
 
 
+def prepend_eval_preamble(rendered: str, context: dict[str, Any]) -> str:
+    """Stage 5c: auto-prepend the eval preamble for inline-route goto
+    targets that opted in via ``include_eval: true``.
+
+    The synthetic ``_route_<id>`` writes the preamble string into state
+    when the matched case sets ``include_eval=True``; ``build_context``
+    surfaces it as ``_route_eval_preamble``. Concatenation happens
+    AFTER Jinja render so author-template content is preserved verbatim
+    — preamble appears as a system-style block before the body. No-op
+    when the key is absent or empty.
+
+    Pure helper — extracted so the auto-prepend behavior is unit-
+    testable without instrumenting the PromptBackend boundary.
+    """
+    eval_preamble = context.get("_route_eval_preamble")
+    if not eval_preamble:
+        return rendered
+    return f"{eval_preamble}\n\n{rendered}"
+
+
 class PromptExecutor:
     """Renders prompt templates, resolves models, delegates to a PromptBackend.
 
@@ -49,29 +69,24 @@ class PromptExecutor:
 
     def apply_preamble(
         self, template: str, *, settings: Settings | None = None,
-    ) -> str | ExecutionResult:
+    ) -> str:
         """Prepend ``settings.preamble_file`` if configured.
 
-        Returns the modified template, or an ExecutionResult on error.
-        Preamble lives with the config (base workdir), not in any per-node
-        worktree.
+        Returns the modified template (or the original if no preamble
+        is configured). Raises ``FileNotFoundError`` with the resolved
+        path if the configured preamble file is missing — caller
+        translates to ``ExecutionResult`` once. Preamble lives with the
+        config (base workdir), not in any per-node worktree.
 
-        ``settings`` (Phase 3 / scope-aware): when provided, used in place
-        of ``self._settings`` so a subgraph's preamble_file is honored
-        for nodes inside that subgraph.
+        ``settings`` (Phase 3 / scope-aware): when provided, used in
+        place of ``self._settings`` so a subgraph's preamble_file is
+        honored for nodes inside that subgraph.
         """
         s = settings or self._settings
         if not s.preamble_file:
             return template
         preamble_path = Path(self._workdir) / s.preamble_file
-        try:
-            preamble = preamble_path.read_text()
-        except FileNotFoundError:
-            return ExecutionResult(
-                success=False,
-                error=f"Preamble file not found: {preamble_path}",
-            )
-        return preamble + "\n\n" + template
+        return preamble_path.read_text() + "\n\n" + template
 
     async def execute_rendered(
         self,

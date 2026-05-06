@@ -6,6 +6,26 @@
   TECHNICAL.md is the architecture deep-dive (layers, pipeline, state
   model, invariants); CLAUDE.md is operator notes for Claude sessions.
 
+## High-priority post-Stage-5c audit findings (2026-05-06)
+
+Three parallel reviews (schema/compile, runtime, cli/tests/docs) ran
+right after Stage 5c landed. Trivial dead-code and stale-doc fixes
+already shipped in `e51d8b2`. Items 1 and 2 below are tackled in the
+follow-up; items 3+ are real cleanup wins held for explicit decisions.
+
+- [x] **(1) `_Capture` test backend violation** — _fixed._ Extracted `prepend_eval_preamble(rendered, context) -> str` as a pure helper in `runtime/executor/prompt.py`; unit-tested directly via `TestPrependEvalPreamble` (no backend involvement). The e2e test `tests/e2e/test_inline_route_with_eval.py` rewritten to assert on `state["_route_eval_preamble"]` and `state["_route_sender"]` only (real subprocess + real script gate; no `PromptBackend` instrumentation).
+- [x] **(2) `apply_preamble` sum-type return** — _fixed._ `PromptExecutor.apply_preamble` now raises `FileNotFoundError` for missing preamble files and returns plain `str` on the success path. `_dispatch_prompt` catches the exception once at the boundary and translates to `ExecutionResult(success=False, error=...)`.
+- [ ] **(3) `auto_detect_executor` silent fallthrough on `ANTHROPIC_API_KEY`** (`runtime/executor/backends/factory.py:91-124`) — user sets `ANTHROPIC_API_KEY` expecting a native Anthropic backend, gets DeepSeek/ACP/stub silently. Decide: warn on detect-but-no-backend, or block with remediation message. Coupled with the Anthropic native backend wishlist item.
+- [ ] **(4) `Route.validate_shape` allows `else_` without `cases:`** (`schema/models.py:82-99`) — a bare `Route(else_=RouteElse(goto="x"))` validates as a silent unconditional redirect, identical to `goto: x` but with confusing structure. Test `test_route_empty_cases_with_else_is_legal` documents it as legal. Decide: reject with helpful error ("use `goto:` for unconditional"), or document the form as first-class.
+- [ ] **(5) `EvaluationResult.score=0.0` for multi-dim evals** (`runtime/gates.py`) — when JSON omits top-level `"score"` and supplies only per-dim numbers, score defaults to 0.0. JSONL log events emit `score=0.0` even for passing multi-dim gates → operator confusion. Decide: derive from min/avg of dim scores, or stay 0 and document. Also: surface `score=min(dim_scores)` would mirror the "weakest-link" semantics of `dimensions[].min`.
+- [ ] **(6) `_PrefixingProxy.emit` duplicates `SubgraphLogger.emit` verbatim** (`runtime/logging.py:98-101, 124-127`) — copy-paste `if "node" in event: event = {**event, "node": f"{prefix}::{event['node']}"}`. Mechanical extraction to `_prefix_event(event, prefix)`.
+- [ ] **(7) `FanOut.enabled: false` (or omitted) silently no-ops the block** (`schema/models.py:186-191`) — author-error footgun. A present `fan_out: { template: ... }` block should be self-evidently active. Decide: drop the `enabled` field (treat any non-null `template` as active) or add a model_validator that errors when `template` is set with `enabled: false`. Breaking schema change either way.
+- [ ] **(8) `_dispatch_prompt` stub fallback when `_prompt_executor is None` is unreachable in production** (`runtime/executor/dispatch.py:147-151`) — coupled with the broader StubBackend removal already on this list. Leftover from the pre-auto-detect default.
+- [ ] **(9) `_make_final_fan_out_node` imports `_read_manifest` from `compile/graph.py` at function-body scope** (`compile/dynamic.py:321`) — cross-private-imports between sibling files. Extract `_read_manifest` to a shared helper (e.g., `compile/_manifest.py`) or pass as a parameter.
+- [ ] **(10) `Graph.validate_node_references` does 4–5 unrelated checks in one 56-line function** (`schema/models.py:257-313`) — duplicate IDs, self-deps, missing dep refs, route-target resolution, depends_on-vs-route. Each is a distinct concern. Decompose into separate `@model_validator` methods. Maintainability, not correctness.
+- [ ] **(11) Worktree `is_dir()` recheck in `ForemanExecutor._acquire_worktree`** (`runtime/foreman.py:76-83`) — YAGNI defense for an external-deletion race that can't happen during a single run. The "no auto cleanup" contract makes this a pessimistic guard. Drop the recheck or document.
+- [ ] **(12) `monkeypatch.setattr` on `factory.shutil.which` in `test_factory.py`** (lines 92–139) — internals patching to bypass the real `shutil.which`. Gray area in the no-mock policy. Decide: accept as orchestration-instrumentation exception (and document in `feedback_no_fake_backends.md`), or refactor `auto_detect_executor` to accept a `which_fn` parameter for injection.
+
 ## High-level Architectural
 
 - [ ] Possible to offload orchastration piece to lightweight local tool/package instead of writing from scratch, similar to how we are leveraging langgraph? Dagster? Airflow and Kestra too heavy.
