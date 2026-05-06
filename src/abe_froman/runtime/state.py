@@ -65,7 +65,6 @@ class WorkflowState(TypedDict):
     # auto-prepend the neutral eval preamble. Last-write-wins via
     # `_merge_updates`'s default overwrite path — no REDUCER entry.
     _route_sender: NotRequired[str]
-    _route_include_eval: NotRequired[bool]
     # Pre-built eval preamble string. The synthetic `_route_<id>`
     # builds this at dispatch time when `include_eval: true` is set on
     # the matched case AND the source node has an evaluation that

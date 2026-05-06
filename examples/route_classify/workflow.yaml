@@ -1,7 +1,7 @@
 name: "Route Classifier"
 version: "0.1.0"
 
-# Stage 5a / 5b demo — a route node dispatching on structured output.
+# Stage 5c demo — inline route node dispatching on structured output.
 # Pipeline:
 #   triage → decide (route) → one of {drop_spam, page_oncall, escalate, standard_queue}
 #
@@ -72,4 +72,6 @@ nodes:
 
 settings:
   default_model: "sonnet"
-  executor: "stub"
+  # No `executor:` here — script nodes (echo + .py) don't need a
+  # backend. Run via any executor; running as a subgraph from
+  # run_all_examples.yaml inherits the parent's `-e <backend>` flag.

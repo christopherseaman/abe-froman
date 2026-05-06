@@ -450,10 +450,9 @@ class TestStage5cInlineRoute:
 class TestRoundTripInRepoExamples:
     """Every checked-in example must reach a fixed point under migrate.
 
-    During the Stage 5b dual-mode window, in-repo YAMLs are still in
-    Stage-4 shape; the first migrate produces Stage-5b output, and a
-    second migrate on that output is idempotent. After Commit 7 (when
-    fixtures migrate), the first migrate also becomes idempotent.
+    All checked-in examples are at the post-Stage-5c fixed point, so
+    the first migrate is itself a no-op and a second pass is also
+    idempotent.
     """
 
     @pytest.mark.parametrize("rel_path", [
@@ -462,6 +461,8 @@ class TestRoundTripInRepoExamples:
         "examples/route_classify/workflow.yaml",
         "examples/jokes/workflow.yaml",
         "examples/absurd-paper/workflow.yaml",
+        "examples/pipeline_style/workflow.yaml",
+        "examples/run_all_examples.yaml",
     ])
     def test_in_repo_yaml_reaches_fixed_point(self, rel_path):
         repo_root = Path(__file__).resolve().parents[3]

@@ -99,12 +99,6 @@ def build_safe_funcs(state: WorkflowState) -> dict[str, Any]:
     }
 
 
-# Backwards-compatible alias kept for callers that imported the old
-# constant directly. Returns the static base set; callers wanting
-# eval helpers should use ``build_safe_funcs(state)`` instead.
-_SAFE_FUNCS = _BASE_SAFE_FUNCS
-
-
 def evaluate_case(
     when: str, namespace: dict[str, Any], functions: dict[str, Any] | None = None,
 ) -> bool:

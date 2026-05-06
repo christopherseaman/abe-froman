@@ -65,10 +65,10 @@ Three-layer split (enforced by `tests/architecture/test_layers.py`):
 
 **`src/abe_froman/schema/`** — Pydantic models (no langgraph imports).
 - `models.py` — `Graph`, `Node`, `Settings`, `Execute`, `Evaluation`,
-  `RouteCase`, `OutputContract`, `FanOut`, `FanOutTemplate`,
-  `FanOutFinalNode`.
-- `params.py` — `PromptParams`, `SubgraphParams`, `ScriptParams`,
-  `ExecParams` + `coerce_params()` resolver.
+  `RouteCase`, `RouteElse`, `Route`, `OutputContract`, `FanOut`,
+  `FanOutTemplate`, `FanOutFinalNode`.
+- `params.py` — `PromptParams`, `SubgraphParams`,
+  `SubprocessParams` + `coerce_params()` resolver.
 
 **`src/abe_froman/compile/`** — YAML → LangGraph (no cli imports).
 - `graph.py` — `build_workflow_graph()`, edge wiring, evaluation

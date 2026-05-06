@@ -19,7 +19,6 @@ import pytest
 
 from abe_froman.compile.graph import (
     _is_route,
-    _is_subgraph_ref,
     build_workflow_graph,
 )
 from abe_froman.compile.subgraph import SubgraphCycleError, node_subgraph_path
@@ -40,21 +39,21 @@ _ECHO = shutil.which("echo") or "/bin/echo"
 class TestSubgraphRefDetection:
     def test_execute_yaml_recognized(self):
         n = Node(id="a", name="A", execute=Execute(url="sub.yaml"))
-        assert _is_subgraph_ref(n) is True
+        assert (node_subgraph_path(n) is not None) is True
         assert node_subgraph_path(n) == "sub.yaml"
 
     def test_execute_yml_recognized(self):
         n = Node(id="a", name="A", execute=Execute(url="sub.yml"))
-        assert _is_subgraph_ref(n) is True
+        assert (node_subgraph_path(n) is not None) is True
 
     def test_execute_md_not_subgraph(self):
         n = Node(id="a", name="A", execute=Execute(url="prompt.md"))
-        assert _is_subgraph_ref(n) is False
+        assert (node_subgraph_path(n) is not None) is False
         assert node_subgraph_path(n) is None
 
     def test_no_execute_not_subgraph(self):
         n = Node(id="a", name="A")
-        assert _is_subgraph_ref(n) is False
+        assert (node_subgraph_path(n) is not None) is False
 
 
 class TestRouteDetection:

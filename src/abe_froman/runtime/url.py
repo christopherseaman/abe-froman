@@ -146,8 +146,11 @@ def fetch_url(
       3. allow_remote_scripts (extra opt-in for .py/.js/.sh/etc).
       4. max_remote_fetch_bytes (size cap).
       5. Cache lookup; on miss, urlopen with url_headers.
+
+    Precondition: ``resolved_url`` is already in canonical form (from
+    ``resolve_url``); callers don't need to re-canonicalize.
     """
-    canon = canonical(resolved_url)
+    canon = resolved_url
     if canon in cache.bodies:
         return cache.bodies[canon]
 

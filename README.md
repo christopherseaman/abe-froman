@@ -532,7 +532,7 @@ Architecture details, layer rules, and key invariants live in `TECHNICAL.md`. Op
 Test invariants:
 
 - No mocks of external systems. Real subprocess for command nodes, real `git worktree add` for foreman tests, real `AsyncSqliteSaver` for resume tests, real `claude-code-acp` for ACP tests.
-- No `PromptBackend` mocks. `MockExecutor` is a custom test double implementing the `PhaseExecutor` Protocol — not `unittest.mock`.
+- No `PromptBackend` mocks. `MockExecutor` is a custom test double implementing the `NodeExecutor` Protocol — not `unittest.mock`.
 - Tests assert concrete output values, not just absence of exceptions.
 - ACP tests require `@zed-industries/claude-code-acp` installed globally.
 

@@ -39,5 +39,6 @@ nodes:
       params:
         args: ["[step_three] after {{sender_id}}"]
 
-settings:
-  executor: "stub"
+settings: {}
+# No `executor:` — script-only workflow runs under any backend
+# (or none, when invoked as a subgraph from run_all_examples.yaml).

@@ -40,13 +40,9 @@ def _resolve_goto(target: str | list[str]) -> str | list[str]:
     return END if target == "__end__" else target
 
 
-# Subgraph-ref + route detection helpers. `node_subgraph_path` lives
-# in compile/subgraph.py (single source of truth); _is_route is local
-# since route semantics are compile-time-only.
-
-def _is_subgraph_ref(node: Node) -> bool:
-    return node_subgraph_path(node) is not None
-
+# Route detection helpers — local since route semantics are
+# compile-time-only. Subgraph detection uses
+# `compile/subgraph.py::node_subgraph_path` directly.
 
 def _has_inline_route(node: Node) -> bool:
     """Stage 5c inline route: `Node.route` block. Coexists with execute,
@@ -104,7 +100,6 @@ def _make_inline_route_node(node: Node):
     Returns Command(update={...}, goto=resolved). Update includes:
 
     - ``_route_sender``: source node id (always).
-    - ``_route_include_eval``: bool flag from the matched case.
     - ``_route_eval_preamble``: pre-built preamble string. Populated
       only when ``include_eval=True`` on the matched case AND the
       source node has ``evaluation:`` AND a result is recorded. Empty
@@ -115,27 +110,6 @@ def _make_inline_route_node(node: Node):
     assert _has_inline_route(node)
     route = node.route
     sender_id = node.id
-
-    def _emit(target: Any, include_eval: bool) -> Command:
-        preamble = ""
-        if include_eval and node.evaluation is not None:
-            # Built lazily here (not at compile) because the eval
-            # result is in state, set by `_eval_<id>` before this
-            # dispatcher fires. Fan-out children would be in
-            # `state.evaluations[child_id]` — but inline route on
-            # fan-out children is forbidden by the dynamic.py
-            # composition rules, so this only ever sees top-level
-            # evals.
-            pass  # filled below — _emit is closed over state in node_fn
-
-        return Command(
-            update={
-                "_route_sender": sender_id,
-                "_route_include_eval": include_eval,
-                "_route_eval_preamble": preamble,
-            },
-            goto=_resolve_goto(target),
-        )
 
     async def node_fn(state: WorkflowState) -> Command:
         from abe_froman.compile.route import build_safe_funcs
@@ -155,7 +129,6 @@ def _make_inline_route_node(node: Node):
             return Command(
                 update={
                     "_route_sender": sender_id,
-                    "_route_include_eval": include_eval,
                     "_route_eval_preamble": _build_preamble(include_eval),
                 },
                 goto=_resolve_goto(target),
@@ -359,7 +332,8 @@ def build_workflow_graph(
     `_depth+1` to enforce `settings.max_subgraph_depth` and propagate
     the base directory so nested config: paths resolve correctly.
     """
-    from pathlib import Path
+    # Deferred import to break the compile/subgraph ↔ compile/graph
+    # circularity (subgraph imports build_workflow_graph via compile_fn).
     from abe_froman.compile.subgraph import (
         SubgraphDepthError,
         detect_config_cycle,
@@ -403,7 +377,7 @@ def build_workflow_graph(
             dynamic_fan_out_ids.add(node.id)
             if node.fan_out.template.evaluation:
                 gated_fan_out_template_ids.add(node.id)
-        if _is_subgraph_ref(node):
+        if node_subgraph_path(node) is not None:
             subgraph_node_ids.add(node.id)
             # Cycle detection happens once at top-level — nested calls
             # see _depth>0 so they skip this and rely on the depth cap.
@@ -461,7 +435,7 @@ def build_workflow_graph(
     # Synthetic _route_<id> dispatchers for execute+route nodes.
     # They fire after the execute body (and after eval, if present)
     # settles, resolving the route and emitting Command(goto=...) with
-    # _route_sender / _route_include_eval state updates.
+    # _route_sender / _route_eval_preamble state updates.
     for node_id in synthetic_route_ids:
         node = node_map[node_id]
         builder.add_node(f"_route_{node_id}", _make_inline_route_node(node))

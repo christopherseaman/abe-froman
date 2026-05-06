@@ -3,6 +3,69 @@
 All notable changes to abe-froman are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased] — Stage 5c: Inline Route
+
+### Added
+
+- **`Node.route: Route | None`** as a first-class block alongside
+  `execute:` / `evaluation:` / `fan_out:`. Two shapes: `goto:` (str
+  or list[str]) for unconditional dispatch, or `cases: + else:` for a
+  first-match conditional ladder. List-valued goto fans out to all
+  targets in the next super-step via `Command(goto=[...])`. Replaces
+  the standalone `Execute.type="route"` form (removed; `migrate.py`
+  auto-lifts legacy YAML).
+- **Per-case `include_eval: bool = False`** flag (also on `goto:`
+  shorthand and structured `else:`). When true, the goto target's
+  prompt receives a neutral, structurally-formatted eval-result
+  preamble auto-prepended before the rendered template body. The
+  same builder serves same-node retries and `include_eval`-true gotos
+  via `runtime/gates.py::build_eval_preamble` (no "failed" framing).
+- **`EvaluationResult.reasons: dict[str, str]`** — gate parser
+  captures `<dim>_reason` JSON fields as per-dimension string
+  rationale, surfaced in the preamble alongside per-dimension scores.
+- **Sender bindings in prompt context**: when an inline-route hop
+  fires, the goto target's Jinja context binds `{{sender_id}}`,
+  `{{sender}}`, `{{sender_structured}}`, `{{sender_worktree}}`
+  (always-on identity vars). Eval feedback flows via the auto-
+  prepended preamble, not via Jinja vars.
+- **Cross-cutting `{{evals}}` global** in every prompt template —
+  `evals[node_id]` returns the latest evaluation result dict.
+- **Route namespace helpers** for `when:` predicates: `evals[id]`,
+  `passed(id)`, `score(id)`, `scores(id)` close over state for
+  ergonomic single-line predicate authoring.
+- **State fields**: `_route_sender: NotRequired[str]` and
+  `_route_eval_preamble: NotRequired[str]` on `WorkflowState`
+  (last-write-wins via `_merge_updates`'s default; pattern parallels
+  `_fan_out_item`).
+
+### Changed
+
+- **`inject_retry_reason`** delegates to `build_eval_preamble`. Retry
+  preamble is now neutral ("Attempt N of M" footer instead of
+  "Attempt N failed evaluation"); `blocking: false` settled scores
+  below threshold are no longer framed as failures.
+- **`Execute` shape simplified**: removed `type="route"`,
+  `Execute.cases`, `Execute.else_`. Execute is now URL mode + join
+  sentinel. Standalone routes live as `Node` with `route:` and no
+  `execute:` block.
+
+### Removed
+
+- `Execute.type="route"` (hard cutover; `migrate.py` rewrites legacy
+  YAML).
+- `_make_route_node` / `_has_legacy_route` helpers in `compile/graph.py`.
+- Route-as-execute escape in the runtime dispatcher.
+
+### Migrated
+
+- `examples/route_classify/workflow.yaml` (decide node → inline route).
+- All route-using tests converted to `Route` + `Node.route`
+  constructors. ~30 redundant test cases dropped (Execute.type=route
+  is no longer constructible).
+- `examples/pipeline_style/workflow.yaml` recreated as a 3-node linear
+  chain in `route: { goto: ... }` style — replaces the
+  reverted-and-superseded `next:` field experiment.
+
 ## [Unreleased] — Post-Stage-5b: defaults, scope, cleanup
 
 ### Added
@@ -145,8 +208,7 @@ trip preserves comments, anchors, and `{{templated}}` strings.
 
 - `PromptParams(model?, agent?, timeout?)`,
   `SubgraphParams(inputs, outputs)`,
-  `ScriptParams(args, env)`,
-  `ExecParams(args, env)`. All set `extra="forbid"` so typos like
+  `SubprocessParams(args, env)`. All set `extra="forbid"` so typos like
   `args:` on a prompt URL surface as ValidationError at schema parse
   time, not runtime.
 - `params_for_url(resolved_url) -> type[BaseModel]` resolver picks the

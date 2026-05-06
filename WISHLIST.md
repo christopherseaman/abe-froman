@@ -1,8 +1,10 @@
 # Wishlist
 
-- [ ] **Documentation**
-    - README with project overview, usage, and functionality
-    - TECHNICAL.md with layout/breakdown of implementation
+- [x] **Documentation** — _landed, post-Stage-5b._ README,
+  TECHNICAL.md, and CLAUDE.md split by audience: README is the
+  user/contributor entry point (install, quickstart, schema, examples);
+  TECHNICAL.md is the architecture deep-dive (layers, pipeline, state
+  model, invariants); CLAUDE.md is operator notes for Claude sessions.
 
 ## High-level Architectural
 

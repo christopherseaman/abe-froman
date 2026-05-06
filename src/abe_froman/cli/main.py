@@ -91,6 +91,12 @@ def migrate(config_file: str, dry_run: bool, in_place: bool):
     """
     from abe_froman.cli.migrate import migrate_file
 
+    if dry_run and in_place:
+        raise click.UsageError(
+            "--dry-run and --in-place are mutually exclusive: "
+            "--dry-run prints to stdout, --in-place rewrites the file"
+        )
+
     path = Path(config_file)
     rewritten, changes = migrate_file(path, in_place=in_place, dry_run=dry_run)
 
@@ -149,6 +155,7 @@ async def _run_async(
             "version": config.version,
         })
 
+    result: dict = {}
     try:
         result = await _execute_workflow(
             config, workdir, dry_run, executor_type, resume,
@@ -157,14 +164,13 @@ async def _run_async(
         return result
     finally:
         if logger is not None:
-            # `result` may be undefined if _execute_workflow raised before
-            # returning; emit a workflow_end with whatever the last state
-            # looked like (zeros if nothing completed). The detailed error
-            # surfaces via Click already.
+            # `result` stays {} if _execute_workflow raised before
+            # returning; workflow_end then logs zeros. The detailed
+            # error surfaces via Click already.
             logger.emit({
                 "event": "workflow_end",
-                "completed": len(locals().get("result", {}).get("completed_nodes", [])),
-                "failed": len(locals().get("result", {}).get("failed_nodes", [])),
+                "completed": len(result.get("completed_nodes", [])),
+                "failed": len(result.get("failed_nodes", [])),
             })
             logger.close()
 
