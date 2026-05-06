@@ -285,6 +285,61 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
 
 - [ ] **`RetryPolicy` for transport-level retries** — layer `RetryPolicy(max_attempts=N, retry_on=OverloadError)` on executor-invoking nodes. Complements our eval-score-driven semantic retries; separates infrastructure flakes (rate limits, ACP drops) from content judgment. Closely related to "LLM gates inherit PromptBackend flakiness" above — fixes the same class of bug from a different angle.
 
+## Stage 5c — inline route (delivered + deferred)
+
+- [x] **Inline `Node.route` forward-edge dispatch** — _landed,
+  Stage 5c (branch `feat/inline-route`)._ `Route` is a first-class
+  block on `Node`; goto-shorthand (`goto: <str | list[str]>`) and
+  conditional ladder (`cases: + else:`) shapes. Compiles to
+  `Command(goto=...)` (scalar) or `Command(goto=[...])` (list →
+  static fan-out via LangGraph 1.x native multi-edge). Standalone
+  form (route + no execute) replaces the legacy
+  `execute: { type: route, ... }`; synthetic post-execute form
+  (route + execute) registers a `_route_<id>` dispatcher fired
+  after the execute body (and eval, if present). `migrate.py`
+  lifts old YAML automatically. `EvaluationResult.reasons` (per-
+  dimension `<dim>_reason` capture) and `build_eval_preamble`
+  (neutral structural formatter, no "failed" framing) live in
+  `runtime/gates.py` and feed both the same-node retry path
+  (via `inject_retry_reason` → `{{_retry_reason}}`) and the
+  inline-route goto path (via synthetic dispatcher →
+  `state._route_eval_preamble` → `_dispatch_prompt` auto-prepend).
+  Sender bindings (`{{sender_id}}`, `{{sender}}`,
+  `{{sender_structured}}`, `{{sender_worktree}}`) and the
+  `{{evals}}` always-on global are surfaced by `build_context`.
+  Route namespace adds `evals[id]`, `passed(id)`, `score(id)`,
+  `scores(id)` helpers (`compile/route.py::build_safe_funcs`).
+  760 tests green; example `examples/pipeline_style/workflow.yaml`
+  demonstrates pipeline-style forward-edge authoring.
+
+### Deferred from Stage 5c
+
+- [ ] **Per-case `params.inputs` projection** — let a route case
+  shape the goto target's input bindings beyond the always-on
+  sender vars. Symmetric with subgraph `params.inputs`. Today
+  every goto target sees the same sender/eval bindings.
+
+- [ ] **Route inside fan-out child template** — currently forbidden
+  by the `compile/dynamic.py` composition rules (per-Send branch
+  loses `_fan_out_item` at any conditional-edge boundary).
+  Resolving would require either (a) inline route dispatch within
+  the per-Send body without a graph-level edge crossing, or (b)
+  per-branch state-preservation across the boundary.
+
+- [ ] **`passes:` / `fails:` shorthand on Evaluation** — declarative
+  ladder form for the common "if pass go here, if fail go there"
+  shape, sugar over an inline `route:` with `passed(id)` predicates.
+  Lower priority — the helper-function form is already concise.
+
+- [ ] **`_route_sender` cleanup question** — last-write-wins state
+  field. Templates that reference `{{sender_id}}` should guard with
+  `{% if sender_id %}` if they could be reached via static edge AFTER
+  an inline-route hop earlier in the same workflow (rare topology).
+  Open question: scope `_route_sender` to the goto target only
+  (clear after consumption), or document the guard as the canonical
+  pattern? Current state: no auto-clear; the field persists until
+  another Command emission overwrites it.
+
 ## Stage 5a hooks (deferred from the route-node design)
 
 These are forward-looking items surfaced during Stage 5a planning;

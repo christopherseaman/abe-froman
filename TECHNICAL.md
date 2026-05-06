@@ -104,6 +104,25 @@ All nodes consume and produce `WorkflowState` (TypedDict). Fields:
   item.
 - `node_inputs: dict[str, str]` (NotRequired) — rendered subgraph
   `inputs:` projected by `make_subgraph_node` before invocation.
+- `_route_sender: str` (NotRequired) — set by an inline-route node's
+  `_route_<id>` synthetic node when it emits `Command(goto=...)`;
+  read by the goto target's `build_context` to bind `{{sender_id}}`,
+  `{{sender}}`, `{{sender_structured}}`, `{{sender_worktree}}`.
+- `_route_include_eval: bool` (NotRequired) — flag from the matched
+  case (or the goto-shorthand). Diagnostic; the runtime uses
+  `_route_eval_preamble` directly to decide whether to prepend.
+- `_route_eval_preamble: str` (NotRequired) — pre-built preamble
+  string. The synthetic `_route_<id>` builds it at dispatch time
+  when `include_eval: true` AND the source node has an evaluation
+  with a recorded result; otherwise empty/absent. Read by
+  `_dispatch_prompt` (via `build_context`) and concatenated AHEAD of
+  the rendered prompt body — see Section 5.
+
+The three `_route_*` fields share a pattern with `_fan_out_item`:
+`NotRequired[...]`, last-write-wins via the dict-update default in
+`_merge_updates`, no entry in the `REDUCERS` table. Each Command
+emission overwrites the prior value (empty string when
+`include_eval` is off, so stale preambles don't leak across hops).
 
 The `REDUCERS` table at `runtime/state.py:30-40` is the single source
 of truth for parallel super-step merging. Reducer parity is
@@ -121,14 +140,70 @@ wires plain + conditional edges.
 Helpers: `_find_terminal_nodes` (nothing-depends-on set; wires to
 `END`), `_detect_cycles` (DFS coloring on `depends_on`),
 `_is_subgraph_ref` (delegates to
-`compile/subgraph.py::node_subgraph_path`), `_is_route`,
-`_make_route_node` (async fn returning `Command(goto=)`),
+`compile/subgraph.py::node_subgraph_path`), `_has_inline_route`
+(`Node.route is not None`), `_is_route` (standalone: route + no
+execute), `_has_synthetic_route` (paired: route + execute),
+`_collect_route_targets` (every id reachable from a node's route
+block; used to skip the START fallback edge for goto targets),
+`_make_inline_route_node` (async fn returning `Command(update=...,
+goto=resolved)`; see Inline route compile wiring below),
+`_resolve_goto` (normalizes `__end__` → `END`; supports str OR
+list-valued goto for static fan-out via `Command(goto=[...])`),
 `_make_evaluation_router` (state-reader returning
 `END`/`pass_targets`/retry-id), `_register_evaluation_node` (adds
 `_eval_<id>`), `_wire_evaluation_pair` (plain `exec → _eval_exec`
 plus conditional retry/pass/fail), `_make_dynamic_router` (emits
 `Send(template_id, {**state, _fan_out_item: item})` per manifest
 item).
+
+#### Inline route compile wiring (Stage 5c)
+
+A node with `Node.route` set takes one of two compile shapes:
+
+1. **Standalone** — `route:` and no `execute:`. Registered under
+   `node.id` with the body returned by `_make_inline_route_node`.
+   Runs as the node itself; emits `Command(goto=...)`.
+2. **Synthetic post-execute** — `execute:` and `route:` on the
+   same node. The execute body is registered under `node.id` as
+   usual; in addition, `_make_inline_route_node(node)` is
+   registered under `_route_<id>`. The dispatcher fires after the
+   execute body (and after `_eval_<id>`, if eval is present)
+   settles. For gated nodes the eval pair's pass target is
+   `_route_<id>` (see `_wire_evaluation_pair`); for ungated
+   execute+route nodes a plain edge wires `node.id → _route_<id>`.
+
+`_collect_route_targets` builds `route_goto_targets: set[str]`,
+the union of every goto / case-goto / else-goto across the graph.
+Targets in this set do NOT receive a `START → node` fallback edge
+(would unconditionally fire alongside the Command-driven path).
+Inline-route source nodes themselves are also excluded from
+terminal `node → END` wiring — their exit is via `Command(goto=)`,
+and adding an `END` edge would create a parallel path.
+
+`_resolve_goto` handles both scalar and list-valued goto. List
+form returns `[END if t == "__end__" else t for t in target]`,
+which `Command(goto=[...])` dispatches as concurrent edges in the
+next super-step (LangGraph 1.x native multi-edge semantics).
+
+**Eval → route handoff for synthetic dispatch.** When a node has
+both `evaluation:` AND `route:`, the evaluation router's pass
+target list is `[f"_route_{node.id}"]`, not the depends_on
+dependents (which are forbidden for route-bearing nodes). The
+synthetic dispatcher then resolves the route and emits
+`Command(goto=...)` to the actual case target. A side-effect: the
+`_route_<id>` node, before emitting Command, reads
+`state.evaluations[node.id][-1].result` and (when the matched
+case has `include_eval: true`) builds the preamble via
+`runtime.gates.build_eval_preamble`. Closure captures `node.evaluation`
+so threshold + dimensions are visible to the formatter.
+
+**Reverse-map for sender bindings.** A `route_senders` reverse map
+is not maintained explicitly; instead, the source id is captured
+in closure on `_make_inline_route_node(node)` (`sender_id =
+node.id`) and embedded in every `Command.update` payload as
+`_route_sender`. The goto target reads it from state at
+`build_context` time. List-valued goto puts the same sender id in
+state for every concurrent target.
 
 ### `compile/nodes.py`
 
@@ -225,13 +300,22 @@ URL extension/scheme → handler. The dispatch table:
 | `*.yaml`, `*.yml` (file://) | — | error (compile-time only) | — |
 | any | `mode: subgraph` | error (compile-time only) | — |
 | `execute.type == "join"` | — | no-op `ExecutionResult(success=True, output="")` | — |
-| `execute.type == "route"` | — | error (compile-time only) | — |
 
 Per-mode params validation flows through
 `schema.params.coerce_params(resolved, raw, mode)` so a typo like
 `arg:` on a prompt URL surfaces as a clear `ValidationError` at
 schema parse time. Remote URL gates and per-compile fetch caching go
 through `runtime.url.fetch_url(resolved, settings, cache)`.
+
+`_dispatch_prompt` reads `_route_eval_preamble` from the rendered
+context (surfaced by `compile/nodes.py::build_context`). When the
+key is present and non-empty, the preamble is concatenated AHEAD of
+the rendered template body — author content is preserved verbatim;
+the preamble appears as a system-style block before it. This is the
+inline-route `include_eval: true` path; the same builder
+(`runtime/gates.py::build_eval_preamble`) feeds the retry path,
+which routes through `compile/nodes.py::inject_retry_reason`
+populating `{{_retry_reason}}` instead. See Section 11.7.
 
 ### `runtime/executor/prompt.py::PromptExecutor`
 
@@ -285,12 +369,30 @@ send_prompt(prompt, model, workdir, timeout)` and `async close()`.
   pre-create `base_directory`; return list of missing required
   files (empty = pass).
 
-## 6. Stage 5b unified Execute shape
+## 6. Stage 5b/5c Execute + Route shapes
 
-`Execute` at `schema/models.py:19` carries three orthogonal shapes;
-exactly one must be active per node (validated by `validate_shape`):
-URL mode (`url:` set, optional `mode:` override), join sentinel
-(`type: join`), route ladder (`type: route` + `cases:` + `else:`).
+`Execute` carries two orthogonal shapes; exactly one must be active
+per node when present (validated by `validate_shape`): URL mode
+(`url:` set, optional `mode:` override) or join sentinel
+(`type: join`). Forward-edge dispatch lives on the orthogonal
+`Node.route` block (`Route` model in `schema/models.py`):
+
+- **Goto shorthand** — `goto: <str | list[str]>` plus optional
+  `include_eval: bool`. Compiles to `Command(goto=...)` from the
+  source node, no predicate evaluation.
+- **Conditional ladder** — `cases: [{when, goto, include_eval}]`
+  plus `else: <RouteElse>`. `else:` accepts a bare string/list
+  (auto-promoted to `RouteElse(goto=..., include_eval=False)`) or
+  a structured `RouteElse` for `include_eval` control.
+
+A node with `route:` and no `execute:` is a standalone router
+(replaces the legacy `execute: { type: route, cases, else }` form;
+`migrate.py::_migrate_legacy_route_to_inline` lifts old YAML
+automatically). A node with both `execute:` and `route:` runs the
+execute body (and eval, if present), then a synthetic
+`_route_<id>` dispatcher resolves the route. Inline-route nodes
+are leaves in the `depends_on` DAG (validated by
+`Graph.validate_node_references`).
 
 ### URL resolution (`runtime/url.py::resolve_url`)
 
@@ -489,6 +591,37 @@ skip cycle detection and rely on `settings.max_subgraph_depth`
 `build_workflow_graph` call shares its parent's cache via the same
 executor instance — same canonical URL fetched once across all
 subgraph compilations. Fresh CLI invocation = fresh cache.
+
+### 11.7. Asymmetric retry vs goto eval-preamble plumbing
+
+The same builder (`runtime/gates.py::build_eval_preamble`) feeds
+both same-node retry attempts and inline-route goto targets that
+opt in via `include_eval: true`. The two paths reach the prompt
+through different mechanisms:
+
+- **Retry** — `compile/nodes.py::inject_retry_reason` reads
+  `state.evaluations[<id>][-1].result`, calls `build_eval_preamble`
+  with `attempt`+`total_attempts`, and stuffs the rendered string
+  into `context["_retry_reason"]`. The author references
+  `{{_retry_reason}}` in the template body where the preamble
+  should appear. Footer: `Attempt N of M.`
+- **Goto + `include_eval: true`** — synthetic `_route_<id>` builds
+  the preamble and writes it to `state._route_eval_preamble` as
+  part of the `Command.update` payload (with `attempt=None`,
+  `total_attempts=None`, so no footer). `_dispatch_prompt`
+  auto-prepends the string ahead of the rendered prompt body —
+  no template syntax involvement.
+
+Why asymmetric: retry is "iterate on this task" (the author wrote
+`{{_retry_reason}}` into the same prompt because they expect the
+feedback to inform the same content). Goto is "perform a new task
+with carried-over context" (the next prompt is for a different
+purpose; the preamble is system-style scaffolding ahead of the
+authored body). Same builder, same neutral wording (no "failed"
+framing — see `build_eval_preamble` docstring), different surface
+to the author. `build_eval_preamble` lives in `runtime/gates.py`
+so the compile-side route dispatcher can import it without
+violating the layer split (compile → runtime allowed; reverse not).
 
 ## 12. Where to start reading
 

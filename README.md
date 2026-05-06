@@ -4,7 +4,7 @@ Workflow orchestrator using LangGraph for graph topology and Claude / DeepSeek /
 
 ## What it is
 
-abe-froman compiles a YAML workflow into a LangGraph `StateGraph`. Each node executes one of: a prompt against an LLM backend, an interpreted script (`.py` / `.js` / `.ts` / `.sh`), a binary, a `join` topology marker, a `route` case ladder, or a recursive subgraph reference. The shape of every executable node is the unified Stage 5b `execute: { url, params }` block — the URL extension (or `mode:` override) drives the dispatcher.
+abe-froman compiles a YAML workflow into a LangGraph `StateGraph`. Each node executes one of: a prompt against an LLM backend, an interpreted script (`.py` / `.js` / `.ts` / `.sh`), a binary, a `join` topology marker, or a recursive subgraph reference. The shape of every executable node is the unified Stage 5b `execute: { url, params }` block — the URL extension (or `mode:` override) drives the dispatcher. Forward-edge dispatch lives on the orthogonal Stage 5c `route:` block, which can stand alone (a pure dispatcher) or pair with `execute:` on the same node.
 
 Quality gates wrap each node. A gate is a script (`.py` / `.js`) reading the node output on stdin, or an `.md` Jinja prompt evaluated by the node's LLM backend. Gate failures retry the node with `{{_retry_reason}}` injected. Subgraphs are recursive — the same YAML schema is runnable standalone via `abe-froman run` or as a node reference from another graph. Fan-out spawns a `Send` per manifest item, optionally backed by a per-Send subgraph.
 
@@ -182,16 +182,17 @@ All defaults in the table below are pulled from `Settings(BaseModel)` in `src/ab
 | `name`            | `str`          | —       | Human-readable label. |
 | `description`     | `str \| None`  | `None`  | Free text. |
 | `model`           | `str \| None`  | `None`  | Per-node model override. |
-| `depends_on`      | `list[str]`    | `[]`    | Static DAG edges. Cannot reference a `route` node. |
+| `depends_on`      | `list[str]`    | `[]`    | Static DAG edges. Cannot reference an inline-route node (validated at compile time). |
 | `timeout`         | `float \| None`| `None`  | Per-node timeout (seconds). Falls back to `settings.default_timeout`. |
-| `execute`         | `Execute \| None` | `None` | Execution descriptor (see below). Omit + add `evaluation:` for gate-only-by-elision. |
+| `execute`         | `Execute \| None` | `None` | Execution descriptor (see below). Omit + add `evaluation:` for gate-only-by-elision; omit + add `route:` for a standalone router. |
 | `evaluation`      | `Evaluation \| None` | `None` | Quality gate. |
 | `output_contract` | `OutputContract \| None` | `None` | Required-files check after execution. |
 | `fan_out`         | `FanOut \| None` | `None` | Manifest-driven `Send` fan-out. |
+| `route`           | `Route \| None` | `None` | Stage 5c inline routing block. `goto:` shorthand or `cases:`/`else:` ladder; coexists with `execute:` (synthetic post-execute dispatcher) or stands alone (pure router). See "Inline routing" below. |
 
 ### Execute
 
-Exactly one of `{url, type=join, type=route}` must be set. Validation runs in `Execute.validate_shape` and surfaces typos as a Pydantic `ValidationError`.
+Exactly one of `{url, type=join}` must be set. Validation runs in `Execute.validate_shape` and surfaces typos as a Pydantic `ValidationError`. Forward-edge dispatch (`cases:` / `goto:` / `else:`) lives on the orthogonal `Node.route` block — see "Inline routing" below.
 
 URL mode:
 
@@ -209,18 +210,84 @@ execute:
   type: join
 ```
 
-Route ladder:
+### Inline routing
+
+Stage 5c. `Node.route` is a first-class forward-edge dispatcher: every node can declare where flow goes next, in addition to (or instead of) what it executes. Two shapes:
+
+**Goto shorthand** — unconditional dispatch:
 
 ```yaml
-execute:
-  type: route
-  cases:
-    - when: "judge['score'] >= 0.8"
-      goto: ship
-    - when: "len(history['judge']) >= 3"
-      goto: __end__
-  else: produce
+- id: research
+  execute:
+    url: prompts/research.md
+  route:
+    goto: write             # str → Command(goto="write")
 ```
+
+```yaml
+- id: research
+  execute:
+    url: prompts/research.md
+  route:
+    goto: [draft_a, draft_b]   # list → Command(goto=[...])
+                                # static fan-out via LangGraph 1.x native multi-edge
+```
+
+**Conditional ladder** — first-match-wins predicate:
+
+```yaml
+- id: decide
+  depends_on: [judge]
+  route:
+    cases:
+      - when: "passed('judge') and score('judge') >= 0.8"
+        goto: ship
+      - when: "len(history['judge']) >= 3"
+        goto: __end__
+    else: produce
+```
+
+`else:` accepts a bare string/list (auto-promoted) or a structured `{goto, include_eval}` for `include_eval` control.
+
+**`include_eval`** opts the goto target into receiving the same neutral eval-result preamble that retry attempts get. Default `false` — success paths typically perform a different task than the previous node, so the previous eval's feedback is noise unless explicitly wanted. Set per-case (or on the goto-shorthand) to opt in:
+
+```yaml
+route:
+  cases:
+    - when: "score('judge') >= 0.8"
+      goto: ship
+      # success path — no preamble
+    - when: "len(history['judge']) >= 3"
+      goto: escalate
+      include_eval: true
+      # escalation path — carry forward the eval preamble
+  else:
+    goto: produce
+    include_eval: true
+```
+
+When `include_eval: true` fires, the goto target's prompt gets the eval preamble auto-prepended — no template syntax needed. This sits ahead of the rendered template body as a system-style block.
+
+**Standalone vs synthetic dispatch.** A node with `route:` and no `execute:` is a standalone router (the form previously written as `execute: { type: route, cases, else }`). A node with both `execute:` and `route:` runs the execute body (and eval, if present), then a synthetic `_route_<id>` dispatcher fires post-eval and resolves the route. Old YAML using `execute: { type: route, ... }` is auto-migrated to inline `route:` by `abe-froman migrate` (idempotent).
+
+**LangGraph forms produced.** A scalar `goto:` compiles to `Command(goto="target")`; a list `goto: [a, b]` compiles to `Command(goto=["a", "b"])` — LangGraph 1.x dispatches each target as its own concurrent edge in the next super-step.
+
+**`__end__`** halts the workflow (maps to LangGraph `END`). All other goto values must resolve to a real node id; the schema validator rejects unknown targets at compile time. Inline-route nodes are leaves in the depends_on DAG — a node cannot `depends_on:` a node with `route:` (would double-trigger via Command + plain edge).
+
+**Route namespace** for case predicates (built by `compile/route.py::build_route_namespace` + `build_safe_funcs`):
+
+| Name | Type | Effect |
+|------|------|--------|
+| `<dep_id>` | structured-or-raw | Each dep's `node_structured_outputs[dep]` if present, else raw output. |
+| `history` | `dict[str, list[dict]]` | Full `state.evaluations` map. |
+| `state` | `dict` | Full state dict. |
+| `evals` | `dict[str, dict]` | `evals[node_id]` → latest eval result dict (`{score, scores, reasons, feedback, ...}`) or `{}` if no eval has run. |
+| `passed(id)` | `bool` | "Settled cleanly": in `completed_nodes`, not in `failed_nodes`. |
+| `score(id)` | `float` | Latest top-level score for that node (0.0 if absent). |
+| `scores(id)` | `dict[str, float]` | Latest per-dimension scores. |
+| `len`, `any`, `all`, `min`, `max`, `sum` | builtins | Safe functions. |
+
+Workflow YAML is treated as author-checked-in code, so the simpleeval sandbox is footgun prevention (no dunders, no statements, no imports), not adversarial isolation.
 
 ### Per-mode params
 
@@ -249,6 +316,7 @@ Source: `src/abe_froman/runtime/executor/dispatch.py`.
 | `/abs/path/to/binary` or extensionless (file://)       | Direct exec                           | `SubprocessParams` |
 | `*.yaml` reaching the runtime dispatcher               | error (subgraphs are compile-time)    | —                  |
 | `type: join` / `execute: None`                         | no-op                                 | —                  |
+| Standalone inline route (`Node.route` set, no `execute:`) | compile-time `Command(goto=...)`   | —                  |
 
 ### URL resolution
 
@@ -287,8 +355,11 @@ A per-compile cache keyed by canonical URL ensures the same URL is fetched at mo
 Prompt files (`.md` / `.txt` / `.prompt`) are read, optionally prepended with `settings.preamble_file`, then rendered with full Jinja2 (`{{var}}`, `{% if %}`, `{% for %}`, filters — anything Jinja2 supports). Variables bound to the template context:
 
 - `{{dep_id}}` — raw output of each dep.
+- `{{dep_id_structured}}` — parsed structured output of each dep, when present.
 - `{{dep_id_worktree}}` — absolute path to the dep's git worktree (when foreman is active).
-- `{{_retry_reason}}` — auto-injected on retry (previous score, threshold, attempt number, gate feedback).
+- `{{_retry_reason}}` — auto-injected on retry (previous score, threshold, attempt number, gate feedback). Author-referenced — put `{{_retry_reason}}` in the template body where the preamble should appear.
+- `{{evals}}` — always-on global. `evals[node_id]` returns the latest eval result dict for that node (`{score, scores, reasons, feedback, ...}`) or `{}` if no eval has run. Use as a backstop for cross-cutting eval reads; e.g. `{{evals.classify.score}}` works without declaring `classify` as a dep.
+- **Inline-route goto target** (`route:` dispatched into this node): `{{sender_id}}` (str — source node id), `{{sender}}` (raw output of the source), `{{sender_structured}}` (parsed output if available), `{{sender_worktree}}` (path if foreman is active). Eval feedback for `include_eval: true` flows via the auto-prepended preamble, NOT via these Jinja vars — see "Evaluation" below.
 - Inside a fan-out child: every key from the manifest item, plus `{{<parent_id>}}` for the parent's output (see Fan-out below).
 - Inside a subgraph: whatever `params.inputs` projects in.
 
@@ -339,18 +410,14 @@ A no-op topology marker for fan-in. Carries no params, no cases.
 
 ### Route
 
-A pure case ladder over structured state. Each `when:` is evaluated in order against a sandboxed namespace (via `simpleeval`); the first match dispatches via `Command(goto=…)`. The `else:` is required.
+Stage 5c. Inline forward-edge dispatch lives on `Node.route`; full schema reference is in the "Inline routing" section under "Workflow schema" above. Two compile-time shapes:
 
-Namespace bound to predicates:
+- **Standalone** — `route:` with no `execute:`. The node body itself is the dispatcher; emits `Command(goto=...)` directly. Replaces the legacy `execute: { type: route, ... }` form (auto-migrated by `abe-froman migrate`).
+- **Synthetic post-execute** — `execute:` and `route:` on the same node. After the execute body (and eval, if any) settles, a synthetic `_route_<id>` node fires, resolves the route, and dispatches via `Command(goto=...)`.
 
-- Each dep's structured output (or raw output) by id.
-- `history` — full `state.evaluations` map.
-- `state` — full state dict.
-- Safe functions: `len`, `any`, `all`, `min`, `max`, `sum`.
+Both forms support `goto: <str>`, `goto: [list]` (static fan-out), and `cases:` + `else:` ladders. Goto targets skip the START fallback edge so they only fire via `Command`. Inline-route nodes are leaves in the `depends_on` DAG (validated at compile time).
 
-`__end__` halts the workflow (maps to LangGraph `END`). All other `goto` values must resolve to a real node id; the schema validator rejects unknown targets at compile time. Routes are **leaves in the depends_on DAG** — a node cannot `depends_on:` a route. Goto targets skip the START fallback edge.
-
-Workflow YAML is treated as author-checked-in code, so the sandbox is footgun prevention, not adversarial isolation.
+The route's `Command` payload also threads `_route_sender` (source node id), `_route_include_eval` (bool), and `_route_eval_preamble` (pre-built string when `include_eval: true`) into state — see "Sender bindings" and "Evaluation" below for how the goto target reads them.
 
 ### Fan-out
 
@@ -400,6 +467,34 @@ evaluation:
 - `score < threshold`, retries exhausted, `blocking: true` → fail; dependents skipped.
 - `score < threshold`, retries exhausted, `blocking: false` → pass with warning; dependents continue.
 
+### Per-dimension `<dim>_reason` capture
+
+Multi-dim gates may include a `<dim>_reason` string field per dimension in the JSON response. The parser captures these into `EvaluationResult.reasons: dict[str, str]` (keyed by the dimension name with the `_reason` suffix stripped). Non-string values for `*_reason` keys are dropped silently — the field is reserved for rationale text. Example gate output:
+
+```json
+{
+  "rigor": 0.8,
+  "rigor_reason": "citations cover the claim space",
+  "novelty": 0.4,
+  "novelty_reason": "argument restates prior work"
+}
+```
+
+`reasons` flow through `state.evaluations[node_id][-1].result.reasons` and are surfaced in the eval preamble (see below).
+
+### Eval preamble (neutral structural format)
+
+`runtime/gates.py::build_eval_preamble` formats an `EvaluationResult` as a **neutral** preamble block — no "failed" / "fail" / "failure" framing. A `blocking: false` settled score below threshold is not a failure, and a goto target opting in via `include_eval: true` may receive contextual non-failure information (e.g. a passing score with feedback worth carrying forward). The preamble carries the previous score(s), per-dimension thresholds + reasons, top-level `feedback`, and met/unmet criteria. For retry attempts it appends `Attempt N of M.`; for goto targets the footer is omitted.
+
+Two call sites use the same builder:
+
+| Call site | Mechanism | Author surface |
+|---|---|---|
+| Same-node retry | `compile/nodes.py::inject_retry_reason` populates `context["_retry_reason"]` on retry | Author-referenced: put `{{_retry_reason}}` in the template body |
+| Inline route goto + `include_eval: true` | Synthetic `_route_<id>` builds the string into `state._route_eval_preamble`; `_dispatch_prompt` auto-prepends it to the rendered body | No template syntax — preamble appears as a system-style block above the authored content |
+
+Asymmetric by design: retry is "iterate on this task" (the author writes `{{_retry_reason}}` into the same prompt); goto is "perform a new task with carried-over context" (no template integration — system-style preamble before authored content).
+
 ## Foreman and worktrees
 
 Foreman is enabled when `--workdir` is inside a git working tree. It allocates a worktree per node id at `<workdir>/.abe-foreman/wt-<id>-<uuid>/`, reused across retries so prompt nodes can iterate on prior files. Subphases get worktrees keyed `{parent_id}::{item_id}`. Worktrees survive resume — `state.node_worktrees` rehydrates into a fresh `ForemanExecutor`.
@@ -425,7 +520,8 @@ Concurrency caps: `settings.max_parallel_jobs` (global semaphore) and `settings.
 | `examples/jokes/workflow.yaml`             | Minimal: prompt + script gate + select. Best to start here. |
 | `examples/smoke_test.yaml`                 | Bare-minimum config — single prompt node. |
 | `examples/explicit_join.yaml`              | `type: join` topology marker. |
-| `examples/route_classify/workflow.yaml`    | `type: route` case ladder over structured state. |
+| `examples/route_classify/workflow.yaml`    | Inline `route:` case ladder over structured state (Stage 5c). |
+| `examples/pipeline_style/workflow.yaml`    | Inline `route: { goto: <next> }` forward-edge authoring; 3-node linear chain reading top-down like a pipeline. |
 | `examples/absurd-paper/workflow.yaml`      | 13-node multi-stage pipeline with subgraphs and per-Send subgraph fan-out (`reviewer_pool`). |
 | `examples/run_all_examples.yaml`           | Wrapper that exercises the full set in CI. |
 

@@ -72,7 +72,10 @@ Three-layer split (enforced by `tests/architecture/test_layers.py`):
 
 **`src/abe_froman/compile/`** — YAML → LangGraph (no cli imports).
 - `graph.py` — `build_workflow_graph()`, edge wiring, evaluation
-  router insertion.
+  router insertion. Carries `_make_inline_route_node` for Stage 5c
+  inline routes; synthetic `_route_<id>` dispatchers are registered
+  for execute+route nodes (post-eval pass target = `_route_<id>`,
+  which emits `Command(goto=...)`).
 - `nodes.py` — `_make_execution_node`, `_make_evaluation_node`, pure
   helpers (`build_context`, `inject_retry_reason`,
   `classify_evaluation_outcome`, `run_evaluation_and_outcome`).
@@ -171,6 +174,14 @@ mapping (we're testing our wrapping code, not the SDK).
 - **ACP soak under load** — process-tree cleanup is fixed for the
   test scenario, but a multi-hour run with `max_parallel_jobs > 1`
   hasn't been validated end-to-end (WISHLIST 49).
+- **`_route_sender` is last-write-wins** — set by every Command
+  emission from a `_route_<id>` dispatcher (with empty preamble
+  when `include_eval` is off). Templates that reference
+  `{{sender_id}}` should guard with `{% if sender_id %}` if they
+  could be reached via a static depends_on edge AFTER an inline-
+  route hop earlier in the same workflow (rare topology — a node
+  fed both by goto and by depends_on from a different branch — but
+  possible). Inside a goto-only target the var is always bound.
 
 ## Environment quirks
 
@@ -200,6 +211,7 @@ mapping (we're testing our wrapping code, not the SDK).
 | New node type | `src/abe_froman/compile/graph.py` (registration) + `src/abe_froman/compile/nodes.py` (factory) |
 | New gate validator shape | `src/abe_froman/runtime/gates.py::_parse_script_output` |
 | New WorkflowState field | `src/abe_froman/runtime/state.py` (TypedDict + REDUCERS) — beware of parity invariant in `compile/dynamic.py::_merge_updates` |
+| Inline routing (route block, sender bindings, include_eval preamble) | `src/abe_froman/schema/models.py::Route`, `src/abe_froman/compile/graph.py::_make_inline_route_node`, `src/abe_froman/runtime/gates.py::build_eval_preamble` |
 | Layer rule violation | `tests/architecture/test_layers.py` errors point to the offending file |
 
 When in doubt, read `TECHNICAL.md` Section 11 ("Key non-obvious

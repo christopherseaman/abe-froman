@@ -36,6 +36,11 @@ nodes:
     execute:
       url: "examples/route_classify/workflow.yaml"
 
+  - id: pipeline_style
+    name: "Pipeline-style authoring"
+    execute:
+      url: "examples/pipeline_style/workflow.yaml"
+
   - id: explicit_join
     name: "Explicit join"
     execute:
