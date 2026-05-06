@@ -12,6 +12,5 @@ build/
 .abe-froman-checkpoint.db
 *.db-shm
 *.db-wal
-BUILDER-REQUESTS.md
 .claude/
 output/
