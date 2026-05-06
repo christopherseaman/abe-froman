@@ -272,9 +272,11 @@ async def _execute_workflow(
 @click.option(
     "--executor", "-e",
     help=(
-        "Prompt executor backend. Choices: acp | anthropic | "
-        "deepseek | openai. Omit to auto-detect (Anthropic key → "
-        "DeepSeek key → npx/ACP; raises if none available)."
+        "Prompt executor backend. Choices: acp | anthropic | custom | "
+        "deepseek | openai. `custom` is for OpenAI-compatible third "
+        "parties (OpenRouter, Ollama, LM Studio, LiteLLM, Azure, ...) "
+        "via CUSTOM_API_KEY + CUSTOM_API_BASE_URL. Omit to auto-detect "
+        "(Anthropic key → DeepSeek key → npx/ACP; raises if none)."
     ),
 )
 @click.option(

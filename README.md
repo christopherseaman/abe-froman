@@ -22,20 +22,21 @@ Python 3.11+ is required. The project develops on 3.14.
 
 ### API keys
 
-Copy `.env.example` to `.env` (gitignored) and fill in any of the backends you plan to use:
+Copy `.env.example` to `.env` (gitignored) and uncomment any backend you plan to use:
 
 ```bash
-ANTHROPIC_API_KEY=sk-ant-...    # used by --executor anthropic; auto-detect picks this first
-DEEPSEEK_API_KEY=sk-...         # used by --executor deepseek
-OPENAI_API_KEY=sk-...           # used by --executor openai
-OPENAI_BASE_URL=...             # optional; lets the openai backend talk to OpenRouter / Ollama / LM Studio / LiteLLM
+ANTHROPIC_API_KEY=sk-ant-...        # --executor anthropic; auto-detect picks this first
+DEEPSEEK_API_KEY=sk-...             # --executor deepseek
+OPENAI_API_KEY=sk-...               # --executor openai (reserved for real openai.com)
+CUSTOM_API_KEY=sk-or-v1-...         # --executor custom (any OpenAI-compatible third party)
+CUSTOM_API_BASE_URL=https://openrouter.ai/api/v1
 ```
 
 Load via `uv run --env-file .env abe-froman run <config.yaml>`, or `set -a; source .env; set +a` in your shell.
 
 Resolution order: workflow YAML setting (when a binding exists) → process env (`os.environ`) → project-local `.env` file (auto-discovered by walking up from CWD). abe-froman never reads from machine-global keystores; keys live in the project's environment.
 
-For OpenAI-compatible providers, set `OPENAI_API_KEY` to that provider's key and `OPENAI_BASE_URL` to its endpoint. Examples: `https://openrouter.ai/api/v1` (OpenRouter), `http://localhost:11434/v1` (Ollama), `http://localhost:1234/v1` (LM Studio), `http://localhost:4000` (LiteLLM proxy).
+**`openai` vs `custom`**: `--executor openai` is reserved for real openai.com. For OpenAI-compatible third parties — OpenRouter, Ollama, LM Studio, LiteLLM, Azure OpenAI, vLLM, etc. — use `--executor custom` with `CUSTOM_API_KEY` and `CUSTOM_API_BASE_URL`. Both vars are required for `custom` (no silent fallback to OpenAI's default endpoint with a non-OpenAI key). Example endpoints: `https://openrouter.ai/api/v1` (OpenRouter), `http://localhost:11434/v1` (Ollama), `http://localhost:1234/v1` (LM Studio), `http://localhost:4000` (LiteLLM proxy).
 
 ## Quickstart
 
@@ -89,7 +90,8 @@ Resolution order at run time: `--executor` flag, then `settings.executor` in YAM
 | `acp`       | `npm i -g @zed-industries/claude-code-acp` | Claude CLI session (no API key needed)                  | Claude (opus/sonnet/haiku) | usage-billed via Anthropic |
 | `anthropic` | `uv sync --extra anthropic`                | `ANTHROPIC_API_KEY` (env or `.env`)                     | Claude (opus/sonnet/haiku via the Messages API; full vendor IDs accepted) | usage-billed via Anthropic |
 | `deepseek`  | `uv sync --extra openai`                   | `DEEPSEEK_API_KEY` (env or `.env`)                      | DeepSeek catalog (e.g. `deepseek-chat`, `deepseek-reasoner`, `deepseek-v4-flash`) | usage-billed via DeepSeek |
-| `openai`    | `uv sync --extra openai`                   | `OPENAI_API_KEY` + optional `OPENAI_BASE_URL` (OpenRouter / Ollama / LM Studio / LiteLLM / Azure OpenAI / vLLM ...) | Whatever the configured endpoint serves | usage-billed by the provider |
+| `openai`    | `uv sync --extra openai`                   | `OPENAI_API_KEY` (env or `.env`); reserved for real openai.com | OpenAI catalog | usage-billed via OpenAI |
+| `custom`    | `uv sync --extra openai`                   | `CUSTOM_API_KEY` + `CUSTOM_API_BASE_URL` (env or `.env`) | Whatever the configured endpoint serves — OpenRouter, Ollama, LM Studio, LiteLLM, Azure OpenAI, vLLM, etc. | usage-billed by the provider |
 
 ## CLI reference
 

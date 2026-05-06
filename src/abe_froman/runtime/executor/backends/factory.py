@@ -70,20 +70,40 @@ def create_prompt_backend(executor_type: str, **kwargs: object) -> PromptBackend
                 "OpenAI backend requested but no API key found "
                 "(set OPENAI_API_KEY in the environment; see .env.example)."
             )
-        # ``OPENAI_BASE_URL`` lets OpenAI-compatible providers work
-        # with the same backend without a code change. Examples:
-        #   OpenRouter:  https://openrouter.ai/api/v1
-        #   Ollama:      http://localhost:11434/v1
-        #   LM Studio:   http://localhost:1234/v1
-        #   LiteLLM:     http://localhost:4000
-        # Set OPENAI_API_KEY to the provider's key and OPENAI_BASE_URL
-        # to its endpoint.
+        # ``OPENAI_API_KEY`` is reserved for *real* OpenAI here.
+        # For OpenAI-compatible third parties (OpenRouter, Ollama,
+        # LM Studio, LiteLLM, Azure OpenAI, vLLM, ...), use
+        # ``--executor custom`` with ``CUSTOM_API_KEY`` +
+        # ``CUSTOM_API_BASE_URL``. Power-user override:
+        # ``OPENAI_BASE_URL`` is honored when set, but ``custom``
+        # is the canonical path for non-OpenAI endpoints.
         base_url = kwargs.get("base_url") or resolve_secret("OPENAI_BASE_URL")
+        return OpenAIBackend(api_key=api_key, base_url=base_url)
+
+    if executor_type == "custom":
+        from abe_froman.runtime.executor.backends.openai import OpenAIBackend
+
+        api_key = kwargs.get("api_key") or resolve_secret("CUSTOM_API_KEY")
+        base_url = (
+            kwargs.get("base_url") or resolve_secret("CUSTOM_API_BASE_URL")
+        )
+        if not api_key:
+            raise ValueError(
+                "Custom OpenAI-compatible backend requested but no API key "
+                "found (set CUSTOM_API_KEY in the environment; "
+                "see .env.example)."
+            )
+        if not base_url:
+            raise ValueError(
+                "Custom OpenAI-compatible backend requested but no base "
+                "URL configured (set CUSTOM_API_BASE_URL in the "
+                "environment, e.g. https://openrouter.ai/api/v1)."
+            )
         return OpenAIBackend(api_key=api_key, base_url=base_url)
 
     raise ValueError(
         f"Unknown executor type: {executor_type!r}. "
-        f"Supported: acp, anthropic, deepseek, openai"
+        f"Supported: acp, anthropic, custom, deepseek, openai"
     )
 
 

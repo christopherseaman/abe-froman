@@ -122,6 +122,39 @@ class TestCreatePromptBackend:
         )
         assert backend._base_url == "https://from-arg/"
 
+    def test_custom_with_env_key_and_base_url(self, monkeypatch):
+        """The `custom` executor type is the canonical path for
+        OpenAI-compatible third parties — separate from `openai`,
+        which is reserved for real openai.com. Both ``CUSTOM_API_KEY``
+        and ``CUSTOM_API_BASE_URL`` are required."""
+        from abe_froman.runtime.executor.backends.openai import OpenAIBackend
+        from abe_froman.runtime.secrets import _reset_dotenv_cache
+
+        monkeypatch.setenv("CUSTOM_API_KEY", "sk-or-v1-fake")
+        monkeypatch.setenv(
+            "CUSTOM_API_BASE_URL", "https://openrouter.ai/api/v1",
+        )
+        _reset_dotenv_cache()
+        backend = create_prompt_backend("custom")
+        assert isinstance(backend, OpenAIBackend)
+        assert backend._base_url == "https://openrouter.ai/api/v1"
+
+    def test_custom_without_key_raises(self, clean_env):
+        with pytest.raises(ValueError) as ei:
+            create_prompt_backend("custom")
+        assert "CUSTOM_API_KEY" in str(ei.value)
+
+    def test_custom_without_base_url_raises(self, clean_env, monkeypatch):
+        """Key alone isn't enough — `custom` requires the URL too,
+        otherwise the request would silently hit OpenAI's default
+        endpoint with the wrong key."""
+        monkeypatch.setenv("CUSTOM_API_KEY", "sk-or-v1-fake")
+        from abe_froman.runtime.secrets import _reset_dotenv_cache
+        _reset_dotenv_cache()
+        with pytest.raises(ValueError) as ei:
+            create_prompt_backend("custom")
+        assert "CUSTOM_API_BASE_URL" in str(ei.value)
+
     def test_unknown_type_raises_with_supported_list(self):
         with pytest.raises(ValueError) as ei:
             create_prompt_backend("ruby")
