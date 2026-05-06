@@ -118,14 +118,6 @@ logger, effective_settings, _depth, _base_dir)` at
 `compile/graph.py:220`. Classifies each node, registers a node fn,
 wires plain + conditional edges.
 
-All edge-related code in this layer reads `node.depends_on` only.
-Authors who write `next:` (forward-pointer) on a node get it
-normalized into the targets' `depends_on:` lists at parse time —
-`Graph.validate_node_references` in `schema/models.py` walks every
-node's `next:`, appends the source id to each target's `depends_on:`
-(de-duped), then clears `next:`. Compile and runtime layers see a
-single canonical adjacency.
-
 Helpers: `_find_terminal_nodes` (nothing-depends-on set; wires to
 `END`), `_detect_cycles` (DFS coloring on `depends_on`),
 `_is_subgraph_ref` (delegates to

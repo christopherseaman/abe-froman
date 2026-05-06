@@ -148,14 +148,6 @@ class Node(BaseModel):
     were removed in the hard cutover. `extra="forbid"` makes that loud:
     users on pre-Stage-5b YAML get a clear ValidationError pointing at the
     unsupported key, instead of silent drop-on-the-floor.
-
-    Edge authoring: `depends_on:` (back-pointer) and `next:` (forward-
-    pointer) are equivalent ways to express a static edge.
-    `Graph.validate_node_references` normalizes `next:` into the target's
-    `depends_on:` at parse time and clears `next:`, so all compile/runtime
-    code reads a single canonical adjacency. Authors pick whichever reads
-    better locally — `depends_on:` for fan-in barriers, `next:` for fan-
-    out spines.
     """
     model_config = ConfigDict(extra="forbid")
 
@@ -165,7 +157,6 @@ class Node(BaseModel):
     model: str | None = None
     execute: Execute | None = None
     depends_on: list[str] = []
-    next: list[str] = []
     evaluation: Evaluation | None = None
     output_contract: OutputContract | None = None
     fan_out: FanOut | None = None
@@ -199,50 +190,6 @@ class Graph(BaseModel):
                     raise ValueError(f"Duplicate node id: {n.id}")
                 seen.add(n.id)
 
-        # Route nodes: identified up front so `next:` validation can
-        # symmetrically forbid both "route node carries next" and
-        # "next targets a route" (mirrors the depends_on-vs-route rule
-        # below).
-        route_ids: set[str] = {
-            n.id for n in self.nodes
-            if n.execute is not None and n.execute.type == "route"
-        }
-
-        # `next:` (forward-pointer) is schema sugar for `depends_on:`
-        # (back-pointer). Validate, then normalize: append source to
-        # each target's depends_on (de-duped), then clear next: so all
-        # downstream code sees a single canonical adjacency.
-        node_map = {n.id: n for n in self.nodes}
-        for node in self.nodes:
-            if not node.next:
-                continue
-            if node.id in route_ids:
-                raise ValueError(
-                    f"Route '{node.id}' cannot use 'next:'; routes "
-                    f"dispatch via cases[].goto, not static edges"
-                )
-            for tgt in node.next:
-                if tgt == node.id:
-                    raise ValueError(
-                        f"Node '{node.id}' has a self-edge in 'next:'"
-                    )
-                if tgt not in node_ids:
-                    raise ValueError(
-                        f"Node '{node.id}' next references '{tgt}' "
-                        f"which references nonexistent node"
-                    )
-                if tgt in route_ids:
-                    raise ValueError(
-                        f"Node '{node.id}' next targets route '{tgt}'; "
-                        f"routes are reached only via Command(goto=), "
-                        f"not static edges"
-                    )
-                target = node_map[tgt]
-                if node.id not in target.depends_on:
-                    target.depends_on.append(node.id)
-        for node in self.nodes:
-            node.next = []
-
         for node in self.nodes:
             for dep in node.depends_on:
                 if dep == node.id:
@@ -257,6 +204,10 @@ class Graph(BaseModel):
         # __end__; routes must be leaves in the dep DAG (their
         # Command(goto=) IS the dispatch — a static depends_on edge
         # would double-trigger the goto target).
+        route_ids: set[str] = {
+            n.id for n in self.nodes
+            if n.execute is not None and n.execute.type == "route"
+        }
         for node in self.nodes:
             if node.execute is None or node.execute.type != "route":
                 continue

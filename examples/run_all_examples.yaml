@@ -46,14 +46,9 @@ nodes:
     execute:
       url: "examples/absurd-paper/workflow.yaml"
 
-  - id: pipeline_style
-    name: "Pipeline-style (next:) authoring"
-    execute:
-      url: "examples/pipeline_style/workflow.yaml"
-
 settings:
-  # Concurrency cap of 6 lets all six subgraphs start in the same
+  # Concurrency cap of 5 lets all five subgraphs start in the same
   # super-step. Drop this if rate limits matter.
-  max_parallel_jobs: 6
+  max_parallel_jobs: 5
   default_model: "sonnet"
   default_timeout: 600.0

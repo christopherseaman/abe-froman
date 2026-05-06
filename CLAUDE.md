@@ -201,7 +201,6 @@ mapping (we're testing our wrapping code, not the SDK).
 | New gate validator shape | `src/abe_froman/runtime/gates.py::_parse_script_output` |
 | New WorkflowState field | `src/abe_froman/runtime/state.py` (TypedDict + REDUCERS) — beware of parity invariant in `compile/dynamic.py::_merge_updates` |
 | Layer rule violation | `tests/architecture/test_layers.py` errors point to the offending file |
-| Edge form (depends_on / next) | `src/abe_froman/schema/models.py::Graph.validate_node_references` — `next:` normalizes to `depends_on:` at parse time; compile/runtime never sees `next:` |
 
 When in doubt, read `TECHNICAL.md` Section 11 ("Key non-obvious
 invariants") before changing compile or runtime layer code — five of
