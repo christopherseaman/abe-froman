@@ -1,0 +1,112 @@
+name: "Wave-driven research planner"
+version: "0.1.0"
+
+# Wave-driven dynamic-task pattern.
+#
+# Topology:
+#
+#   planner ─→ dispatcher (fan_out) ─→ workers (Send×N)
+#                  ▲                       │
+#                  │                       ▼
+#                  └── gate (route) ←── reconcile
+#
+# The pattern: discover new tasks mid-run without restarting upstream
+# work. Each "wave" is one trip around dispatcher → workers → reconcile
+# → gate. A wave that uncovers new pending tasks routes back to
+# dispatcher, which re-reads `state.json` and emits a fresh manifest;
+# fan_out re-fires over only the newly-pending items. A wave that
+# uncovers nothing routes to __end__.
+#
+# Two key facts make this work:
+#
+#   1. `dispatcher` has BOTH `depends_on: [planner]` AND is the
+#      goto-target of `gate`. The compile layer wires both edges; the
+#      planner→dispatcher edge fires once at startup, the gate→dispatcher
+#      goto fires on subsequent waves.
+#
+#   2. `Command(goto=dispatcher)` always re-executes dispatcher's body
+#      (the manifest script). The fan_out router then reads the newly-
+#      written `node_outputs[dispatcher]` — not a cached value from
+#      the first wave. This was a deliberate fix: an earlier resume-
+#      mode guard would skip re-execution of already-completed nodes,
+#      which silently broke goto-driven re-fires.
+#
+# Real workflows replace the deterministic Python stubs with LLM-
+# driven discovery (e.g. a "research" worker that emits sub-questions
+# in its output, and a reconcile node that adds them to state.json).
+# This example uses pure scripts so the topology runs without a
+# backend key and the e2e test stays stable.
+#
+# WHY A NON-GIT WORKDIR. Wave-pattern workflows need shared mutable
+# state across waves (state.json here). When abe-froman runs in a
+# git workdir, ForemanExecutor isolates each node in its own git
+# worktree — sibling worktrees can't see each other's state.json.
+# This example explicitly opts out by running with a non-git workdir
+# (foreman disabled; all scripts share one filesystem). Real
+# workflows that combine the wave pattern with worktree isolation
+# should thread state through abe-froman's `node_outputs` (each node
+# emits state JSON on stdout) instead of a shared file.
+#
+# Setup + run:
+#   mkdir -p /tmp/wave-demo
+#   ln -s "$(pwd)/examples/wave_planner/scripts" /tmp/wave-demo/scripts
+#   uv run abe-froman validate examples/wave_planner/workflow.yaml
+#   uv run abe-froman run examples/wave_planner/workflow.yaml \
+#     --workdir /tmp/wave-demo
+
+nodes:
+  - id: planner
+    name: "Seed initial questions"
+    execute:
+      url: "scripts/planner.py"
+
+  - id: dispatcher
+    name: "Dispatch a wave of pending questions"
+    depends_on: [planner]
+    # Each wave: emit a JSON manifest of `pending` items from
+    # state.json, then fan_out over those items.
+    execute:
+      url: "scripts/dispatcher.py"
+    fan_out:
+      template:
+        execute:
+          url: "scripts/worker.py"
+          params:
+            args: ["{{id}}"]
+
+  - id: reconcile
+    name: "Discover follow-up questions"
+    depends_on: [dispatcher]
+    # Stdout `reconcile_added:<id>` signals a new task was queued;
+    # `reconcile_clean` signals nothing new. The gate inspects this
+    # string to decide whether to loop.
+    execute:
+      url: "scripts/reconcile.py"
+
+  - id: gate
+    name: "Loop while reconcile finds new tasks"
+    depends_on: [reconcile]
+    route:
+      cases:
+        - when: "'reconcile_added' in reconcile"
+          goto: dispatcher
+      else: __end__
+
+settings:
+  # Wave-pattern workflows are loop-shaped; the LangGraph runner caps
+  # super-step count at recursion_limit=25 by default. Each wave is
+  # ~4 super-steps (dispatcher, workers, reconcile, gate), so this
+  # config supports up to ~6 waves before hitting the cap. Authors
+  # whose reconcile chains can exceed that should raise the limit
+  # explicitly via `compiled.invoke(..., config={"recursion_limit": N})`.
+  max_parallel_jobs: 2
+
+  # Memory back-pressure (folded into this example for documentation
+  # value — the wave pattern itself doesn't require it). When host
+  # memory percent exceeds this threshold, foreman pauses new
+  # acquisitions until pressure drops. AND-composes with
+  # max_parallel_jobs — both gates must allow dispatch.
+  memory_threshold_pct: 95.0
+
+  # No `executor:` here — pure script workflow runs under any backend
+  # (or none, when invoked as a subgraph from run_all_examples.yaml).

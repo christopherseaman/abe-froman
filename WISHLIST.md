@@ -38,6 +38,48 @@ follow-up; items 3+ are real cleanup wins held for explicit decisions.
 - [x] **(20) DeepSeek live tests (`tests/unit/runtime/test_openai_backend.py::TestDeepSeekLive`) flake** — _diagnosed 2026-05-06: transient upstream blip, not a deterministic bug._ Re-probing confirmed `deepseek-v4-flash` IS in the live catalog (`client.models.list()` returns it alongside `deepseek-v4-pro`) and a direct send completes in ~1.7s. The 30s timeout observed during the test run was DeepSeek server-side load/queueing, not a bug in our code, model name, or the post-Stage-5c branch's changes. No code change required. If recurrent, gate the live tests behind an opt-in `pytest.mark.live` marker rather than chasing a fix to a non-deterministic symptom.
 - [x] **(21) Live alias-drift detection for `_MODEL_ALIASES`** — _delivered 2026-05-06 alongside the DeepSeek diagnosis._ Anthropic's vendor IDs (`claude-sonnet-4-6` etc.) can drift if Anthropic releases a new headline model under the same family name. New live test (`tests/unit/runtime/test_anthropic_backend.py::TestAnthropicLive::test_alias_table_resolves_in_live_catalog`) queries `client.models.list()` and fails with a clear remediation message ("update _MODEL_ALIASES to the current headline IDs") when an alias points at a deprecated vendor ID. Skipped automatically when no Anthropic key is on disk. Gives us a per-CI-run drift signal whenever a key is configured.
 
+## Coverage gaps from post-Stage-5c audit (2026-05-06)
+
+Five gaps surfaced when auditing test/example coverage of recently-
+landed features. Tracked separately from the audit-finding numbers
+above because they're additive (no production-code change) rather
+than fixes to existing code.
+
+- [x] **(22) Wave-driven dynamic-task pattern lacked an example and
+  a permanent test.** The pattern was proven via a one-shot spike
+  (`.temp/wave_spike.py`) but had no examples-gallery entry and no
+  e2e regression test. Delivered `examples/wave_planner/` (workflow
+  + 4 deterministic Python scripts + README) and
+  `tests/e2e/test_wave_pattern.py` (mutation-tested: temporarily
+  re-adding the resume-mode `completed_nodes` guard at
+  `compile/nodes.py::_make_execution_node` reproduces the original
+  regression as a `GraphRecursionError`). Folded
+  `memory_threshold_pct` into the example's settings as documentation
+  surface for that feature. Spike file deleted as part of the
+  example landing.
+- [ ] **(23) Live-backend e2e round-trip** — only Anthropic catalog
+  drift and DeepSeek SDK error-mapping have live coverage. Real
+  OpenAI and `--executor custom` (OpenRouter et al.) have zero live
+  tests despite all four backends being verified manually. Plan:
+  parametrized e2e running `examples/jokes/workflow.yaml` per backend
+  with key on disk, marked `pytest.mark.live`, asserting only
+  structural properties (exit 0, both nodes complete). Coming in
+  the same branch.
+- [ ] **(24) DeepSeek model-availability drift** — Anthropic gets
+  `test_alias_table_resolves_in_live_catalog`; DeepSeek doesn't. The
+  test fixtures pin `deepseek-v4-flash`; if that retires we get a
+  confusing 404 instead of a clean "update the test fixture"
+  diagnostic. Plan: mirror the Anthropic test against
+  `client.models.list()` for DeepSeek's pinned model ID. Coming in
+  the same branch.
+- [ ] **(25) Resume-from-checkpoint e2e** — `tests/unit/cli/test_cli.py
+  ::TestResumeCommand` covers single-process CliRunner resume.
+  Untested: a real fan-out where one child fails, then `--resume`
+  re-runs only the failed child and previously-completed children
+  do NOT re-fire. Plan: e2e with real `AsyncSqliteSaver` + a
+  side-channel runs-counter file per worker that proves no
+  re-execution. Coming in the same branch.
+
 ## High-level Architectural
 
 - [ ] Possible to offload orchastration piece to lightweight local tool/package instead of writing from scratch, similar to how we are leveraging langgraph? Dagster? Airflow and Kestra too heavy.

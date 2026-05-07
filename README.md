@@ -544,7 +544,8 @@ Concurrency caps: `settings.max_parallel_jobs` (global semaphore) and `settings.
 | `examples/route_classify/workflow.yaml`    | Inline `route:` case ladder over structured state (Stage 5c). |
 | `examples/pipeline_style/workflow.yaml`    | Inline `route: { goto: <next> }` forward-edge authoring; 3-node linear chain reading top-down like a pipeline. |
 | `examples/absurd-paper/workflow.yaml`      | 13-node multi-stage pipeline with subgraphs and per-Send subgraph fan-out (`reviewer_pool`). |
-| `examples/run_all_examples.yaml`           | Wrapper that exercises the full set in CI. |
+| `examples/wave_planner/workflow.yaml`      | Wave-driven dynamic-task pattern — `goto:` loop-back to a fan_out parent that re-reads its manifest each wave. Demonstrates `memory_threshold_pct`. Requires non-git workdir; see the example's README. |
+| `examples/run_all_examples.yaml`           | Wrapper that exercises the full set in CI (excludes wave_planner — that example needs a non-git workdir, incompatible with the parent's worktree-isolated subgraph mode). |
 
 ## Contributing
 

@@ -35,6 +35,14 @@ All notable changes to abe-froman are documented here. Format follows
   Both compose (AND) with `max_parallel_jobs` and `per_model_limits`;
   in-flight jobs are never aborted by the gates. `None` (the default
   for both) disables the checks. ``psutil>=5.9`` added as a core dep.
+- **`examples/wave_planner/`** — shipped example + e2e test
+  (`tests/e2e/test_wave_pattern.py`) demonstrating the wave-driven
+  dynamic-task pattern. Pure-Python deterministic stubs (no backend
+  key required). Runs from a non-git workdir to share `state.json`
+  across waves without git-worktree isolation; the README explains
+  how to thread state through `node_outputs` for worktree-isolated
+  workflows. Folds in a documented use of `memory_threshold_pct` in
+  the workflow's `settings:` block.
 - **Wave-driven dynamic-task re-execution**: dropping the
   pre-LangGraph-checkpointer `# Skip if already completed (resume
   mode)` guards (3 sites in `compile/nodes.py` and `compile/dynamic.py`)
