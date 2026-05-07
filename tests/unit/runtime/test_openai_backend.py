@@ -64,6 +64,40 @@ class TestDeepSeekLive:
         await backend.close()
         await backend.close()  # second close must not raise
 
+    async def test_pinned_model_resolves_in_live_catalog(self):
+        """Drift check: the model ID pinned by tests in this file
+        (``deepseek-v4-flash``) must still appear in the live DeepSeek
+        ``models.list()`` catalog. If DeepSeek retires it, this fails
+        with a clear remediation message rather than a confusing 404
+        from the next live test that tries to use it.
+
+        Symmetric to ``test_alias_table_resolves_in_live_catalog`` for
+        Anthropic. ``OpenAIBackend`` doesn't carry a model-alias table
+        (DeepSeek model names are short enough that authors use them
+        verbatim), so the drift target is the pinned ID inside this
+        test file rather than a runtime dictionary.
+        """
+        try:
+            from openai import AsyncOpenAI
+        except ImportError:
+            pytest.skip("openai SDK not installed (uv sync --extra openai)")
+
+        client = AsyncOpenAI(api_key=DEEPSEEK_KEY, base_url=DEEPSEEK_BASE_URL)
+        try:
+            catalog = await client.models.list()
+        finally:
+            await client.close()
+        catalog_ids = {m.id for m in catalog.data}
+
+        pinned = "deepseek-v4-flash"
+        assert pinned in catalog_ids, (
+            f"DeepSeek catalog no longer lists {pinned!r}. Update the "
+            f"model parameter throughout `tests/unit/runtime/"
+            f"test_openai_backend.py::TestDeepSeekLive` and "
+            f"`tests/e2e/test_live_backend_roundtrip.py` to a current ID. "
+            f"Live catalog ids: {sorted(catalog_ids)}"
+        )
+
 
 # ---------------------------------------------------------------------
 # Error mapping (offline) — patch upstream SDK to raise, assert
