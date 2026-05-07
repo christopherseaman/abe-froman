@@ -10,8 +10,6 @@ and propose follow-ups. The deterministic stub keeps the e2e test
 stable and lets contributors trace exactly which wave introduces
 each task.
 """
-from __future__ import annotations
-
 import json
 import sys
 from pathlib import Path
@@ -22,7 +20,7 @@ def main() -> int:
     state = json.loads(state_path.read_text())
     qs = state["questions"]
     seed_ids = {"q_market_size", "q_growth_rate"}
-    seeds_done = all(qs[i]["status"] == "done" for i in seed_ids if i in qs)
+    seeds_done = all(qs[i]["status"] == "done" for i in seed_ids)
     follow_up_id = "q_competitor_share"
     if seeds_done and follow_up_id not in qs:
         qs[follow_up_id] = {

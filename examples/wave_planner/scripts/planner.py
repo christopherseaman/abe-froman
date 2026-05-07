@@ -4,8 +4,6 @@ Runs once at the start of the workflow. Subsequent waves never re-fire
 this script (planner has no incoming goto); only `dispatcher` and
 `reconcile` mutate state.json after the seeding.
 """
-from __future__ import annotations
-
 import json
 import sys
 from pathlib import Path

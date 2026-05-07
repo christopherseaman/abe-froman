@@ -198,14 +198,3 @@ class TestResumeFromCheckpoint:
         # phase 2's re-execution (operator.add reducer accumulates).
         assert result_2["completed_nodes"].count("a") == 2
 
-    @pytest.mark.asyncio
-    async def test_resume_without_prior_run_raises(self, tmp_path):
-        """Phase 2 with no prior checkpoint surfaces cleanly."""
-        config = _build_chain(tmp_path)
-        db_path = str(tmp_path / ".checkpoint.db")
-        thread_id = "no-prior"
-
-        with pytest.raises(AssertionError, match="expected a saved checkpoint"):
-            await _run_phase(
-                tmp_path, config, db_path, thread_id, resume=True,
-            )

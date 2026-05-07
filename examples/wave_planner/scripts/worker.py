@@ -10,8 +10,6 @@ the critical section so each worker's status mutation is preserved.
 For non-POSIX hosts (Windows), authors writing similar workflows
 should swap fcntl for portable-locking or per-task marker files.
 """
-from __future__ import annotations
-
 import fcntl
 import json
 import sys
@@ -31,7 +29,6 @@ def main(argv: list[str]) -> int:
             print(f"worker: unknown question {question_id}", file=sys.stderr)
             return 1
         state["questions"][question_id]["status"] = "done"
-        state["questions"][question_id]["answer"] = f"answered:{question_id}"
         fh.seek(0)
         json.dump(state, fh, indent=2)
         fh.truncate()

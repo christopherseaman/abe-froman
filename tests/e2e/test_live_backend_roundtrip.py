@@ -40,7 +40,12 @@ _JOKES_SRC = _REPO_ROOT / "examples" / "jokes"
 
 
 def _key_for(backend: str) -> str | None:
-    """Resolve the env/dotenv key required by each backend."""
+    """Resolve the env/dotenv key required by each backend.
+
+    For ``custom`` both ``CUSTOM_API_KEY`` and ``CUSTOM_API_BASE_URL``
+    must be set; returning ``None`` when either is missing skips the
+    case cleanly.
+    """
     if backend == "anthropic":
         return _resolve_anthropic_key()
     if backend == "deepseek":
@@ -48,18 +53,10 @@ def _key_for(backend: str) -> str | None:
     if backend == "openai":
         return resolve_secret("OPENAI_API_KEY")
     if backend == "custom":
-        # Custom requires both KEY and BASE_URL; skip if either missing.
-        if (
-            resolve_secret("CUSTOM_API_KEY")
-            and resolve_secret("CUSTOM_API_BASE_URL")
-        ):
-            return "configured"
-        return None
+        key = resolve_secret("CUSTOM_API_KEY")
+        base = resolve_secret("CUSTOM_API_BASE_URL")
+        return key if (key and base) else None
     raise ValueError(f"unknown backend {backend!r}")
-
-
-def _skip_reason(backend: str) -> str:
-    return f"{backend} backend not configured (no key on disk)"
 
 
 # Models per backend. Cheap tier where available so cost stays
@@ -120,7 +117,8 @@ def _stage_jokes(workdir: Path, backend: str, model: str) -> Path:
         pytest.param(
             b,
             marks=pytest.mark.skipif(
-                _key_for(b) is None, reason=_skip_reason(b),
+                _key_for(b) is None,
+                reason=f"{b} backend not configured (no key on disk)",
             ),
         )
         for b in ("anthropic", "deepseek", "openai", "custom")

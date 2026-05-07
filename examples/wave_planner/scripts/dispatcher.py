@@ -9,8 +9,6 @@ If no questions are pending the manifest is empty and fan-out
 dispatches zero children; the gate then routes to __end__ on its
 "reconcile_clean" branch.
 """
-from __future__ import annotations
-
 import json
 import sys
 from pathlib import Path
