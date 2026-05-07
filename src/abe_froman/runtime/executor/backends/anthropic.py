@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 _MODEL_ALIASES = {
     "sonnet": "claude-sonnet-4-6",
     "opus": "claude-opus-4-7",
-    "haiku": "claude-haiku-4-5",
+    "haiku": "claude-haiku-4-5-20251001",
 }
 
 # Default ``max_tokens`` for the Messages API. Anthropic requires this
