@@ -558,12 +558,22 @@ Test invariants:
 - Tests assert concrete output values, not just absence of exceptions.
 - ACP tests require `@zed-industries/claude-code-acp` installed globally.
 
-Run the suite (754 tests, ~35s without ACP):
+Run the suite (834 tests, ~55s without ACP):
 
 ```bash
 uv run pytest tests/ --ignore=tests/acp
 uv run pytest tests/ -v   # full suite incl. ACP integration
+uv run pytest tests/ -m live   # only the live-backend round-trip tests
+uv run pytest tests/ -m "not live"   # skip everything that needs an API key
 ```
+
+Live-backend tests (`tests/e2e/test_live_backend_roundtrip.py`,
+`tests/unit/runtime/test_anthropic_backend.py::TestAnthropicLive`,
+`tests/unit/runtime/test_openai_backend.py::TestDeepSeekLive`)
+self-skip per-key when the matching API key is absent on disk.
+Configure keys in `.env` (see `.env.example`) to opt into live
+coverage for any subset of {Anthropic, DeepSeek, real OpenAI,
+OpenAI-compatible custom endpoints}.
 
 ## License
 

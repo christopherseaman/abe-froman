@@ -147,6 +147,13 @@ These guide all new tests; violations should be flagged in review.
 10. **ACP tests require `@zed-industries/claude-code-acp`** installed
     globally. Pre-flight in `tests/conftest.py` exits collection with
     install instructions if missing.
+11. **Live-backend tests use `pytest.mark.live` + `pytest.mark.skipif(
+    KEY is None, ...)`.** Self-skipping when the matching API key is
+    absent on disk; opt-in for isolation via `pytest -m live`. Never
+    fail loudly without a key — silent skip is the contract. The
+    round-trip suite at `tests/e2e/test_live_backend_roundtrip.py`
+    exercises the full CLI pipeline against `examples/jokes/` per
+    backend.
 
 The `feedback_no_fake_backends.md` memory expands on (1): no fake
 `PromptBackend` doubles; real ACP / real subprocess only. The narrow
