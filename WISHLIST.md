@@ -72,13 +72,36 @@ than fixes to existing code.
   diagnostic. Plan: mirror the Anthropic test against
   `client.models.list()` for DeepSeek's pinned model ID. Coming in
   the same branch.
-- [ ] **(25) Resume-from-checkpoint e2e** — `tests/unit/cli/test_cli.py
-  ::TestResumeCommand` covers single-process CliRunner resume.
-  Untested: a real fan-out where one child fails, then `--resume`
-  re-runs only the failed child and previously-completed children
-  do NOT re-fire. Plan: e2e with real `AsyncSqliteSaver` + a
-  side-channel runs-counter file per worker that proves no
-  re-execution. Coming in the same branch.
+- [x] **(25) Resume-from-checkpoint e2e** — _delivered._
+  `tests/e2e/test_resume_fan_out.py` exercises a real
+  `AsyncSqliteSaver` round-trip across two phases with mid-chain
+  failure injection. The runs-counter side-channel pins exactly how
+  many times each node body executes. Surprising finding: ``a``'s
+  counter goes from 1 to 2 — see (26) below.
+- [ ] **(26) Resume re-executes already-completed nodes** — _surfaced
+  by (25)._ Current `--resume` semantics: cli/main.py loads the
+  saved `channel_values`, resets `failed_nodes`/`retries`/`errors`,
+  calls `cp.adelete_thread(thread_id)`, then re-streams from a
+  pre-populated initial state. With the thread wiped, LangGraph has
+  no record of which super-steps already ran, so every node fires
+  again. The completed_nodes reducer is `operator.add`, so the
+  re-execution produces duplicate entries (`["a"]` becomes
+  `["a", "a"]` after resume). The plan for (25) had the test
+  asserting the OPPOSITE (already-completed nodes do NOT re-fire).
+  That expectation was wrong; the test was rewritten to pin actual
+  behavior plus comment pointing here.
+
+  Likely intent: skip already-completed nodes on resume. That would
+  require either (a) adding a `if node.id in completed_nodes:
+  return {}` guard back into node bodies (which would break the
+  goto-driven re-fire we deliberately removed in audit fix #19), or
+  (b) NOT calling `cp.adelete_thread` before re-streaming, letting
+  LangGraph's super-step tracker do the deduplication. Path (b) is
+  cleaner — but the existing comment says the wipe is needed "so
+  reducers don't merge with stale state." Investigation needed
+  before flipping. When fixed, flip the runs-counter assertion in
+  `test_resume_after_mid_chain_failure` and update the resume
+  comment in cli/main.py.
 
 ## High-level Architectural
 
