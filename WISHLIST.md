@@ -119,6 +119,14 @@ than fixes to existing code.
   runs-counter assertion and update both the test docstring and
   the resume comment in cli/main.py.
 
+  Cross-reference: this question integrates with item 391
+  (`replay --from <checkpoint>` CLI) and the unbuilt trunk/merge
+  half of item 226 (per-node worktree commits). See "Author-
+  declared checkpoints + visualization tool + worktree commits
+  as one integrated story" in the Forward-looking section — the
+  three wishes share one underlying mechanism, and pursuing any
+  one in isolation risks half-designs the other two work around.
+
 ## High-level Architectural
 
 - [ ] Possible to offload orchastration piece to lightweight local tool/package instead of writing from scratch, similar to how we are leveraging langgraph? Dagster? Airflow and Kestra too heavy.
@@ -246,6 +254,62 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
   coverage in `tests/e2e/test_fan_out_subgraph.py`.
 
 - [x] **Subgraph with defined entry/exit nodes as a first-class primitive** — _landed, Stage 4c._ A subgraph declared via `Node.config:` is loaded as a `Graph` (identical schema), recursively compiled, and added as a node in the parent via `add_node(node.id, compiled_subgraph)`. State projection across the boundary is explicit via `inputs:` / `outputs:` declarations. Reusable subgraph libraries are a real concept now: the same YAML runs both standalone and as a subgraph reference.
+
+- [ ] **Author-declared checkpoints + visualization tool + worktree
+  commits as one integrated story** — _surfaced 2026-05-08 while
+  reframing (26)._ Three currently-separate wishes share one
+  underlying mechanism:
+
+    - **(26)** `--resume` semantics for goto-driven workflows.
+      "Where I left off" isn't well-defined when re-fires accumulate.
+    - **391** `abe-froman replay <thread-id> --from <checkpoint>`.
+      The super-step checkpointer already persists every step; we
+      just don't expose them.
+    - **226** Trunk/merge branch for synthesis merges
+      (`settings.trunk_ref: main`). The unbuilt half of foreman —
+      per-node commits and merge management.
+
+  Integration: an author marks specific nodes as **checkpoint
+  boundaries** in YAML (e.g. `checkpoint: true` on `paper` after
+  the multi-section synthesis). At runtime, abe-froman commits the
+  worktree state at each checkpoint boundary into a per-node branch
+  and tags the commit with the super-step id. Three things become
+  natural:
+
+    1. **`--resume` becomes well-defined for both styles**: restart
+       at the most recent completed checkpoint. DAG workflows
+       checkpoint after every gate-passed node by default; goto
+       workflows checkpoint only at author-marked boundaries
+       (typically post-reconcile or post-synthesis).
+    2. **`replay --from <checkpoint>`** stops being a CLI affordance
+       on opaque super-step ids and becomes "checkout the
+       worktree commit tagged with this checkpoint id" — concrete,
+       browsable, debuggable.
+    3. **A visualization tool** (whether terminal-based via Mermaid
+       diff or a one-shot HTML emitter) shows the topology with
+       checkpoint markers + per-node worktree commit hashes. The
+       same view drives `--resume-from <checkpoint>` selection
+       interactively.
+
+  Open design questions if pursued:
+    - Schema: `Node.checkpoint: bool` vs `settings.checkpoint_after:
+      list[str]` vs implicit (every gate-passed node). The first
+      keeps the marker local to the node it applies to; the second
+      lets a workflow author override defaults without editing each
+      node; the third is zero-config but loud.
+    - Worktree commit lifecycle: do commits accumulate forever in
+      `.abe-foreman/wt-<id>/` or get GC'd after N runs? Tying
+      checkpoints to the existing JSONL log (item 391's input
+      shape) might let GC be log-driven.
+    - Visualization tool surface: a separate `abe-froman view`
+      subcommand, or extend the existing `graph` command? The
+      Mermaid diff use case (live-render super-step transitions)
+      is more interesting than static topology.
+
+  Defer until a real workflow surfaces the pain. Right framing
+  matters more than implementation order: pursuing any one of
+  (26)/(391)/(226) in isolation will likely accrete a half-design
+  that the other two then have to work around.
 
 ## Architectural moves
 
