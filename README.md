@@ -567,16 +567,24 @@ Concurrency caps: `settings.max_parallel_jobs` (global semaphore) and `settings.
 
 ## Examples gallery
 
-| Path                                       | What it shows |
-|--------------------------------------------|---------------|
-| `examples/jokes/workflow.yaml`             | Minimal: prompt + script gate + select. Best to start here. |
-| `examples/smoke_test.yaml`                 | Bare-minimum config — single prompt node. |
-| `examples/explicit_join.yaml`              | `type: join` topology marker. |
-| `examples/route_classify/workflow.yaml`    | Inline `route:` case ladder over structured state (Stage 5c). |
-| `examples/pipeline_style/workflow.yaml`    | Inline `route: { goto: <next> }` forward-edge authoring; 3-node linear chain reading top-down like a pipeline. |
-| `examples/absurd-paper/workflow.yaml`      | 13-node multi-stage pipeline with subgraphs and per-Send subgraph fan-out (`reviewer_pool`). |
-| `examples/wave_planner/workflow.yaml`      | Wave-driven dynamic-task pattern — `goto:` loop-back to a fan_out parent that re-reads its manifest each wave. Demonstrates `memory_threshold_pct`. Requires non-git workdir; see the example's README. |
-| `examples/run_all_examples.yaml`           | Wrapper that exercises the full set in CI (excludes wave_planner — that example needs a non-git workdir, incompatible with the parent's worktree-isolated subgraph mode). |
+Each example with a directory ships a checked-in
+`view.html` (authoring) and, where the workflow is fully
+deterministic, a `view-debug.html` from a captured `reference-run.jsonl`.
+Open the file directly in a browser; it's self-contained (Mermaid via
+CDN with a raw-source fallback). Refresh via `bash
+examples/regenerate_views.sh` (timestamps in the JSONL change per run,
+so refresh intentionally).
+
+| Path                                       | What it shows | View |
+|--------------------------------------------|---------------|------|
+| `examples/jokes/workflow.yaml`             | Minimal: prompt + script gate + select. Best to start here. | [authoring](examples/jokes/view.html) |
+| `examples/smoke_test.yaml`                 | Bare-minimum config — single prompt node. | — |
+| `examples/explicit_join.yaml`              | `type: join` topology marker. | — |
+| `examples/route_classify/workflow.yaml`    | Inline `route:` case ladder over structured state (Stage 5c). | [authoring](examples/route_classify/view.html) · [debug](examples/route_classify/view-debug.html) |
+| `examples/pipeline_style/workflow.yaml`    | Inline `route: { goto: <next> }` forward-edge authoring; 3-node linear chain reading top-down like a pipeline. | [authoring](examples/pipeline_style/view.html) · [debug](examples/pipeline_style/view-debug.html) |
+| `examples/absurd-paper/workflow.yaml`      | 13-node multi-stage pipeline with subgraphs and per-Send subgraph fan-out (`reviewer_pool`). | [authoring](examples/absurd-paper/view.html) |
+| `examples/wave_planner/workflow.yaml`      | Wave-driven dynamic-task pattern — `goto:` loop-back to a fan_out parent that re-reads its manifest each wave. Demonstrates `memory_threshold_pct`. Requires non-git workdir; see the example's README. | [authoring](examples/wave_planner/view.html) · [debug](examples/wave_planner/view-debug.html) |
+| `examples/run_all_examples.yaml`           | Wrapper that exercises the full set in CI (excludes wave_planner — that example needs a non-git workdir, incompatible with the parent's worktree-isolated subgraph mode). | — |
 
 ## Contributing
 

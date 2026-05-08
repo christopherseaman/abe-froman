@@ -1,0 +1,5 @@
+{"ts": "2026-05-08T21:07:10.720189+00:00", "event": "workflow_start", "workflow": "Pipeline-style authoring", "version": "0.1.0"}
+{"ts": "2026-05-08T21:07:10.792140+00:00", "event": "node_completed", "node": "step_one"}
+{"ts": "2026-05-08T21:07:10.832676+00:00", "event": "node_completed", "node": "step_two"}
+{"ts": "2026-05-08T21:07:10.879041+00:00", "event": "node_completed", "node": "step_three"}
+{"ts": "2026-05-08T21:07:10.882057+00:00", "event": "workflow_end", "completed": 3, "failed": 0}

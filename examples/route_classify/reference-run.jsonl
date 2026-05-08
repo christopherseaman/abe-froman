@@ -1,0 +1,4 @@
+{"ts": "2026-05-08T21:07:09.035321+00:00", "event": "workflow_start", "workflow": "Route Classifier", "version": "0.1.0"}
+{"ts": "2026-05-08T21:07:09.122526+00:00", "event": "node_completed", "node": "triage"}
+{"ts": "2026-05-08T21:07:09.166900+00:00", "event": "node_completed", "node": "page_oncall"}
+{"ts": "2026-05-08T21:07:09.169695+00:00", "event": "workflow_end", "completed": 2, "failed": 0}
