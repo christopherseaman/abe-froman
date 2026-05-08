@@ -27,7 +27,13 @@ def _emit_update_events(emitter: Any, update: dict[str, Any]) -> None:
     Emission order is fixed to match the historical state-diff
     ordering: ``node_completed`` → ``node_failed`` → ``gate_evaluated``
     → ``node_retried``. Tests asserting on event order depend on this.
+
+    Command-only nodes (route dispatchers that emit ``Command(goto=...)``
+    without any state update) appear in the updates stream as
+    ``{node_name: None}``. Skip them — no events to derive.
     """
+    if update is None:
+        return
     for node in update.get("completed_nodes") or []:
         emitter.emit({"event": "node_completed", "node": node})
 

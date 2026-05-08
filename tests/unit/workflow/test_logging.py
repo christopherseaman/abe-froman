@@ -137,6 +137,15 @@ class TestLogUpdate:
         events = [json.loads(l) for l in buf.getvalue().splitlines() if l.strip()]
         assert events == []
 
+    def test_no_events_on_none_update(self):
+        """Command-only nodes (route dispatchers emitting goto without
+        any state update) appear in the LangGraph updates stream as
+        ``{node_name: None}``. The logger must not crash on the None."""
+        buf = StringIO()
+        logger = JsonlLogger(buf)
+        logger.log_update(None)
+        assert buf.getvalue() == ""
+
     def test_emits_multiple_events_per_update(self):
         """A single update can carry both an evaluation record AND a
         completion (the gated-pass case). Both events fire from the
