@@ -126,6 +126,67 @@ def graph(config_file: str):
     click.echo(compiled.get_graph().draw_mermaid())
 
 
+@cli.command()
+@click.argument("config_file", type=click.Path(exists=True))
+@click.option(
+    "--log", "log_file", type=click.Path(exists=True),
+    help="JSONL log from a prior run; adds status overlay + per-node "
+         "event slices. Without it, the page renders authoring view "
+         "(topology + per-node config only).",
+)
+@click.option(
+    "--out", "out_path", type=click.Path(),
+    help="Output HTML path. Defaults to "
+         "<workdir>/abe-froman-view.html.",
+)
+@click.option(
+    "--workdir", "-w", default=".",
+    help="Working directory (used to resolve --out default).",
+)
+@click.option(
+    "--direction", default="TB",
+    type=click.Choice(["TB", "LR", "BT", "RL"], case_sensitive=False),
+    help="Mermaid layout direction. TB (top-to-bottom, default), "
+         "LR (left-to-right), BT, RL.",
+)
+def view(
+    config_file: str,
+    log_file: str | None,
+    out_path: str | None,
+    workdir: str,
+    direction: str,
+):
+    """Render a workflow as a self-contained HTML viewer.
+
+    Two modes:
+      Authoring: `abe-froman view <yaml>` — topology + per-node
+        config panel. No runtime overlay.
+      Debug: `abe-froman view <yaml> --log <jsonl>` — same plus
+        status overlay (passed/failed/retried/untouched) and
+        per-node log slices on click.
+    """
+    from abe_froman.cli.view import read_jsonl_log, render_view
+
+    try:
+        config = load_config(config_file)
+    except Exception as e:
+        raise click.ClickException(str(e))
+
+    events: list[dict] | None = None
+    if log_file:
+        try:
+            events = read_jsonl_log(Path(log_file))
+        except Exception as e:
+            raise click.ClickException(f"Reading log: {e}")
+
+    html = render_view(config, events, direction=direction.upper())
+
+    if out_path is None:
+        out_path = str(Path(workdir) / "abe-froman-view.html")
+    Path(out_path).write_text(html)
+    click.echo(f"Wrote {out_path}", err=True)
+
+
 async def _run_async(
     config: Graph,
     workdir: str,

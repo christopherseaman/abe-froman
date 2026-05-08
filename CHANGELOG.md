@@ -3,6 +3,32 @@
 All notable changes to abe-froman are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased] — `view` HTML viewer + runner None-update guard
+
+### Added
+
+- **`abe-froman view <yaml> [--log <jsonl>]`** — self-contained HTML
+  viewer for workflows. Authoring mode (no log): topology + per-node
+  config inspector. Debug mode (with log): adds status overlay
+  (passed/failed/retried/untouched), per-node `fired N×` chip for
+  goto re-fires, retry chip, last-error display, full event slice on
+  click. Custom Mermaid emission (not `compiled.get_graph().
+  draw_mermaid()`) gives layout control + author-perspective output
+  (skips synthetic `_eval_<id>` and `_route_<id>` nodes); Mermaid
+  loaded via CDN with raw-source fallback if blocked. Layout uses an
+  invisible-spine subgraph block for predictable direction;
+  `--direction TB|LR|BT|RL` flag (default TB). Output defaults to
+  `<workdir>/abe-froman-view.html`.
+
+### Fixed
+
+- **Runner crash on Command-only nodes when `--log` is set.** Route
+  dispatchers that emit `Command(goto=...)` without a state update
+  appear in the LangGraph updates stream as `{node_name: None}`;
+  `JsonlLogger.log_update(None)` was crashing with `AttributeError:
+  'NoneType' object has no attribute 'get'`. Guard added; regression
+  test in `test_logging.py::TestLogUpdate::test_no_events_on_none_update`.
+
 ## [Unreleased] — Native event stream + Anthropic backend + StubBackend removal + wave-driven re-execution + Foreman memory back-pressure
 
 ### Added

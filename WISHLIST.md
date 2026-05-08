@@ -257,32 +257,24 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
 
 - [x] **Subgraph with defined entry/exit nodes as a first-class primitive** — _landed, Stage 4c._ A subgraph declared via `Node.config:` is loaded as a `Graph` (identical schema), recursively compiled, and added as a node in the parent via `add_node(node.id, compiled_subgraph)`. State projection across the boundary is explicit via `inputs:` / `outputs:` declarations. Reusable subgraph libraries are a real concept now: the same YAML runs both standalone and as a subgraph reference.
 
-- [ ] **Workflow run visualization tool** — _surfaced 2026-05-08;
-  independently shippable, no hard deps on resume/replay/foreman
-  work._ Inputs already exist:
+- [x] **Workflow run visualization tool** — _delivered 2026-05-08
+  (MVP)._ `abe-froman view <yaml> [--log <jsonl>] [--out <path>]
+  [--direction TB|LR|BT|RL]` emits a self-contained HTML page with
+  custom Mermaid emission (not LangGraph's, for layout control and
+  author-perspective output skipping synthetic `_eval_<id>` /
+  `_route_<id>` nodes). Authoring mode (no log): topology + per-
+  node config inspector. Debug mode (with log): adds status overlay
+  (passed/failed/retried/untouched), goto-re-fire chip
+  (`fired N×`), retry chip, last-error display, full event slice.
+  Layout uses a Mermaid subgraph block with invisible spine edges
+  `START ~~~ workflow ~~~ END` for predictable direction. Bonus
+  fix: runner's `log_update(None)` crashed on Command-only nodes;
+  guard added.
 
-    - Topology: `compiled.get_graph().draw_mermaid()` — the existing
-      `abe-froman graph <yaml>` command.
-    - Per-node lifecycle: JSONL log emitted by `--log out.jsonl`
-      (workflow_start, node_completed, node_failed, node_retried,
-      gate_evaluated, workflow_end).
-    - Super-step ordering: implicit in JSONL `ts` field; explicit in
-      the checkpointer if needed later.
-
-  A standalone `abe-froman view <yaml> --log <jsonl>` that emits
-  either a terminal Mermaid diff (live-render super-step transitions
-  with passed/failed/retried color codes) or a one-shot HTML page
-  (clickable nodes → JSONL slice for that node) ships without
-  touching any other subsystem. Implementation is downstream-only:
-  read the artifacts authors already have, render. Likely the right
-  *first* item from this cluster — what authors want to see informs
-  what "checkpoint" should later mean.
-
-  Surface decision when pursued: extend `graph` subcommand with
-  `--log <jsonl>` flag (cleanest: one command, accepts an optional
-  log overlay) versus a fresh `view` subcommand (separate concern,
-  separate UX). Mermaid diff for terminal probably wants `view`;
-  static HTML overlay can live under `graph`.
+  Iteration 2 still on the table (deferred): time-slider replay,
+  `--follow` live mode, explicit `goto_fired` / `send_dispatched`
+  events for animated arrows, drill-down to per-node worktree
+  commits (depends on the integrated checkpoint story).
 
 - [ ] **Author-declared checkpoints + worktree commits + cross-run
   resume semantics** — _surfaced 2026-05-08 while reframing (26)._

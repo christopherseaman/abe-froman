@@ -144,6 +144,37 @@ Render the compiled LangGraph as a Mermaid diagram on stdout.
 uv run abe-froman graph config.yaml
 ```
 
+### view
+
+Render a workflow as a self-contained interactive HTML page. Open
+the output in a browser — no server, no auth.
+
+Two modes:
+
+```bash
+# Authoring: topology + per-node config inspector. No log needed.
+uv run abe-froman view config.yaml
+
+# Debug: same, plus per-node status overlay + log slices on click.
+uv run abe-froman view config.yaml --log out.jsonl
+```
+
+Flags:
+- `--out <path.html>` — output path (default `<workdir>/abe-froman-view.html`).
+- `--direction TB|LR|BT|RL` — Mermaid layout direction (default `TB`).
+- `--workdir <path>` — for resolving the default `--out` path.
+
+The Mermaid output is generated directly from the schema, not from
+LangGraph's compile-time topology, so synthetic `_eval_<id>` /
+`_route_<id>` nodes are hidden — authors see what they wrote. Node
+shapes encode type: rectangle for plain execute, hexagon for fan-out
+parents, diamond for route-only nodes, subroutine for subgraph
+references. Nodes with `evaluation:` blocks get a colored stroke.
+
+Mermaid loads via CDN; if blocked, the page falls back to displaying
+the raw Mermaid source. Opens cleanly without internet on subsequent
+loads (browser cache).
+
 ## Workflow schema
 
 ### Graph

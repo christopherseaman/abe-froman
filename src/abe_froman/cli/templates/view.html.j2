@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{ workflow_name }} — abe-froman view</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    margin: 0;
+    background: #f8f9fa;
+    color: #1f2937;
+  }
+  header {
+    background: #1f2937;
+    color: white;
+    padding: 12px 20px;
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+  }
+  header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+  header .version { color: #9ca3af; font-size: 14px; }
+  header .badge {
+    background: #374151;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 12px;
+    margin-left: auto;
+  }
+  main {
+    display: grid;
+    grid-template-columns: 1fr 360px;
+    gap: 16px;
+    padding: 16px;
+    height: calc(100vh - 60px);
+    box-sizing: border-box;
+  }
+  #diagram {
+    background: white;
+    border-radius: 6px;
+    padding: 16px;
+    overflow: auto;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  }
+  #side {
+    background: white;
+    border-radius: 6px;
+    padding: 16px;
+    overflow: auto;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    font-size: 13px;
+  }
+  #side h2 {
+    font-size: 14px;
+    margin: 0 0 8px 0;
+    border-bottom: 1px solid #e5e7eb;
+    padding-bottom: 6px;
+  }
+  #side .placeholder {
+    color: #9ca3af;
+    font-style: italic;
+  }
+  #side pre {
+    background: #f3f4f6;
+    padding: 10px;
+    border-radius: 4px;
+    overflow-x: auto;
+    font-size: 12px;
+    margin: 8px 0;
+  }
+  #side .status {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+  }
+  #side .status.passed { background: #d1fae5; color: #065f46; }
+  #side .status.failed { background: #fee2e2; color: #991b1b; }
+  #side .status.retried { background: #fef3c7; color: #92400e; }
+  #side .status.untouched { background: #e5e7eb; color: #4b5563; }
+  #side .chip {
+    display: inline-block;
+    background: #e0e7ff;
+    color: #3730a3;
+    padding: 2px 6px;
+    border-radius: 6px;
+    font-size: 11px;
+    margin-right: 4px;
+    margin-bottom: 4px;
+  }
+  /* Mermaid node CSS classes applied post-render via JS */
+  g.node.passed > rect, g.node.passed > polygon, g.node.passed > path {
+    fill: #d1fae5 !important;
+    stroke: #10b981 !important;
+  }
+  g.node.failed > rect, g.node.failed > polygon, g.node.failed > path {
+    fill: #fee2e2 !important;
+    stroke: #ef4444 !important;
+  }
+  g.node.retried > rect, g.node.retried > polygon, g.node.retried > path {
+    fill: #fef3c7 !important;
+    stroke: #f59e0b !important;
+  }
+  /* Untouched stays default Mermaid styling. */
+  /* Invisible spine — Mermaid 10 renders ~~~ with stroke-dasharray;
+     we hide them entirely so they only contribute to layout. */
+  .edgePath:has(line[stroke-dasharray="0"]) line { stroke: transparent !important; }
+  .fallback {
+    background: #fef3c7;
+    color: #92400e;
+    padding: 8px 12px;
+    border-radius: 4px;
+    margin-bottom: 12px;
+    font-size: 13px;
+  }
+  details summary { cursor: pointer; padding: 4px 0; font-weight: 600; }
+</style>
+</head>
+<body>
+<header>
+  <h1>{{ workflow_name }}</h1>
+  <span class="version">v{{ workflow_version }}</span>
+  {% if has_log %}
+    <span class="badge">debug mode (with log)</span>
+  {% else %}
+    <span class="badge">authoring mode</span>
+  {% endif %}
+</header>
+
+<main>
+  <div id="diagram">
+    <noscript>
+      <div class="fallback">
+        JavaScript is disabled. Raw Mermaid source below — paste into
+        <a href="https://mermaid.live">mermaid.live</a> to render.
+      </div>
+      <pre>{{ mermaid }}</pre>
+    </noscript>
+    <div id="mermaid-host" class="mermaid">{{ mermaid }}</div>
+    <div id="mermaid-fallback" style="display:none">
+      <div class="fallback">
+        Mermaid CDN unavailable. Raw source below:
+      </div>
+      <pre>{{ mermaid }}</pre>
+    </div>
+  </div>
+
+  <div id="side">
+    <h2>Inspector</h2>
+    <p class="placeholder" id="placeholder">
+      Click a node in the diagram to see its config{% if has_log %} and run events{% endif %}.
+    </p>
+    <div id="detail" style="display:none"></div>
+  </div>
+</main>
+
+<script id="abe-payload" type="application/json">
+{{ payload_json | safe }}
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"
+        onerror="document.getElementById('mermaid-host').style.display='none';
+                 document.getElementById('mermaid-fallback').style.display='block';"></script>
+<script>
+  const payload = JSON.parse(document.getElementById("abe-payload").textContent);
+
+  if (window.mermaid) {
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: "default",
+      flowchart: { curve: "basis", padding: 12 }
+    });
+    mermaid.run({ querySelector: "#mermaid-host" }).then(applyOverlay);
+  }
+
+  function applyOverlay() {
+    const svg = document.querySelector("#mermaid-host svg");
+    if (!svg) return;
+
+    // Mermaid emits each node as <g class="node ..." id="flowchart-<id>-NN">.
+    // Map our node ids to those DOM nodes by matching the id substring.
+    document.querySelectorAll("#mermaid-host g.node").forEach(g => {
+      const id = g.id || "";
+      // id looks like "flowchart-<nodeid>-NN" or "flowchart-<nodeid>".
+      const match = id.match(/^flowchart-(.+?)(-\d+)?$/);
+      if (!match) return;
+      const nodeId = match[1];
+      const status = payload.statuses[nodeId];
+      if (status) {
+        g.classList.add(status.status);
+        if (status.retry_count > 0) g.classList.add("retried");
+      }
+      g.style.cursor = "pointer";
+      g.addEventListener("click", () => showNode(nodeId));
+    });
+
+    // Mark START/END as untouched-styled (don't color them as passed).
+    document.querySelectorAll("#mermaid-host g.node").forEach(g => {
+      if (g.id.includes("flowchart-START") || g.id.includes("flowchart-END")) {
+        g.classList.remove("passed", "failed", "retried");
+      }
+    });
+  }
+
+  function showNode(nodeId) {
+    document.getElementById("placeholder").style.display = "none";
+    const detail = document.getElementById("detail");
+    detail.style.display = "block";
+
+    const cfg = payload.node_configs[nodeId];
+    const status = payload.statuses[nodeId] || {};
+
+    let html = "";
+    if (cfg) {
+      html += '<h2>' + escapeHtml(cfg.name || nodeId) + '</h2>';
+    } else {
+      html += '<h2>' + escapeHtml(nodeId) + ' <small>(runtime-only)</small></h2>';
+    }
+
+    if (payload.has_log) {
+      const cls = status.status || "untouched";
+      html += '<span class="status ' + cls + '">' + cls + '</span>';
+      if (status.fired_count > 1) {
+        html += '<span class="chip">fired ' + status.fired_count + '×</span>';
+      }
+      if (status.retry_count > 0) {
+        html += '<span class="chip">retried ' + status.retry_count + '×</span>';
+      }
+      if (status.last_error) {
+        html += '<details open><summary>Last error</summary><pre>'
+              + escapeHtml(status.last_error) + '</pre></details>';
+      }
+    }
+
+    if (cfg) {
+      html += '<details open><summary>Config</summary><pre>'
+            + escapeHtml(JSON.stringify(cfg, null, 2)) + '</pre></details>';
+    }
+
+    if (payload.has_log && status.events && status.events.length > 0) {
+      html += '<details><summary>Events ('
+            + status.events.length + ')</summary><pre>'
+            + escapeHtml(status.events.map(e => JSON.stringify(e)).join("\n"))
+            + '</pre></details>';
+    }
+
+    detail.innerHTML = html;
+  }
+
+  function escapeHtml(s) {
+    if (s === null || s === undefined) return "";
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+</script>
+</body>
+</html>
