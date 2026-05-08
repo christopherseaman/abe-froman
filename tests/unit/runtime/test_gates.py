@@ -1086,3 +1086,209 @@ class TestEvalPreamble:
         text = build_eval_preamble(result, evaluation)
         assert "coverage=0.70" in text
         assert "extras=0.30: unexpected" in text
+
+
+# ---------------------------------------------------------------------------
+# Dep-output projection (WISHLIST 216 — gate validators see dep outputs)
+# ---------------------------------------------------------------------------
+
+
+class TestGateDepOutputs:
+    """Gates today see only the node's own output. The dep-outputs
+    projection lets a validator inspect upstream nodes' outputs too —
+    the bug case that gate-only phases rely on the `$WORKDIR` filesystem
+    workaround for. After this fix:
+
+    - Script gates: `DEPS_JSON` env var carries the JSON-serialized
+      dict of dep node-id → output. Validators read it via
+      `json.loads(os.environ["DEPS_JSON"])`. Stdin shape unchanged
+      (still the node's own output).
+    - LLM gates: each dep is bound by id directly in the Jinja
+      context (matches `build_context`'s shape).
+    """
+
+    @pytest.mark.asyncio
+    async def test_script_gate_reads_DEPS_JSON_env_var(self, tmp_path):
+        """Validator script reads DEPS_JSON; verifies the projected
+        dep value is present."""
+        script = tmp_path / "v.py"
+        script.write_text(
+            "import json, os, sys\n"
+            "deps = json.loads(os.environ['DEPS_JSON'])\n"
+            "print('1.0' if deps.get('research') == 'r-output' else '0.0')\n"
+        )
+        gate = Evaluation(validator=str(script), threshold=1.0)
+        result = await run_evaluation(
+            gate, "writer", workdir=str(tmp_path),
+            node_output="any",
+            dep_outputs={"research": "r-output"},
+        )
+        assert result.score == 1.0
+
+    @pytest.mark.asyncio
+    async def test_script_gate_DEPS_JSON_empty_when_no_deps(self, tmp_path):
+        """Without dep_outputs, DEPS_JSON is the empty dict — never
+        absent. Validators can rely on it being a parseable JSON
+        object without an `if "DEPS_JSON" in os.environ` guard."""
+        script = tmp_path / "v.py"
+        script.write_text(
+            "import json, os\n"
+            "deps = json.loads(os.environ['DEPS_JSON'])\n"
+            "print('1.0' if deps == {} else '0.0')\n"
+        )
+        gate = Evaluation(validator=str(script), threshold=1.0)
+        result = await run_evaluation(
+            gate, "n", workdir=str(tmp_path), node_output="x",
+        )
+        assert result.score == 1.0
+
+    @pytest.mark.asyncio
+    async def test_script_gate_structured_and_worktrees_env_vars(self, tmp_path):
+        """DEPS_STRUCTURED_JSON and DEPS_WORKTREES_JSON are the
+        structured-output and worktree-path companions to DEPS_JSON.
+        Useful when validators want parsed JSON content from a dep
+        rather than its raw stdout."""
+        script = tmp_path / "v.py"
+        script.write_text(
+            "import json, os\n"
+            "structured = json.loads(os.environ['DEPS_STRUCTURED_JSON'])\n"
+            "worktrees = json.loads(os.environ['DEPS_WORKTREES_JSON'])\n"
+            "ok = structured.get('analyze', {}).get('topic') == 'AI' and "
+            "worktrees.get('analyze') == '/tmp/wt-x'\n"
+            "print('1.0' if ok else '0.0')\n"
+        )
+        gate = Evaluation(validator=str(script), threshold=1.0)
+        result = await run_evaluation(
+            gate, "writer", workdir=str(tmp_path),
+            node_output="x",
+            dep_structured_outputs={"analyze": {"topic": "AI"}},
+            dep_worktrees={"analyze": "/tmp/wt-x"},
+        )
+        assert result.score == 1.0
+
+    @pytest.mark.asyncio
+    async def test_llm_gate_template_binds_dep_by_id(self, tmp_path):
+        """An LLM gate template referencing `{{ research }}` resolves
+        to research's stdout — same shape executor templates use via
+        `build_context`."""
+        from unittest.mock import AsyncMock
+
+        template = tmp_path / "gate.md"
+        template.write_text(
+            "Research said: {{ research }}\n"
+            "Score 1.0 if it mentions cats."
+        )
+        gate = Evaluation(validator="gate.md", threshold=1.0)
+
+        captured: dict[str, str] = {}
+
+        class _CapBackend:
+            async def send_prompt(self, prompt, model, workdir):
+                captured["prompt"] = prompt
+                from abe_froman.runtime.result import ExecutionResult
+                return ExecutionResult(
+                    success=True, output='{"score": 1.0}',
+                )
+
+        result = await run_evaluation(
+            gate, "writer", workdir=str(tmp_path),
+            node_output="my draft",
+            backend=_CapBackend(), default_model="sonnet",
+            dep_outputs={"research": "cats are great"},
+        )
+        assert result.score == 1.0
+        assert "cats are great" in captured["prompt"]
+
+    @pytest.mark.asyncio
+    async def test_llm_gate_template_aggregate_deps_form(self, tmp_path):
+        """`{{ _deps }}` is a JSON dump of all dep outputs — useful
+        for templates that want to iterate generically."""
+        template = tmp_path / "gate.md"
+        template.write_text("All deps: {{ _deps }}")
+        gate = Evaluation(validator="gate.md", threshold=1.0)
+
+        captured: dict[str, str] = {}
+
+        class _CapBackend:
+            async def send_prompt(self, prompt, model, workdir):
+                captured["prompt"] = prompt
+                from abe_froman.runtime.result import ExecutionResult
+                return ExecutionResult(
+                    success=True, output='{"score": 1.0}',
+                )
+
+        await run_evaluation(
+            gate, "writer", workdir=str(tmp_path),
+            node_output="x",
+            backend=_CapBackend(), default_model="sonnet",
+            dep_outputs={"a": "alpha", "b": "beta"},
+        )
+        # JSON dict; key order may vary but both values present.
+        assert "alpha" in captured["prompt"]
+        assert "beta" in captured["prompt"]
+
+
+class TestGateScopingByDeps:
+    """`run_evaluation_and_outcome` filters dep_outputs to the gated
+    node's declared deps, matching `build_context`'s scoping. A node
+    with `depends_on: [a]` does NOT see `b`'s output even though `b`
+    is in completed_nodes. Gate-only phases (no execute, no deps)
+    see ALL completed outputs (the WISHLIST bug case)."""
+
+    def test_scoped_to_declared_deps(self, tmp_path):
+        """Direct test of the scoping helper."""
+        from abe_froman.compile.nodes import _scope_dep_outputs_for_gate
+        from abe_froman.schema.models import Node
+
+        node = Node(
+            id="writer", name="Writer",
+            depends_on=["research"],
+            execute={"url": "/usr/bin/echo"},
+            evaluation={"validator": "/usr/bin/true", "threshold": 1.0},
+        )
+        state = {
+            "node_outputs": {
+                "research": "r-out",
+                "unrelated": "u-out",
+            },
+            "node_structured_outputs": {},
+            "node_worktrees": {},
+        }
+        deps, structured, worktrees = _scope_dep_outputs_for_gate(node, state)
+        assert deps == {"research": "r-out"}
+        assert "unrelated" not in deps
+
+    def test_gate_only_phase_sees_all_completed(self, tmp_path):
+        """Node with no `execute:`, no `depends_on:`, only
+        `evaluation:` — gets all completed outputs."""
+        from abe_froman.compile.nodes import _scope_dep_outputs_for_gate
+        from abe_froman.schema.models import Node
+
+        node = Node(
+            id="checker", name="Checker",
+            evaluation={"validator": "/usr/bin/true", "threshold": 1.0},
+        )
+        state = {
+            "node_outputs": {"a": "a-out", "b": "b-out"},
+            "node_structured_outputs": {},
+            "node_worktrees": {},
+        }
+        deps, _, _ = _scope_dep_outputs_for_gate(node, state)
+        assert deps == {"a": "a-out", "b": "b-out"}
+
+    def test_no_completed_outputs_returns_none(self, tmp_path):
+        """Empty state → None (run_evaluation_script writes
+        DEPS_JSON='{}' anyway, so the validator sees an empty dict
+        either way)."""
+        from abe_froman.compile.nodes import _scope_dep_outputs_for_gate
+        from abe_froman.schema.models import Node
+
+        node = Node(
+            id="writer", name="Writer",
+            depends_on=["research"],
+            execute={"url": "/usr/bin/echo"},
+            evaluation={"validator": "/usr/bin/true", "threshold": 1.0},
+        )
+        state = {"node_outputs": {}}
+        deps, _, _ = _scope_dep_outputs_for_gate(node, state)
+        assert deps is None

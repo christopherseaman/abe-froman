@@ -359,6 +359,49 @@ def build_evaluation_outcome_update(
     return update
 
 
+def _scope_dep_outputs_for_gate(
+    node: Node, state: WorkflowState,
+) -> tuple[
+    dict[str, str] | None,
+    dict[str, Any] | None,
+    dict[str, str] | None,
+]:
+    """Pick the dep-output dicts a gate validator should see.
+
+    A gate normally sees only its node's declared deps (matches
+    ``build_context``'s scoping). But a "gate-only" phase — a node
+    with ``evaluation:`` and no ``execute:`` and no ``depends_on:`` —
+    has nothing to scope to and gets the full set of completed-node
+    outputs (the WISHLIST bug case: gate-only phases need a useful
+    signal somewhere).
+    """
+    node_outputs = state.get("node_outputs", {}) or {}
+    structured = state.get("node_structured_outputs", {}) or {}
+    worktrees = state.get("node_worktrees", {}) or {}
+
+    deps = list(node.depends_on or [])
+    is_gate_only = (
+        not deps
+        and node.execute is None
+        and node.evaluation is not None
+    )
+
+    if is_gate_only:
+        chosen_outputs = dict(node_outputs)
+        chosen_structured = dict(structured)
+        chosen_worktrees = dict(worktrees)
+    else:
+        chosen_outputs = {d: node_outputs[d] for d in deps if d in node_outputs}
+        chosen_structured = {d: structured[d] for d in deps if d in structured}
+        chosen_worktrees = {d: worktrees[d] for d in deps if d in worktrees}
+
+    return (
+        chosen_outputs or None,
+        chosen_structured or None,
+        chosen_worktrees or None,
+    )
+
+
 async def run_evaluation_and_outcome(
     node: Node,
     config: Graph,
@@ -380,6 +423,10 @@ async def run_evaluation_and_outcome(
     max_retries = node.effective_max_retries(s)
     retries = state.get("retries", {}).get(key, 0)
 
+    dep_outputs, dep_structured, dep_worktrees = _scope_dep_outputs_for_gate(
+        node, state,
+    )
+
     eval_call = run_evaluation(
         node.evaluation,
         key,
@@ -389,6 +436,9 @@ async def run_evaluation_and_outcome(
         attempt_number=retries + 1,
         backend=backend,
         default_model=s.default_model,
+        dep_outputs=dep_outputs,
+        dep_structured_outputs=dep_structured,
+        dep_worktrees=dep_worktrees,
     )
     try:
         if timeout is not None:

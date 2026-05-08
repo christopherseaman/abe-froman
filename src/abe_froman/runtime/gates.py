@@ -207,11 +207,21 @@ async def run_evaluation_script(
     workflow_name: str = "",
     attempt_number: int = 1,
     require_score: bool = True,
+    dep_outputs: dict[str, str] | None = None,
+    dep_structured_outputs: dict[str, Any] | None = None,
+    dep_worktrees: dict[str, str] | None = None,
 ) -> EvaluationResult:
     """Run a .py or .js validator script and parse its response.
 
     The node output is passed via stdin so validators can inspect it.
     Returns an EvaluationResult; bare-float output is wrapped with feedback=None.
+
+    ``dep_outputs`` / ``dep_structured_outputs`` / ``dep_worktrees``
+    are projected to the validator's environment as ``DEPS_JSON`` /
+    ``DEPS_STRUCTURED_JSON`` / ``DEPS_WORKTREES_JSON`` (each is a
+    JSON-serialized dict of node-id → value). Validators read them
+    via ``json.loads(os.environ["DEPS_JSON"])``. Stdin shape stays
+    the node's own output — no breaking change for existing scripts.
     """
     path = Path(validator_path)
     suffix = path.suffix.lower()
@@ -231,6 +241,9 @@ async def run_evaluation_script(
         "WORKFLOW_NAME": workflow_name,
         "ATTEMPT_NUMBER": str(attempt_number),
         "WORKDIR": workdir,
+        "DEPS_JSON": json.dumps(dep_outputs or {}),
+        "DEPS_STRUCTURED_JSON": json.dumps(dep_structured_outputs or {}),
+        "DEPS_WORKTREES_JSON": json.dumps(dep_worktrees or {}),
     }
 
     try:
@@ -270,12 +283,23 @@ async def run_evaluation_llm(
     default_model: str,
     attempt_number: int = 1,
     require_score: bool = True,
+    dep_outputs: dict[str, str] | None = None,
+    dep_structured_outputs: dict[str, Any] | None = None,
+    dep_worktrees: dict[str, str] | None = None,
 ) -> EvaluationResult:
     """Evaluate a .md prompt-based evaluation via an LLM backend.
 
     The evaluation's .md file is rendered as a Jinja2 template with the
     node output, node id, and attempt number available as context. The
     backend's response must be JSON matching the feedback schema.
+
+    Each dep's output is bound under its node id directly
+    (``{{ research }}`` resolves to research's stdout) — same shape
+    as ``compile/nodes.py::build_context`` uses for executor-node
+    templates, so authors carry one mental model. Aggregate forms
+    ``{{ _deps }}`` (JSON dict of dep outputs) and
+    ``{{ _dep_structured }}`` (JSON dict of structured outputs)
+    surface for multi-dep gates that want to iterate generically.
     """
     from abe_froman.runtime.executor.prompt import render_template
 
@@ -287,14 +311,25 @@ async def run_evaluation_llm(
             score=0.0,
             feedback=f"evaluation template not found: {template_path}",
         )
-    rendered = render_template(
-        template_text,
-        {
-            "output": node_output,
-            "node_id": node_id,
-            "attempt": attempt_number,
-        },
-    )
+    context: dict[str, Any] = {
+        "output": node_output,
+        "node_id": node_id,
+        "attempt": attempt_number,
+    }
+    if dep_outputs:
+        for dep_id, dep_value in dep_outputs.items():
+            # Bind by id directly so {{ research }} resolves; matches
+            # build_context's convention for executor templates.
+            context[dep_id] = dep_value
+        context["_deps"] = json.dumps(dep_outputs)
+    if dep_structured_outputs:
+        for dep_id, struct in dep_structured_outputs.items():
+            context[f"{dep_id}_structured"] = struct
+        context["_dep_structured"] = json.dumps(dep_structured_outputs)
+    if dep_worktrees:
+        for dep_id, wt_path in dep_worktrees.items():
+            context[f"{dep_id}_worktree"] = wt_path
+    rendered = render_template(template_text, context)
 
     model = evaluation.model or default_model
     result = await backend.send_prompt(rendered, model, workdir)
@@ -316,11 +351,19 @@ async def run_evaluation(
     attempt_number: int = 1,
     backend: Any = None,
     default_model: str = "sonnet",
+    dep_outputs: dict[str, str] | None = None,
+    dep_structured_outputs: dict[str, Any] | None = None,
+    dep_worktrees: dict[str, str] | None = None,
 ) -> EvaluationResult:
     """Run an evaluation and return an EvaluationResult.
 
     Script-based validators (.py/.js) are dispatched to subprocess.
     Prompt-based validators (.md) are dispatched to the provided backend.
+
+    ``dep_*`` kwargs project upstream node outputs into the validator
+    so gates can inspect what they're gating. See
+    ``run_evaluation_script`` and ``run_evaluation_llm`` for the
+    per-dispatcher projection rules.
     """
     path = Path(evaluation.validator)
     suffix = path.suffix.lower()
@@ -331,6 +374,9 @@ async def run_evaluation(
             evaluation.validator, node_id, workdir, node_output,
             workflow_name=workflow_name, attempt_number=attempt_number,
             require_score=require_score,
+            dep_outputs=dep_outputs,
+            dep_structured_outputs=dep_structured_outputs,
+            dep_worktrees=dep_worktrees,
         )
     elif suffix == ".md":
         if backend is None:
@@ -342,6 +388,9 @@ async def run_evaluation(
             evaluation, node_id, workdir, node_output,
             backend=backend, default_model=default_model,
             attempt_number=attempt_number, require_score=require_score,
+            dep_outputs=dep_outputs,
+            dep_structured_outputs=dep_structured_outputs,
+            dep_worktrees=dep_worktrees,
         )
     else:
         raise ValueError(f"Unsupported validator type: {suffix}")
