@@ -15,13 +15,11 @@ need to.
 from __future__ import annotations
 
 import asyncio
-import logging
 from typing import Any
 
+from abe_froman.runtime.executor.backends._lazy_client import LazyClientMixin
 from abe_froman.runtime.executor.backends._overload import maybe_raise_overload
 from abe_froman.runtime.result import ExecutionResult
-
-logger = logging.getLogger(__name__)
 
 
 # Generic-name → vendor-ID resolution. Pass-through on miss so authors
@@ -66,7 +64,7 @@ _OVERLOAD_EXCEPTION_NAMES = frozenset({
 })
 
 
-class AnthropicBackend:
+class AnthropicBackend(LazyClientMixin):
     """Direct Anthropic Messages API PromptBackend.
 
     Lazy client construction — first ``send_prompt`` call creates the
@@ -74,26 +72,21 @@ class AnthropicBackend:
     httpx pool.
     """
 
-    def __init__(self, api_key: str):
-        self._api_key = api_key
-        self._client: Any = None
-        self._init_lock = asyncio.Lock()
+    _close_label = "Anthropic"
 
-    async def _ensure_client(self) -> Any:
-        if self._client is not None:
-            return self._client
-        async with self._init_lock:
-            if self._client is not None:
-                return self._client
-            try:
-                from anthropic import AsyncAnthropic
-            except ImportError as e:
-                raise RuntimeError(
-                    "Anthropic backend requires the `anthropic` package. "
-                    "Install with: uv sync --extra anthropic"
-                ) from e
-            self._client = AsyncAnthropic(api_key=self._api_key)
-            return self._client
+    def __init__(self, api_key: str):
+        super().__init__()
+        self._api_key = api_key
+
+    async def _create_client(self) -> Any:
+        try:
+            from anthropic import AsyncAnthropic
+        except ImportError as e:
+            raise RuntimeError(
+                "Anthropic backend requires the `anthropic` package. "
+                "Install with: uv sync --extra anthropic"
+            ) from e
+        return AsyncAnthropic(api_key=self._api_key)
 
     async def send_prompt(
         self, prompt: str, model: str, workdir: str,
@@ -149,12 +142,3 @@ class AnthropicBackend:
                 ),
             )
         return ExecutionResult(output="".join(text_parts))
-
-    async def close(self) -> None:
-        if self._client is None:
-            return
-        try:
-            await self._client.close()
-        except Exception:
-            logger.warning("Anthropic client close failed", exc_info=True)
-        self._client = None

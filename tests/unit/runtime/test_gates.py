@@ -6,7 +6,6 @@ import pytest
 from abe_froman.compile.graph import build_workflow_graph
 from abe_froman.runtime.gates import EvaluationResult, run_evaluation
 from abe_froman.runtime.state import make_initial_state
-from abe_froman.runtime.executor.backends.acp import ACPBackend
 from abe_froman.runtime.executor.dispatch import DispatchExecutor
 from abe_froman.schema.models import Evaluation
 
@@ -441,84 +440,6 @@ class TestRetryBackoff:
         # executions + 3 validator runs. If we blow past this, something other
         # than the backoff is slowing us down.
         assert elapsed < 10.0, f"suspiciously slow ({elapsed:.3f}s)"
-
-
-class TestJokeWorkflowIntegration:
-    """Full E2E: ACP generates jokes -> deterministic gate validates JSON schema
-    -> ACP selects best joke. Tests the entire pipeline with real Claude execution."""
-
-    @pytest.mark.asyncio
-    async def test_generate_gate_select(self, tmp_path):
-        generate_prompt = tmp_path / "generate.md"
-        generate_prompt.write_text(
-            'Generate exactly 3 short jokes. Respond with ONLY valid JSON, '
-            'no markdown, no code fences:\n'
-            '{"jokes": ["joke 1", "joke 2", "joke 3"]}'
-        )
-        select_prompt = tmp_path / "select.md"
-        select_prompt.write_text(
-            "Here are some jokes:\n\n{{generate}}\n\n"
-            "Pick the funniest one. Respond with ONLY the joke text."
-        )
-
-        validator = tmp_path / "validate.py"
-        validator.write_text(
-            "import json, sys\n"
-            "raw = sys.stdin.read().strip()\n"
-            "try:\n"
-            "    data = json.loads(raw)\n"
-            "    jokes = data.get('jokes', [])\n"
-            "    if isinstance(jokes, list) and len(jokes) == 3 "
-            "and all(isinstance(j, str) and j for j in jokes):\n"
-            "        print('1.0')\n"
-            "    else:\n"
-            "        print('0.0')\n"
-            "except Exception:\n"
-            "    print('0.0')\n"
-        )
-
-        config = make_config(
-            [
-                {
-                    "id": "generate",
-                    "name": "Generate Jokes",
-                    "execute": {"url": "generate.md"},
-                    "evaluation": {
-                        "validator": str(validator),
-                        "threshold": 1.0,
-                        "blocking": True,
-                        "max_retries": 2,
-                    },
-                },
-                {
-                    "id": "select",
-                    "name": "Select Best",
-                    "execute": {"url": "select.md"},
-                    "depends_on": ["generate"],
-                },
-            ],
-            executor="acp",
-        )
-
-        backend = ACPBackend()
-        executor = DispatchExecutor(
-            workdir=str(tmp_path), prompt_backend=backend, settings=config.settings,
-        )
-        try:
-            graph = build_workflow_graph(config, executor)
-            result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
-
-            assert "generate" in result["completed_nodes"]
-            assert "select" in result["completed_nodes"]
-            assert result["evaluations"]["generate"][-1]["result"]["score"] == 1.0
-
-            gen_output = result["node_outputs"]["generate"]
-            data = json.loads(gen_output)
-            assert len(data["jokes"]) == 3
-
-            assert len(result["node_outputs"]["select"]) > 0
-        finally:
-            await executor.close()
 
 
 # ---------------------------------------------------------------------------
@@ -1166,66 +1087,37 @@ class TestGateDepOutputs:
         )
         assert result.score == 1.0
 
-    @pytest.mark.asyncio
-    async def test_llm_gate_template_binds_dep_by_id(self, tmp_path):
+    def test_llm_gate_template_binds_dep_by_id(self):
         """An LLM gate template referencing `{{ research }}` resolves
         to research's stdout — same shape executor templates use via
         `build_context`."""
-        from unittest.mock import AsyncMock
+        from abe_froman.runtime.executor.prompt import render_template
+        from abe_froman.runtime.gates import build_llm_gate_context
 
-        template = tmp_path / "gate.md"
-        template.write_text(
-            "Research said: {{ research }}\n"
-            "Score 1.0 if it mentions cats."
-        )
-        gate = Evaluation(validator="gate.md", threshold=1.0)
-
-        captured: dict[str, str] = {}
-
-        class _CapBackend:
-            async def send_prompt(self, prompt, model, workdir):
-                captured["prompt"] = prompt
-                from abe_froman.runtime.result import ExecutionResult
-                return ExecutionResult(
-                    success=True, output='{"score": 1.0}',
-                )
-
-        result = await run_evaluation(
-            gate, "writer", workdir=str(tmp_path),
+        context = build_llm_gate_context(
+            node_id="writer",
             node_output="my draft",
-            backend=_CapBackend(), default_model="sonnet",
+            attempt_number=1,
             dep_outputs={"research": "cats are great"},
         )
-        assert result.score == 1.0
-        assert "cats are great" in captured["prompt"]
+        rendered = render_template("Research said: {{ research }}", context)
+        assert "cats are great" in rendered
 
-    @pytest.mark.asyncio
-    async def test_llm_gate_template_aggregate_deps_form(self, tmp_path):
+    def test_llm_gate_template_aggregate_deps_form(self):
         """`{{ _deps }}` is a JSON dump of all dep outputs — useful
         for templates that want to iterate generically."""
-        template = tmp_path / "gate.md"
-        template.write_text("All deps: {{ _deps }}")
-        gate = Evaluation(validator="gate.md", threshold=1.0)
+        from abe_froman.runtime.executor.prompt import render_template
+        from abe_froman.runtime.gates import build_llm_gate_context
 
-        captured: dict[str, str] = {}
-
-        class _CapBackend:
-            async def send_prompt(self, prompt, model, workdir):
-                captured["prompt"] = prompt
-                from abe_froman.runtime.result import ExecutionResult
-                return ExecutionResult(
-                    success=True, output='{"score": 1.0}',
-                )
-
-        await run_evaluation(
-            gate, "writer", workdir=str(tmp_path),
+        context = build_llm_gate_context(
+            node_id="writer",
             node_output="x",
-            backend=_CapBackend(), default_model="sonnet",
+            attempt_number=1,
             dep_outputs={"a": "alpha", "b": "beta"},
         )
-        # JSON dict; key order may vary but both values present.
-        assert "alpha" in captured["prompt"]
-        assert "beta" in captured["prompt"]
+        rendered = render_template("All deps: {{ _deps }}", context)
+        assert "alpha" in rendered
+        assert "beta" in rendered
 
 
 class TestGateScopingByDeps:

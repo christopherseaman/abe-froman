@@ -274,6 +274,43 @@ async def run_evaluation_script(
     )
 
 
+def build_llm_gate_context(
+    node_id: str,
+    node_output: str,
+    attempt_number: int,
+    dep_outputs: dict[str, str] | None = None,
+    dep_structured_outputs: dict[str, Any] | None = None,
+    dep_worktrees: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Jinja context for LLM gate templates.
+
+    Each dep's output is bound under its node id directly
+    (``{{ research }}`` resolves to research's stdout) — same shape
+    as ``compile/nodes.py::build_context`` uses for executor-node
+    templates, so authors carry one mental model. Aggregate forms
+    ``{{ _deps }}`` (JSON dict of dep outputs) and
+    ``{{ _dep_structured }}`` (JSON dict of structured outputs)
+    surface for multi-dep gates that want to iterate generically.
+    """
+    context: dict[str, Any] = {
+        "output": node_output,
+        "node_id": node_id,
+        "attempt": attempt_number,
+    }
+    if dep_outputs:
+        for dep_id, dep_value in dep_outputs.items():
+            context[dep_id] = dep_value
+        context["_deps"] = json.dumps(dep_outputs)
+    if dep_structured_outputs:
+        for dep_id, struct in dep_structured_outputs.items():
+            context[f"{dep_id}_structured"] = struct
+        context["_dep_structured"] = json.dumps(dep_structured_outputs)
+    if dep_worktrees:
+        for dep_id, wt_path in dep_worktrees.items():
+            context[f"{dep_id}_worktree"] = wt_path
+    return context
+
+
 async def run_evaluation_llm(
     evaluation: Evaluation,
     node_id: str,
@@ -291,15 +328,8 @@ async def run_evaluation_llm(
 
     The evaluation's .md file is rendered as a Jinja2 template with the
     node output, node id, and attempt number available as context. The
-    backend's response must be JSON matching the feedback schema.
-
-    Each dep's output is bound under its node id directly
-    (``{{ research }}`` resolves to research's stdout) — same shape
-    as ``compile/nodes.py::build_context`` uses for executor-node
-    templates, so authors carry one mental model. Aggregate forms
-    ``{{ _deps }}`` (JSON dict of dep outputs) and
-    ``{{ _dep_structured }}`` (JSON dict of structured outputs)
-    surface for multi-dep gates that want to iterate generically.
+    backend's response must be JSON matching the feedback schema. See
+    ``build_llm_gate_context`` for the dep projection rules.
     """
     from abe_froman.runtime.executor.prompt import render_template
 
@@ -311,24 +341,14 @@ async def run_evaluation_llm(
             score=0.0,
             feedback=f"evaluation template not found: {template_path}",
         )
-    context: dict[str, Any] = {
-        "output": node_output,
-        "node_id": node_id,
-        "attempt": attempt_number,
-    }
-    if dep_outputs:
-        for dep_id, dep_value in dep_outputs.items():
-            # Bind by id directly so {{ research }} resolves; matches
-            # build_context's convention for executor templates.
-            context[dep_id] = dep_value
-        context["_deps"] = json.dumps(dep_outputs)
-    if dep_structured_outputs:
-        for dep_id, struct in dep_structured_outputs.items():
-            context[f"{dep_id}_structured"] = struct
-        context["_dep_structured"] = json.dumps(dep_structured_outputs)
-    if dep_worktrees:
-        for dep_id, wt_path in dep_worktrees.items():
-            context[f"{dep_id}_worktree"] = wt_path
+    context = build_llm_gate_context(
+        node_id=node_id,
+        node_output=node_output,
+        attempt_number=attempt_number,
+        dep_outputs=dep_outputs,
+        dep_structured_outputs=dep_structured_outputs,
+        dep_worktrees=dep_worktrees,
+    )
     rendered = render_template(template_text, context)
 
     model = evaluation.model or default_model

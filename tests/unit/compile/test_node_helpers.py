@@ -607,7 +607,7 @@ class TestEvaluateGateAndOutcome:
             "retries": {},
         }
         update = await run_evaluation_and_outcome(
-            node, config, state, ExecutionResult(output="x"), timeout=None,
+            node, config, state, "x", timeout=None,
         )
         assert update["completed_nodes"] == ["p1"]
         assert update["evaluations"]["p1"][0]["result"]["score"] == 1.0
@@ -620,7 +620,7 @@ class TestEvaluateGateAndOutcome:
         config = _config_with_phase(node, max_retries=3)
         state = {"workdir": str(tmp_path), "retries": {"p1": 1}}
         update = await run_evaluation_and_outcome(
-            node, config, state, ExecutionResult(output="x"), timeout=None,
+            node, config, state, "x", timeout=None,
         )
         assert update["retries"] == {"p1": 2}
         assert "completed_nodes" not in update
@@ -633,7 +633,7 @@ class TestEvaluateGateAndOutcome:
         config = _config_with_phase(node, max_retries=0)
         state = {"workdir": str(tmp_path), "retries": {}}
         update = await run_evaluation_and_outcome(
-            node, config, state, ExecutionResult(output="x"), timeout=None,
+            node, config, state, "x", timeout=None,
         )
         assert update["failed_nodes"] == ["p1"]
 
@@ -645,7 +645,7 @@ class TestEvaluateGateAndOutcome:
         config = _config_with_phase(node, max_retries=0)
         state = {"workdir": str(tmp_path), "retries": {}}
         update = await run_evaluation_and_outcome(
-            node, config, state, ExecutionResult(output="x"), timeout=None,
+            node, config, state, "x", timeout=None,
         )
         assert update["completed_nodes"] == ["p1"]
         assert "non-blocking" in update["errors"][0]["error"]
@@ -660,7 +660,7 @@ class TestEvaluateGateAndOutcome:
         config = _config_with_phase(node)
         state = {"workdir": str(tmp_path), "retries": {}}
         update = await run_evaluation_and_outcome(
-            node, config, state, ExecutionResult(output="x"), timeout=0.1,
+            node, config, state, "x", timeout=0.1,
         )
         assert update["failed_nodes"] == ["p1"]
         assert "timed out" in update["errors"][0]["error"]

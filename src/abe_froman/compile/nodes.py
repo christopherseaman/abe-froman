@@ -451,11 +451,60 @@ def _scope_dep_outputs_for_gate(
     )
 
 
+async def _run_eval_core(
+    node: Node,
+    config: Graph,
+    state: WorkflowState,
+    *,
+    node_id: str,
+    node_output: str,
+    retries: int,
+    backend: Any,
+    timeout: float | None,
+    effective_settings: Settings | None,
+) -> tuple[EvaluationResult | None, dict[str, Any] | None]:
+    """Run the gate validator and return ``(result, None)`` on success
+    or ``(None, failure_update)`` on timeout.
+
+    Shared core between ``_make_evaluation_node``,
+    ``_make_combined_eval_decide_node``, and
+    ``run_evaluation_and_outcome`` — everything between the eligibility
+    checks and the per-caller outcome update.
+    """
+    s = effective_settings or config.settings
+    dep_outputs, dep_structured, dep_worktrees = _scope_dep_outputs_for_gate(
+        node, state,
+    )
+    eval_call = run_evaluation(
+        node.evaluation,
+        node_id,
+        workdir=state.get("workdir", "."),
+        node_output=node_output,
+        workflow_name=config.name,
+        attempt_number=retries + 1,
+        backend=backend,
+        default_model=s.default_model,
+        dep_outputs=dep_outputs,
+        dep_structured_outputs=dep_structured,
+        dep_worktrees=dep_worktrees,
+    )
+    try:
+        if timeout is not None:
+            eval_result = await asyncio.wait_for(eval_call, timeout=timeout)
+        else:
+            eval_result = await eval_call
+    except asyncio.TimeoutError:
+        return None, make_failure_update(
+            node_id, f"Evaluation timed out after {timeout}s"
+        )
+    return eval_result, None
+
+
 async def run_evaluation_and_outcome(
     node: Node,
     config: Graph,
     state: WorkflowState,
-    result: ExecutionResult,
+    node_output: str,
     timeout: float | None,
     backend: Any = None,
     *,
@@ -472,32 +521,14 @@ async def run_evaluation_and_outcome(
     max_retries = node.effective_max_retries(s)
     retries = state.get("retries", {}).get(key, 0)
 
-    dep_outputs, dep_structured, dep_worktrees = _scope_dep_outputs_for_gate(
-        node, state,
+    eval_result, failure = await _run_eval_core(
+        node, config, state,
+        node_id=key, node_output=node_output, retries=retries,
+        backend=backend, timeout=timeout,
+        effective_settings=effective_settings,
     )
-
-    eval_call = run_evaluation(
-        node.evaluation,
-        key,
-        workdir=state.get("workdir", "."),
-        node_output=result.output,
-        workflow_name=config.name,
-        attempt_number=retries + 1,
-        backend=backend,
-        default_model=s.default_model,
-        dep_outputs=dep_outputs,
-        dep_structured_outputs=dep_structured,
-        dep_worktrees=dep_worktrees,
-    )
-    try:
-        if timeout is not None:
-            eval_result = await asyncio.wait_for(eval_call, timeout=timeout)
-        else:
-            eval_result = await eval_call
-    except asyncio.TimeoutError:
-        return make_failure_update(
-            key, f"Evaluation timed out after {timeout}s"
-        )
+    if failure is not None:
+        return failure
 
     outcome = classify_evaluation_outcome(
         node, eval_result, retries, max_retries, history=history
@@ -666,39 +697,21 @@ def _make_evaluation_node(
             if (executor is not None and hasattr(executor, "get_backend"))
             else None
         )
-        s = effective_settings or config.settings
-        dep_outputs, dep_structured, dep_worktrees = (
-            _scope_dep_outputs_for_gate(node, state)
-        )
 
-        eval_call = run_evaluation(
-            node.evaluation,
-            node_id,
-            workdir=state.get("workdir", "."),
-            node_output=output,
-            workflow_name=config.name,
-            attempt_number=retries + 1,
-            backend=backend,
-            default_model=s.default_model,
-            dep_outputs=dep_outputs,
-            dep_structured_outputs=dep_structured,
-            dep_worktrees=dep_worktrees,
+        eval_result, failure = await _run_eval_core(
+            node, config, state,
+            node_id=node_id, node_output=output, retries=retries,
+            backend=backend, timeout=timeout,
+            effective_settings=effective_settings,
         )
-        try:
-            if timeout is not None:
-                eval_result = await asyncio.wait_for(eval_call, timeout=timeout)
-            else:
-                eval_result = await eval_call
-        except asyncio.TimeoutError:
+        if failure is not None:
             # Timeout is an infrastructure failure, distinct from a
             # content evaluation. Write failed_nodes directly so the
             # Decision node short-circuits to END via its already-failed
             # guard. Bypasses the eval/decision split for this one
             # error class — clearer error reporting than synthesizing
             # a score=0.0 record.
-            return make_failure_update(
-                node_id, f"Evaluation timed out after {timeout}s"
-            )
+            return failure
 
         return build_record_only_update(
             node, eval_result, retries, node_id=node_id,
@@ -757,10 +770,6 @@ def _make_combined_eval_decide_node(
         if node_id not in outputs:
             return {}
         output = outputs[node_id]
-        structured = state.get("node_structured_outputs", {}).get(node_id)
-        synthetic_result = ExecutionResult(
-            success=True, output=output, structured_output=structured
-        )
 
         backend = (
             executor.get_backend()
@@ -768,7 +777,7 @@ def _make_combined_eval_decide_node(
             else None
         )
         return await run_evaluation_and_outcome(
-            node, config, state, synthetic_result, timeout,
+            node, config, state, output, timeout,
             backend=backend, node_id=node_id, history=history,
             effective_settings=effective_settings,
         )

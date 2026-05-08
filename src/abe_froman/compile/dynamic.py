@@ -228,7 +228,7 @@ def _make_fan_out_node(
                 },
             }
             eval_update = await run_evaluation_and_outcome(
-                synthetic_node, config, eval_state, exec_result, timeout,
+                synthetic_node, config, eval_state, exec_result.output, timeout,
                 backend=backend, node_id=child_id, history=history,
                 effective_settings=effective_settings,
             )
