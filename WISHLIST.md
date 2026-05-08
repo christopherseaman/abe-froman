@@ -122,10 +122,12 @@ than fixes to existing code.
   Cross-reference: this question integrates with item 391
   (`replay --from <checkpoint>` CLI) and the unbuilt trunk/merge
   half of item 226 (per-node worktree commits). See "Author-
-  declared checkpoints + visualization tool + worktree commits
-  as one integrated story" in the Forward-looking section — the
-  three wishes share one underlying mechanism, and pursuing any
-  one in isolation risks half-designs the other two work around.
+  declared checkpoints + worktree commits + cross-run resume
+  semantics" in the Forward-looking section — the three wishes
+  share one underlying mechanism, and pursuing any one in
+  isolation risks half-designs the other two work around. The
+  visualization tool is a separate forward-looking item with no
+  hard deps on these three; its output likely informs the design.
 
 ## High-level Architectural
 
@@ -255,10 +257,36 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
 
 - [x] **Subgraph with defined entry/exit nodes as a first-class primitive** — _landed, Stage 4c._ A subgraph declared via `Node.config:` is loaded as a `Graph` (identical schema), recursively compiled, and added as a node in the parent via `add_node(node.id, compiled_subgraph)`. State projection across the boundary is explicit via `inputs:` / `outputs:` declarations. Reusable subgraph libraries are a real concept now: the same YAML runs both standalone and as a subgraph reference.
 
-- [ ] **Author-declared checkpoints + visualization tool + worktree
-  commits as one integrated story** — _surfaced 2026-05-08 while
-  reframing (26)._ Three currently-separate wishes share one
-  underlying mechanism:
+- [ ] **Workflow run visualization tool** — _surfaced 2026-05-08;
+  independently shippable, no hard deps on resume/replay/foreman
+  work._ Inputs already exist:
+
+    - Topology: `compiled.get_graph().draw_mermaid()` — the existing
+      `abe-froman graph <yaml>` command.
+    - Per-node lifecycle: JSONL log emitted by `--log out.jsonl`
+      (workflow_start, node_completed, node_failed, node_retried,
+      gate_evaluated, workflow_end).
+    - Super-step ordering: implicit in JSONL `ts` field; explicit in
+      the checkpointer if needed later.
+
+  A standalone `abe-froman view <yaml> --log <jsonl>` that emits
+  either a terminal Mermaid diff (live-render super-step transitions
+  with passed/failed/retried color codes) or a one-shot HTML page
+  (clickable nodes → JSONL slice for that node) ships without
+  touching any other subsystem. Implementation is downstream-only:
+  read the artifacts authors already have, render. Likely the right
+  *first* item from this cluster — what authors want to see informs
+  what "checkpoint" should later mean.
+
+  Surface decision when pursued: extend `graph` subcommand with
+  `--log <jsonl>` flag (cleanest: one command, accepts an optional
+  log overlay) versus a fresh `view` subcommand (separate concern,
+  separate UX). Mermaid diff for terminal probably wants `view`;
+  static HTML overlay can live under `graph`.
+
+- [ ] **Author-declared checkpoints + worktree commits + cross-run
+  resume semantics** — _surfaced 2026-05-08 while reframing (26)._
+  Three currently-separate wishes share one underlying mechanism:
 
     - **(26)** `--resume` semantics for goto-driven workflows.
       "Where I left off" isn't well-defined when re-fires accumulate.
@@ -273,7 +301,7 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
   boundaries** in YAML (e.g. `checkpoint: true` on `paper` after
   the multi-section synthesis). At runtime, abe-froman commits the
   worktree state at each checkpoint boundary into a per-node branch
-  and tags the commit with the super-step id. Three things become
+  and tags the commit with the super-step id. Two things become
   natural:
 
     1. **`--resume` becomes well-defined for both styles**: restart
@@ -285,11 +313,12 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
        on opaque super-step ids and becomes "checkout the
        worktree commit tagged with this checkpoint id" — concrete,
        browsable, debuggable.
-    3. **A visualization tool** (whether terminal-based via Mermaid
-       diff or a one-shot HTML emitter) shows the topology with
-       checkpoint markers + per-node worktree commit hashes. The
-       same view drives `--resume-from <checkpoint>` selection
-       interactively.
+
+  The viz tool above is NOT on the dependency path here, but its
+  output makes a natural driver: same view that shows checkpoint
+  markers + commit hashes can drive `--resume-from <checkpoint>`
+  selection interactively. Likely informs the design once viz
+  ships.
 
   Open design questions if pursued:
     - Schema: `Node.checkpoint: bool` vs `settings.checkpoint_after:
@@ -301,10 +330,6 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
       `.abe-foreman/wt-<id>/` or get GC'd after N runs? Tying
       checkpoints to the existing JSONL log (item 391's input
       shape) might let GC be log-driven.
-    - Visualization tool surface: a separate `abe-froman view`
-      subcommand, or extend the existing `graph` command? The
-      Mermaid diff use case (live-render super-step transitions)
-      is more interesting than static topology.
 
   Defer until a real workflow surfaces the pain. Right framing
   matters more than implementation order: pursuing any one of
