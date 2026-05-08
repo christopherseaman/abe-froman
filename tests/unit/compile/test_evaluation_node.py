@@ -1,10 +1,19 @@
 """Unit tests for _make_evaluation_node from compile/nodes.py.
 
-The Evaluation node is the second half of a gated node pair: it reads
-the upstream execution's output from state.node_outputs, runs the gate,
-walks routes (first-match + catch-all fallback), appends an
-EvaluationRecord to state.evaluations[node_id], and writes the outcome
-transitions (completed_nodes / retries / failed_nodes / errors).
+After the Stage-5d Eval/Decision split, the Evaluation node's only
+job is to produce an EvaluationRecord (writing
+state.evaluations[node_id]). Outcome classification (pass/retry/
+fail) and routing live in the Decision node — see
+test_decision_node.py.
+
+Tests here assert the eval-only contract:
+  - On success: returns {"evaluations": {key: [record]}} only.
+  - Does NOT write completed_nodes / failed_nodes / retries / errors
+    (those moved to the Decision node).
+  - Skip-when-already-failed guard.
+  - Defer-when-upstream-output-absent guard.
+  - Dry-run synthesizes a passing record (Decision node handles the
+    completed_nodes write on its dry-run path).
 """
 
 from __future__ import annotations
@@ -44,7 +53,9 @@ def _exec(url: str = "t.md") -> Execute:
 
 class TestEvaluationNodeBasics:
     @pytest.mark.asyncio
-    async def test_writes_evaluation_record_on_pass(self, tmp_path):
+    async def test_writes_evaluation_record_only(self, tmp_path):
+        """Eval body returns {"evaluations": {...}} and nothing else.
+        Outcome state (completed/failed/retries) writes moved to Decision."""
         node = Node(
             id="p1", name="P1", execute=_exec(),
             evaluation=Evaluation(validator=_validator(tmp_path, "v.py", "0.9"), threshold=0.8),
@@ -53,7 +64,12 @@ class TestEvaluationNodeBasics:
         state = make_initial_state(workdir=str(tmp_path))
         state["node_outputs"] = {"p1": "output-for-eval"}
         update = await node(state)
-        assert update["completed_nodes"] == ["p1"]
+
+        assert "completed_nodes" not in update
+        assert "failed_nodes" not in update
+        assert "retries" not in update
+        assert "errors" not in update
+
         records = update["evaluations"]["p1"]
         assert len(records) == 1
         assert records[0]["invocation"] == 0
@@ -78,7 +94,9 @@ class TestEvaluationNodeBasics:
         assert record["invocation"] == 2
 
     @pytest.mark.asyncio
-    async def test_retry_when_below_threshold_and_budget_left(self, tmp_path):
+    async def test_low_score_still_writes_record_only(self, tmp_path):
+        """Below-threshold result writes a record (with the low score);
+        the retry decision is made later by the Decision node."""
         node = Node(
             id="p1", name="P1", execute=_exec(),
             evaluation=Evaluation(
@@ -89,44 +107,14 @@ class TestEvaluationNodeBasics:
         state = make_initial_state(workdir=str(tmp_path))
         state["node_outputs"] = {"p1": "bad output"}
         update = await node(state)
+
+        # No outcome-state writes — those are the Decision node's job.
+        assert "retries" not in update
         assert "completed_nodes" not in update
-        assert update["retries"] == {"p1": 1}
+        assert "failed_nodes" not in update
 
-    @pytest.mark.asyncio
-    async def test_fail_blocking_after_max_retries(self, tmp_path):
-        node = Node(
-            id="p1", name="P1", execute=_exec(),
-            evaluation=Evaluation(
-                validator=_validator(tmp_path, "v.py", "0.3"),
-                threshold=0.8,
-                blocking=True,
-            ),
-        )
-        node = _make_evaluation_node(node, _config_with(node, max_retries=1))
-        state = make_initial_state(workdir=str(tmp_path))
-        state["node_outputs"] = {"p1": "bad"}
-        state["retries"] = {"p1": 1}
-        update = await node(state)
-        assert update["failed_nodes"] == ["p1"]
-        assert any("Evaluation failed" in e["error"] for e in update["errors"])
-
-    @pytest.mark.asyncio
-    async def test_warn_continue_after_max_retries_nonblocking(self, tmp_path):
-        node = Node(
-            id="p1", name="P1", execute=_exec(),
-            evaluation=Evaluation(
-                validator=_validator(tmp_path, "v.py", "0.3"),
-                threshold=0.8,
-                blocking=False,
-            ),
-        )
-        node = _make_evaluation_node(node, _config_with(node, max_retries=1))
-        state = make_initial_state(workdir=str(tmp_path))
-        state["node_outputs"] = {"p1": "bad"}
-        state["retries"] = {"p1": 1}
-        update = await node(state)
-        assert update["completed_nodes"] == ["p1"]
-        assert any("non-blocking" in e["error"] for e in update["errors"])
+        record = update["evaluations"]["p1"][0]
+        assert record["result"]["score"] == 0.3
 
 
 class TestEvaluationNodeHistoryAndDims:
@@ -186,7 +174,11 @@ class TestEvaluationNodeHistoryAndDims:
 
 class TestEvaluationNodeDryRun:
     @pytest.mark.asyncio
-    async def test_dry_run_synthesizes_pass(self, tmp_path):
+    async def test_dry_run_synthesizes_passing_record(self, tmp_path):
+        """Dry-run path emits a synthetic [dry-run] record. The Decision
+        node picks up this record and routes pass (writing
+        completed_nodes itself) — see test_decision_node.py::
+        test_dry_run_synthesizes_pass."""
         node = Node(
             id="p1", name="P1", execute=_exec(),
             evaluation=Evaluation(validator="v.py", threshold=0.8),
@@ -194,7 +186,11 @@ class TestEvaluationNodeDryRun:
         node = _make_evaluation_node(node, _config_with(node))
         state = make_initial_state(workdir=str(tmp_path), dry_run=True)
         update = await node(state)
-        assert update["completed_nodes"] == ["p1"]
+
+        # No outcome-state writes from eval — the Decision node handles
+        # routing and the completed_nodes write under dry_run.
+        assert "completed_nodes" not in update
+
         record = update["evaluations"]["p1"][0]
         assert record["result"]["score"] == 1.0
         assert record["result"]["feedback"] == "[dry-run]"
@@ -202,15 +198,27 @@ class TestEvaluationNodeDryRun:
 
 class TestEvaluationNodeSkips:
     @pytest.mark.asyncio
-    async def test_skips_when_already_completed(self, tmp_path):
+    async def test_evaluates_even_when_completed_in_state(self, tmp_path):
+        """Eval node body has no completed_nodes guard — that check
+        moved to the Decision node. The eval body re-runs the
+        validator if reached again, which is correct for the goto-re-fire
+        case (a node hit again via Command(goto=...) deliberately re-
+        evaluates its output)."""
         node = Node(
-            id="p1", name="P1", execute=_exec(),
-            evaluation=Evaluation(validator="v.py", threshold=0.8),
+            id="p1", name="P1",
+            execute=_exec(),
+            evaluation=Evaluation(
+                validator=_validator(tmp_path, "v.py", "0.9"),
+                threshold=0.8,
+            ),
         )
         node = _make_evaluation_node(node, _config_with(node))
         state = make_initial_state(workdir=str(tmp_path))
         state["completed_nodes"] = ["p1"]
-        assert await node(state) == {}
+        state["node_outputs"] = {"p1": "out"}
+        update = await node(state)
+        # Eval body still ran and wrote a record.
+        assert "p1" in update.get("evaluations", {})
 
     @pytest.mark.asyncio
     async def test_skips_when_already_failed(self, tmp_path):
@@ -267,8 +275,8 @@ class TestEvaluationNodeSkips:
         state = make_initial_state(workdir=str(tmp_path))
         state["node_outputs"] = {"p1": ""}  # legitimate empty output (e.g. join)
         result = await node_fn(state)
-        # eval ran: an evaluation record was written and node completed.
-        assert result.get("completed_nodes") == ["p1"]
+        # eval ran: a record was written. Decision node will route on
+        # the next super-step.
         assert "p1" in result.get("evaluations", {})
 
 
@@ -291,6 +299,8 @@ class TestEvaluationNodeSubphaseResolver:
         state["node_outputs"] = {"p::x": "out-x"}
         state["_fan_out_item"] = {"id": "x"}
         update = await node(state)
-        assert update["completed_nodes"] == ["p::x"]
+        # Eval-only: no completed_nodes write here; the Decision node
+        # (test_decision_node.py) handles that side via the same
+        # resolver shape.
         assert "p::x" in update["evaluations"]
         assert update["evaluations"]["p::x"][0]["result"]["score"] == 0.9

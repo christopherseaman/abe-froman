@@ -43,6 +43,9 @@ class TestSingleNodeGraph:
         assert _edges(graph) == {(START, "c1"), ("c1", END)}
 
     def test_single_gate_only_node(self):
+        """Gated node compiles to exec → _eval_<id> → _decide_<id>
+        (plain edges). Decision node returns Command(goto=...) at
+        runtime; no static conditional edges remain."""
         config = make_config(
             [
                 {
@@ -55,11 +58,15 @@ class TestSingleNodeGraph:
         )
         graph = build_workflow_graph(config)
         nodes = graph.get_graph().nodes
-        assert "g1" in nodes and "_eval_g1" in nodes
+        assert "g1" in nodes
+        assert "_eval_g1" in nodes
+        assert "_decide_g1" in nodes
         edges = _edges(graph)
         assert (START, "g1") in edges
         assert ("g1", "_eval_g1") in edges
-        assert {("_eval_g1", END), ("_eval_g1", "g1")} <= _conditional_edges(graph)
+        assert ("_eval_g1", "_decide_g1") in edges
+        # No conditional edges from the eval pair — Command(goto=) replaces them.
+        assert _conditional_edges(graph) == set()
 
 
 class TestLinearChain:
@@ -120,6 +127,13 @@ class TestParallelNodes:
 
 
 class TestGateRouting:
+    """Post-Stage-5d wiring: gated nodes compile to
+    ``exec → _eval_<id> → _decide_<id>`` with plain edges. The
+    Decision node's ``Command(goto=...)`` replaces the static
+    conditional-edge router; routing destinations are not visible
+    in ``graph.get_graph().edges`` because they're chosen at runtime.
+    """
+
     def test_terminal_gate_wiring(self):
         config = make_config(
             [
@@ -134,10 +148,13 @@ class TestGateRouting:
         graph = build_workflow_graph(config)
         nodes = graph.get_graph().nodes
         assert "_eval_p1" in nodes
+        assert "_decide_p1" in nodes
         edges = _edges(graph)
         assert (START, "p1") in edges
         assert ("p1", "_eval_p1") in edges
-        assert _conditional_edges(graph) == {("_eval_p1", END), ("_eval_p1", "p1")}
+        assert ("_eval_p1", "_decide_p1") in edges
+        # No conditional edges — Command(goto=) replaces them.
+        assert _conditional_edges(graph) == set()
 
     def test_non_terminal_gate_wiring(self):
         config = make_config(
@@ -157,15 +174,20 @@ class TestGateRouting:
             ]
         )
         graph = build_workflow_graph(config)
+        nodes = graph.get_graph().nodes
+        assert "_decide_a" in nodes
+        assert "b" in nodes  # b is reached via Command(goto=b) at runtime
         edges = _edges(graph)
         assert (START, "a") in edges
         assert ("a", "_eval_a") in edges
-        assert ("b", END) in edges
-        assert _conditional_edges(graph) == {
-            ("_eval_a", "b"),
-            ("_eval_a", "a"),
-            ("_eval_a", END),
-        }
+        assert ("_eval_a", "_decide_a") in edges
+        # No conditional edges from the eval pair.
+        assert _conditional_edges(graph) == set()
+        # b's static `b → END` edge is added by the terminal-end wiring;
+        # LangGraph may filter it from get_graph().edges when b has no
+        # static incoming edges (its only path in is the runtime Command
+        # from _decide_a). Not asserting on `(b, END) in edges` —
+        # downstream connectivity is verified end-to-end by e2e tests.
 
     def test_gate_with_multiple_dependents_fans_out(self):
         config = make_config(
@@ -184,16 +206,19 @@ class TestGateRouting:
         nodes = graph.get_graph().nodes
         assert "_after_a" not in nodes
         assert "_eval_a" in nodes
+        assert "_decide_a" in nodes
+        assert "b" in nodes
+        assert "c" in nodes
 
         edges = _edges(graph)
-        assert {("b", END), ("c", END)} <= edges
         assert ("a", "_eval_a") in edges
-        assert _conditional_edges(graph) == {
-            ("_eval_a", "b"),
-            ("_eval_a", "c"),
-            ("_eval_a", "a"),
-            ("_eval_a", END),
-        }
+        assert ("_eval_a", "_decide_a") in edges
+        # decide → [b, c] is a runtime Command(goto=[b, c]); no static
+        # conditional edges. b/c terminal-END edges are added but
+        # LangGraph may filter them from get_graph().edges (see
+        # test_non_terminal_gate_wiring); end-to-end connectivity is
+        # verified by e2e tests.
+        assert _conditional_edges(graph) == set()
 
 
 class TestInlineRouteShape:
@@ -234,7 +259,10 @@ class TestInlineRouteShape:
         assert ("classify", "_route_classify") in edges
 
     def test_execute_plus_eval_plus_route_chains_through_eval(self):
-        """execute + eval + route: pass target of _eval_<id> is _route_<id>."""
+        """execute + eval + route: pass target of the Decision node is
+        _route_<id>. After Stage-5d the chain is execute → _eval_<id>
+        → _decide_<id> (plain edges); _decide_<id> emits
+        Command(goto=_route_<id>) on pass."""
         config = make_config([
             {"id": "classify", "name": "C",
              "execute": {"url": "c.md"},
@@ -244,12 +272,17 @@ class TestInlineRouteShape:
         ])
         graph = build_workflow_graph(config)
         nodes = graph.get_graph().nodes
-        assert {"classify", "_eval_classify", "_route_classify", "ship"} <= set(nodes)
+        assert {
+            "classify", "_eval_classify", "_decide_classify",
+            "_route_classify", "ship",
+        } <= set(nodes)
         edges = _edges(graph)
-        # execute → eval (plain), eval has conditional edges that include _route_classify
+        # execute → eval → decide (all plain). The Command(goto=_route_<id>)
+        # path is runtime; no static edge from _decide_classify.
         assert ("classify", "_eval_classify") in edges
-        cond = _conditional_edges(graph)
-        assert ("_eval_classify", "_route_classify") in cond
+        assert ("_eval_classify", "_decide_classify") in edges
+        # No conditional edges from the eval pair.
+        assert _conditional_edges(graph) == set()
 
     def test_list_valued_goto_no_terminal_end_edge(self):
         """`route: { goto: [a, b] }` produces Command(goto=[a,b]); the

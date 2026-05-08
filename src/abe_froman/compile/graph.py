@@ -179,35 +179,6 @@ def _detect_cycles(config: Graph) -> None:
             dfs(node)
 
 
-def _make_evaluation_router(
-    execution_node_id: str,
-    pass_targets: list[str],
-    node_id_resolver: Callable[[WorkflowState], str] | None = None,
-):
-    """Case-statement-style router at an Evaluation node (or inline-gated
-    Execution node with a self-loop).
-
-    Reads the state transitions written by the Evaluation logic and picks
-    a destination: failed → END, completed → pass targets, else (retry)
-    → the upstream execution node for another attempt.
-
-    ``node_id_resolver`` lets child routers derive the per-branch id
-    from ``state._fan_out_item`` — the child node evaluates inline
-    and loops back via a conditional edge, preserving per-branch state.
-    """
-    resolve = node_id_resolver or (lambda _s: execution_node_id)
-
-    def router(state: WorkflowState) -> str | list[str]:
-        node_id = resolve(state)
-        if node_id in state.get("failed_nodes", []):
-            return END
-        if node_id in state.get("completed_nodes", []):
-            return pass_targets[0] if len(pass_targets) == 1 else pass_targets
-        return execution_node_id
-
-    return router
-
-
 def _subphase_id_resolver(parent_id: str) -> Callable[[WorkflowState], str]:
     """Resolve the per-branch child node_id from `_fan_out_item`."""
     def resolve(state: WorkflowState) -> str:
@@ -224,12 +195,30 @@ def _register_evaluation_node(
     exec_node_id: str | None = None,
     *,
     effective_settings: Settings | None = None,
+    combined: bool = False,
 ) -> str:
-    """Register `_eval_{exec_node_id}` and return its id."""
+    """Register ``_eval_{exec_node_id}`` and return its id.
+
+    ``combined=True`` selects ``_make_combined_eval_decide_node`` —
+    the pre-Stage-5d body that classifies inline and writes outcome
+    state in addition to the record. Used only for dynamic gated
+    parents (whose downstream conditional-edge dynamic_router needs
+    completed_nodes/failed_nodes/retries already in state).
+
+    Top-level gated nodes use ``combined=False`` (eval-only); a
+    separate Decision node downstream classifies + routes via
+    ``Command(update=..., goto=...)``.
+    """
+    from abe_froman.compile.nodes import _make_combined_eval_decide_node
+
+    factory = (
+        _make_combined_eval_decide_node if combined
+        else _make_evaluation_node
+    )
     eval_id = f"_eval_{exec_node_id or node.id}"
     builder.add_node(
         eval_id,
-        _make_evaluation_node(
+        factory(
             node, config, executor, effective_settings=effective_settings,
         ),
     )
@@ -237,18 +226,52 @@ def _register_evaluation_node(
 
 
 def _wire_evaluation_pair(
-    builder: StateGraph, exec_id: str, pass_targets: list[str],
+    builder: StateGraph,
+    node: Node,
+    exec_id: str,
+    pass_targets: list[str],
+    config: Graph,
+    *,
+    effective_settings: Settings | None = None,
 ) -> None:
-    """Plain edge exec → _eval_exec, conditional edge from eval routing
-    retry → exec, pass → targets, fail → END.
+    """Wire a gated execution node's evaluation + decision pair.
+
+    Plain edges only — ``exec → _eval_<id> → _decide_<id>``. The
+    Decision node returns ``Command(update=..., goto=...)`` instead
+    of a downstream conditional-edge router reading written state.
+    Replaces the pre-Stage-5d ``add_conditional_edges`` + ``_make_
+    evaluation_router`` pattern; topology is equivalent at the goto
+    level (retry → exec_id, fail → END, pass → pass_targets).
     """
+    from abe_froman.compile.nodes import _make_decision_node
+
     eval_id = f"_eval_{exec_id}"
+    decide_id = f"_decide_{exec_id}"
+
     builder.add_edge(exec_id, eval_id)
-    router = _make_evaluation_router(exec_id, pass_targets)
-    builder.add_conditional_edges(eval_id, router, [exec_id, END, *pass_targets])
+    builder.add_node(
+        decide_id,
+        _make_decision_node(
+            node, config,
+            exec_id=exec_id,
+            pass_targets=pass_targets,
+            effective_settings=effective_settings,
+        ),
+    )
+    builder.add_edge(eval_id, decide_id)
 
 
 def _make_dynamic_router(node: Node, config: Graph):
+    """Conditional-edge router from the dynamic source to retry / fail
+    / no_items / Send-array dispatch.
+
+    Reads ``state.failed_nodes`` / ``state.completed_nodes`` (written
+    by the combined eval+decide factory upstream — see
+    ``_make_combined_eval_decide_node``). Dynamic gated parents
+    intentionally use the pre-Stage-5d combined eval body so this
+    router can decide off pre-written state without an intervening
+    Decision node fragmenting the manifest-dispatch path.
+    """
     template_node_id = f"_sub_{node.id}"
 
     dsc = node.fan_out
@@ -414,19 +437,28 @@ def build_workflow_graph(
         node = node_map[node_id]
         builder.add_node(f"_route_{node_id}", _make_inline_route_node(node))
 
-    # Evaluation nodes for every gated node (top-level, dynamic parents,
-    # and gated final nodes). Dynamic parents' eval runs before the fan-
-    # out router so it sees completed/retries/failed state.
+    # Evaluation nodes for every gated node. Top-level non-dynamic
+    # gated nodes use the Stage-5d eval/decision split (eval writes
+    # the record only; a separate _decide_<id> node returns Command
+    # for routing). Dynamic gated parents use the pre-Stage-5d
+    # combined factory (eval node writes record + outcome state) so
+    # the dynamic_router conditional edge downstream can read the
+    # outcome from state.
     for node in config.nodes:
         if node.evaluation:
             _register_evaluation_node(
                 builder, node, config, executor,
                 effective_settings=settings,
+                combined=(node.id in dynamic_fan_out_ids),
             )
 
     # Dynamic node child template + final nodes.
     final_node_ids: dict[tuple[str, str], str] = {}
     gated_final_ids: set[str] = set()
+    # Lookup the per-id Node object used for eval/decision construction.
+    # Populated for gated finals (synthetic Node mirrors the FanOutFinalNode
+    # config); top-level gated nodes look up directly via node_map.
+    final_synthetic_nodes: dict[str, Node] = {}
     for node_id in dynamic_fan_out_ids:
         node = node_map[node_id]
         builder.add_node(
@@ -454,6 +486,7 @@ def build_workflow_graph(
                     id=fid, name=final_node.name, evaluation=final_node.evaluation,
                     model=node.model,
                 )
+                final_synthetic_nodes[fid] = synthetic
                 _register_evaluation_node(
                     builder, synthetic, config, executor, exec_node_id=fid,
                     effective_settings=settings,
@@ -524,10 +557,16 @@ def build_workflow_graph(
             # to the actual route case target. Dependents-via-depends_on
             # is forbidden for inline-route nodes (validated in schema),
             # so deps_of is guaranteed empty.
-            _wire_evaluation_pair(builder, node.id, [f"_route_{node.id}"])
+            _wire_evaluation_pair(
+                builder, node, node.id, [f"_route_{node.id}"], config,
+                effective_settings=settings,
+            )
         else:
             deps_of = [p.id for p in config.nodes if node.id in p.depends_on]
-            _wire_evaluation_pair(builder, node.id, deps_of or [END])
+            _wire_evaluation_pair(
+                builder, node, node.id, deps_of or [END], config,
+                effective_settings=settings,
+            )
 
     # ----- Inline-route synthetic node wiring (ungated execute+route) -----
     # For nodes with execute + route but NO eval, plain edge from the
@@ -563,7 +602,10 @@ def build_workflow_graph(
                 cur = final_node_ids[(node.id, dsc.final_nodes[i].id)]
                 nxt = final_node_ids[(node.id, dsc.final_nodes[i + 1].id)]
                 if cur in gated_final_ids:
-                    _wire_evaluation_pair(builder, cur, [nxt])
+                    _wire_evaluation_pair(
+                        builder, final_synthetic_nodes[cur], cur, [nxt],
+                        config, effective_settings=settings,
+                    )
                 else:
                     builder.add_edge(cur, nxt)
 
@@ -574,7 +616,10 @@ def build_workflow_graph(
             if dsc.final_nodes else None
         )
         if last_final and last_final in gated_final_ids:
-            _wire_evaluation_pair(builder, last_final, deps_of or [END])
+            _wire_evaluation_pair(
+                builder, final_synthetic_nodes[last_final], last_final,
+                deps_of or [END], config, effective_settings=settings,
+            )
         else:
             for tgt in (deps_of or [END]):
                 builder.add_edge(exit_node[node.id], tgt)

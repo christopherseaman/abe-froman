@@ -3,6 +3,56 @@
 All notable changes to abe-froman are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased] — Stage 5d: split Evaluation from Decision + gate dep-outputs
+
+### Added
+
+- **`_make_decision_node`** in `compile/nodes.py` — second half of a
+  gated node pair. Reads the latest EvaluationRecord from
+  `state.evaluations[node_id]`, classifies via the existing
+  `classify_evaluation_outcome` helper, and returns
+  `Command(update={completed/failed/retries/errors}, goto=target)`.
+  Mirrors the inline-route node pattern. Top-level gated wiring
+  becomes plain edges only: `exec → _eval_<id> → _decide_<id>`.
+- **Gate validators see dep outputs** (WISHLIST 216). Script gates
+  receive `DEPS_JSON` / `DEPS_STRUCTURED_JSON` / `DEPS_WORKTREES_JSON`
+  env vars. LLM gate templates bind each dep by id directly
+  (`{{research}}`) plus `{{_deps}}` aggregate — same shape as
+  `build_context` for executor templates. Dep scoping mirrors
+  `build_context`: declared `depends_on` outputs only; gate-only
+  phases see all completed outputs.
+
+### Changed
+
+- **`_make_evaluation_node` body now writes only the
+  EvaluationRecord** to `state.evaluations[node_id]`. Outcome
+  classification (pass/retry/fail/warn-continue) and state writes
+  (`completed_nodes`/`failed_nodes`/`retries`/`errors`) moved to
+  `_make_decision_node`. Subphase inline retry loops in
+  `compile/dynamic.py::_make_fan_out_node` unchanged.
+- **`_make_evaluation_router` deleted** and `add_conditional_edges`
+  for the eval pair removed. Routing destinations are no longer
+  visible in `compiled.get_graph().edges` for gated nodes — they're
+  runtime `Command(goto=...)` returns from the Decision node.
+- **Dynamic gated parents keep the combined factory**
+  (`_make_combined_eval_decide_node`) — their downstream is the
+  manifest-dispatching dynamic router, which still needs
+  `completed_nodes`/`failed_nodes` already-in-state. Documented
+  inline as a deliberate deferral.
+
+### Migration
+
+- Authors: no YAML changes. Topology equivalence at the goto
+  level (retry → exec_id, fail → END, pass → pass_targets).
+  Same gate semantics, same retry budgets, same outcome states.
+- Tooling that introspects `compiled.get_graph()` to learn gate
+  routing destinations: those edges are now runtime, not static.
+  Inspect `_decide_<id>` node body or the YAML evaluation block
+  instead.
+- Tests asserting on eval-node outcome state writes
+  (`update["completed_nodes"]`, etc.) need to either compose
+  eval+decide or move to `test_decision_node.py`.
+
 ## [Unreleased] — `view` HTML viewer + runner None-update guard
 
 ### Added

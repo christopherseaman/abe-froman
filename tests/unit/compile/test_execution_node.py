@@ -1,19 +1,16 @@
-"""Unit tests for _make_evaluation_router from compile/graph.py.
+"""Unit tests for _make_execution_node from compile/nodes.py.
 
-The router is a pure state-reader: it inspects `completed_nodes` /
-`failed_nodes` written by the Evaluation node and returns concrete
-targets (END, the execution node id for retry, or dependent node ids
-for pass). Classification logic (score vs threshold, blocking, retry
-budget) lives in the Evaluation node body (`compile/nodes.py`), not here.
+These call the returned closure directly with a MockExecutor and fake
+state dict. Gated nodes only exercise the execution half here — the
+Evaluation node body lives in test_evaluation_node.py and the
+Decision node body in test_decision_node.py.
 """
 
 import asyncio
 import time
 
 import pytest
-from langgraph.graph import END
 
-from abe_froman.compile.graph import _make_evaluation_router
 from abe_froman.compile.nodes import _make_execution_node
 from abe_froman.runtime.result import ExecutionResult
 from abe_froman.runtime.state import make_initial_state
@@ -28,70 +25,8 @@ from abe_froman.schema.models import (
 from mock_executor import MockExecutor
 
 
-class TestEvaluationRouter:
-    def test_pass_single_target(self):
-        """Completed with one pass target → return that target directly."""
-        router = _make_evaluation_router("p1", pass_targets=["b"])
-        state = make_initial_state(completed_nodes=["p1"])
-        assert router(state) == "b"
-
-    def test_pass_multiple_targets_fans_out(self):
-        """Completed with multiple pass targets → return list for fan-out."""
-        router = _make_evaluation_router("p1", pass_targets=["b", "c"])
-        state = make_initial_state(completed_nodes=["p1"])
-        assert router(state) == ["b", "c"]
-
-    def test_pass_defaults_to_end(self):
-        """Terminal gated node → pass routes to END."""
-        router = _make_evaluation_router("p1", pass_targets=[END])
-        state = make_initial_state(completed_nodes=["p1"])
-        assert router(state) == END
-
-    def test_fail_routes_to_end(self):
-        """failed_nodes contains id → router returns END."""
-        router = _make_evaluation_router("p1", pass_targets=["b"])
-        state = make_initial_state(failed_nodes=["p1"])
-        assert router(state) == END
-
-    def test_retry_returns_execution_node_id(self):
-        """Eval node wrote retries (not completed, not failed) → re-enter exec node."""
-        router = _make_evaluation_router("p1", pass_targets=["b"])
-        state = make_initial_state(retries={"p1": 1})
-        assert router(state) == "p1"
-
-    def test_failed_takes_precedence_over_completed(self):
-        """Defensive: if both lists contain the id, fail wins."""
-        router = _make_evaluation_router("p1", pass_targets=["b"])
-        state = make_initial_state(
-            completed_nodes=["p1"], failed_nodes=["p1"]
-        )
-        assert router(state) == END
-
-    def test_retry_on_empty_state(self):
-        """Fresh state with no markers → re-enter exec node (hasn't executed yet)."""
-        router = _make_evaluation_router("p1", pass_targets=["b"])
-        state = make_initial_state()
-        assert router(state) == "p1"
-
-    def test_resolver_switches_node_id(self):
-        """node_id_resolver lets child routers key off _fan_out_item."""
-        def resolve(state):
-            return f"parent::{state.get('_fan_out_item', {}).get('id', '?')}"
-
-        router = _make_evaluation_router(
-            "_sub_parent", pass_targets=["_final_parent_f0"], node_id_resolver=resolve,
-        )
-        state = make_initial_state(completed_nodes=["parent::x"])
-        state["_fan_out_item"] = {"id": "x"}
-        assert router(state) == "_final_parent_f0"
-
-
 # ---------------------------------------------------------------------------
 # Closure-level unit tests for _make_execution_node
-#
-# These call the returned closure directly with a MockExecutor and fake
-# state dict. Gated nodes only exercise the execution half here — the
-# Evaluation node half is tested in test_evaluation_node.py.
 # ---------------------------------------------------------------------------
 
 
