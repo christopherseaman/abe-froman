@@ -78,30 +78,46 @@ than fixes to existing code.
   failure injection. The runs-counter side-channel pins exactly how
   many times each node body executes. Surprising finding: ``a``'s
   counter goes from 1 to 2 — see (26) below.
-- [ ] **(26) Resume re-executes already-completed nodes** — _surfaced
-  by (25)._ Current `--resume` semantics: cli/main.py loads the
+- [ ] **(26) `--resume` semantics are underspecified for goto-driven
+  workflows** — _surfaced by (25); design question, not a bug._
+  Today `--resume` is a bare boolean: state comes from the SQLite
+  checkpoint at `<workdir>/.abe-froman-checkpoint.db`, thread_id is
+  derived from `(config.name, workdir)`. cli/main.py loads the
   saved `channel_values`, resets `failed_nodes`/`retries`/`errors`,
-  calls `cp.adelete_thread(thread_id)`, then re-streams from a
-  pre-populated initial state. With the thread wiped, LangGraph has
-  no record of which super-steps already ran, so every node fires
-  again. The completed_nodes reducer is `operator.add`, so the
-  re-execution produces duplicate entries (`["a"]` becomes
-  `["a", "a"]` after resume). The plan for (25) had the test
-  asserting the OPPOSITE (already-completed nodes do NOT re-fire).
-  That expectation was wrong; the test was rewritten to pin actual
-  behavior plus comment pointing here.
+  calls `cp.adelete_thread(thread_id)`, then re-streams. Every node
+  fires again; completed_nodes accumulates duplicates via
+  `operator.add` (`["a"]` → `["a", "a"]`).
 
-  Likely intent: skip already-completed nodes on resume. That would
-  require either (a) adding a `if node.id in completed_nodes:
-  return {}` guard back into node bodies (which would break the
-  goto-driven re-fire we deliberately removed in audit fix #19), or
-  (b) NOT calling `cp.adelete_thread` before re-streaming, letting
-  LangGraph's super-step tracker do the deduplication. Path (b) is
-  cleaner — but the existing comment says the wipe is needed "so
-  reducers don't merge with stale state." Investigation needed
-  before flipping. When fixed, flip the runs-counter assertion in
-  `test_resume_after_mid_chain_failure` and update the resume
-  comment in cli/main.py.
+  This is wrong for dependency-driven workflows (the canonical
+  resume case: 2-hour run completed 5 expensive LLM nodes, failed
+  on node 6, user expects `--resume` to retry only node 6). It's
+  ambiguous for goto-driven workflows: "completed" isn't a clean
+  boundary because goto re-fires (correctly!) accumulate, so a
+  wave-pattern dispatcher dying mid-loop has no obvious "where I
+  left off." Adding a `if node.id in completed_nodes: return {}`
+  guard would fix the DAG case but break the goto re-fire we
+  deliberately enabled in audit fix #19.
+
+  Three viable API shapes once a primary use case is picked:
+    1. **`--resume` (skip completed)** — DAG-first. Document that
+       wave-pattern workflows need idempotent dispatcher bodies.
+       Implementation: a `_prior_run_completed: list[str]` channel
+       set only at resume entry; node guard checks ONLY that list,
+       not `completed_nodes` (so mid-run goto re-fires aren't
+       blocked).
+    2. **`--resume-from <node_id>`** — explicit cherry-pick.
+       Treats upstream as done, restarts at `<node_id>`. Author
+       chooses the restart point.
+    3. **`--resume --log <jsonl>`** — read the JSONL completion
+       log we already emit (`--log out.jsonl`) and skip exactly
+       those node ids.
+
+  Defer until a real workflow surfaces the pain — the existing
+  test (`tests/e2e/test_resume_fan_out.py::
+  test_resume_after_mid_chain_failure`) pins current behavior so
+  unintended changes show up. When the design lands, flip the
+  runs-counter assertion and update both the test docstring and
+  the resume comment in cli/main.py.
 
 ## High-level Architectural
 

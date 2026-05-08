@@ -13,16 +13,15 @@ A side-channel runs-counter file per node lets us assert exactly how
 many times each body executed across both phases. This is the
 property no existing resume test pins down.
 
-DOCUMENTED CURRENT BEHAVIOR (vs. likely user expectation): on
-resume, abe-froman RE-EXECUTES already-completed nodes. ``a`` runs
-twice (once in phase 1, once again in phase 2). The completed_nodes
-reducer is ``operator.add``, so the resumed run also produces a
-duplicate entry in ``completed_nodes``. See WISHLIST item (26)
-"Resume re-executes already-completed nodes" — current semantics
-preserve state-as-starting-point rather than skipping already-done
-work. Tracked separately; this test pins the actual behavior so
-unintended changes surface as failures rather than silent
-regressions.
+DOCUMENTED CURRENT BEHAVIOR: on ``--resume``, abe-froman re-executes
+already-completed nodes. ``a`` runs twice (once in phase 1, once again
+in phase 2); ``completed_nodes`` accumulates a duplicate entry via the
+``operator.add`` reducer. This is correct for goto-driven re-fires
+within a single run (audit fix #19 deliberately enabled it for the
+wave pattern) but wrong for the canonical cross-run resume use case
+(retry only the failed node). The semantics are underspecified; see
+WISHLIST item (26) for three candidate API shapes. This test pins
+actual behavior so unintended changes surface as failures.
 """
 from __future__ import annotations
 
@@ -179,15 +178,11 @@ class TestResumeFromCheckpoint:
         assert "c" in result_2["completed_nodes"]
         assert result_2["failed_nodes"] == []
 
-        # Current resume semantics: already-completed nodes re-execute.
-        # ``a`` ran in phase 1 (runs_a.txt=1) and runs again in phase 2
-        # (runs_a.txt=2). See WISHLIST (26) — when resume semantics are
-        # tightened to skip already-completed nodes, flip the assertion
-        # to ``== 1``.
-        assert _read_runs(tmp_path, "a") == 2, (
-            f"a re-executed under resume (current behavior); see "
-            f"WISHLIST (26)"
-        )
+        # Current resume semantics re-execute already-completed nodes.
+        # See WISHLIST (26) for the design discussion. When `--resume`
+        # is given a "skip completed" mode, flip this assertion to
+        # ``== 1`` and pin the new behavior.
+        assert _read_runs(tmp_path, "a") == 2
         # ``b`` failed in phase 1, retried in phase 2 — counter == 2.
         assert _read_runs(tmp_path, "b") == 2
         # ``c`` ran for the first time in phase 2.
