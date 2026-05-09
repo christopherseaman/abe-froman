@@ -12,6 +12,8 @@ Two layers, mirroring ``test_openai_backend.py``:
 """
 from __future__ import annotations
 
+import importlib.util
+
 import pytest
 
 from abe_froman.runtime.executor.backends.anthropic import (
@@ -28,23 +30,22 @@ from abe_froman.runtime.result import OverloadError
 # ---------------------------------------------------------------------
 
 ANTHROPIC_KEY = _resolve_anthropic_key()
+_ANTHROPIC_SDK_INSTALLED = importlib.util.find_spec("anthropic") is not None
 LIVE_REASON = (
     "Anthropic API key not available "
     "(set ANTHROPIC_API_KEY in the environment; see .env.example)"
 )
+_SDK_REASON = "anthropic SDK not installed (uv sync --extra anthropic)"
 
 
+@pytest.mark.live
 @pytest.mark.skipif(ANTHROPIC_KEY is None, reason=LIVE_REASON)
+@pytest.mark.skipif(not _ANTHROPIC_SDK_INSTALLED, reason=_SDK_REASON)
 class TestAnthropicLive:
     """Real network calls to Anthropic — proves the wire-level path
     works end-to-end, including model-alias resolution."""
 
     async def test_send_prompt_returns_text(self, tmp_path):
-        try:
-            import anthropic  # noqa: F401
-        except ImportError:
-            pytest.skip("anthropic SDK not installed (uv sync --extra anthropic)")
-
         backend = AnthropicBackend(api_key=ANTHROPIC_KEY)
         try:
             result = await backend.send_prompt(
@@ -72,10 +73,7 @@ class TestAnthropicLive:
         alias table — for now Anthropic is the only one (the OpenAI
         backend passes model strings through verbatim).
         """
-        try:
-            from anthropic import AsyncAnthropic
-        except ImportError:
-            pytest.skip("anthropic SDK not installed (uv sync --extra anthropic)")
+        from anthropic import AsyncAnthropic
 
         client = AsyncAnthropic(api_key=ANTHROPIC_KEY)
         try:
@@ -98,11 +96,6 @@ class TestAnthropicLive:
         )
 
     async def test_close_is_idempotent(self, tmp_path):
-        try:
-            import anthropic  # noqa: F401
-        except ImportError:
-            pytest.skip("anthropic SDK not installed (uv sync --extra anthropic)")
-
         backend = AnthropicBackend(api_key=ANTHROPIC_KEY)
         await backend.send_prompt(
             prompt="say hi", model="haiku",
@@ -365,7 +358,9 @@ class TestLifecycle:
         """Constructing then closing without ever sending must not
         error or attempt to import the SDK."""
         backend = AnthropicBackend(api_key="sk-fake")
-        await backend.close()  # no client constructed; nothing to close
+        assert backend._client is None  # lazy: not constructed yet
+        await backend.close()
+        assert backend._client is None  # close didn't trigger init
 
     async def test_close_is_idempotent_with_fake_client(self, tmp_path):
         resp = _FakeResponse([_FakeBlock("text", "hi")])

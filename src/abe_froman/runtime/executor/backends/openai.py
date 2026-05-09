@@ -11,16 +11,17 @@ does for ACP.
 """
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
-from abe_froman.runtime.executor.backends._lazy_client import LazyClientMixin
-from abe_froman.runtime.executor.backends._overload import maybe_raise_overload
+from abe_froman.runtime.executor.backends._lazy_client import (
+    LazyClientMixin,
+    await_with_timeout,
+)
+from abe_froman.runtime.executor.backends._overload import (
+    OPENAI_OVERLOAD_NAMES,
+    maybe_raise_overload,
+)
 from abe_froman.runtime.result import ExecutionResult
-
-# OpenAI/DeepSeek SDK exception classes that don't always carry a
-# numeric status_code but should still trigger downgrade.
-_OVERLOAD_EXCEPTION_NAMES = frozenset({"RateLimitError", "APIConnectionError"})
 
 
 class OpenAIBackend(LazyClientMixin):
@@ -58,16 +59,15 @@ class OpenAIBackend(LazyClientMixin):
     ) -> ExecutionResult:
         client = await self._ensure_client()
         try:
-            coro = client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
+            resp = await await_with_timeout(
+                client.chat.completions.create(
+                    model=model,
+                    messages=[{"role": "user", "content": prompt}],
+                ),
+                timeout,
             )
-            if timeout is not None:
-                resp = await asyncio.wait_for(coro, timeout=timeout)
-            else:
-                resp = await coro
         except Exception as e:
-            maybe_raise_overload(e, class_names=_OVERLOAD_EXCEPTION_NAMES)
+            maybe_raise_overload(e, class_names=OPENAI_OVERLOAD_NAMES)
             raise
 
         if not resp.choices:

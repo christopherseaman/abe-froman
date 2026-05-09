@@ -53,27 +53,29 @@ async def run_workflow(
         {"configurable": {"thread_id": thread_id}} if thread_id else {}
     )
 
-    # Tuple stream_mode: each chunk is ``(mode, payload)``.
-    #   - ``("updates", {node_name: partial_update})`` per super-step;
-    #     events derive from the partial update directly (no diffing).
-    #   - ``("values", cumulative_state_dict)`` snapshots; tracked here
-    #     only to capture the final state for ``workflow_end`` counts.
-    async for chunk_type, payload in compiled_graph.astream(
-        initial_state, config=run_config,
-        stream_mode=["updates", "values"],
-    ):
-        if chunk_type == "values":
-            last_state = payload
-        elif chunk_type == "updates" and logger is not None:
-            for _node_name, update in payload.items():
-                logger.log_update(update)
-
-    if owns_logger:
-        logger.emit({
-            "event": "workflow_end",
-            "completed": len(last_state.get("completed_nodes", [])),
-            "failed": len(last_state.get("failed_nodes", [])),
-        })
-        logger.close()
-
-    return last_state
+    try:
+        # Tuple stream_mode: each chunk is ``(mode, payload)``.
+        #   - ``("updates", {node_name: partial_update})`` per super-step;
+        #     events derive from the partial update directly (no diffing).
+        #   - ``("values", cumulative_state_dict)`` snapshots; tracked here
+        #     only to capture the final state for ``workflow_end`` counts.
+        async for chunk_type, payload in compiled_graph.astream(
+            initial_state, config=run_config,
+            stream_mode=["updates", "values"],
+        ):
+            if chunk_type == "values":
+                last_state = payload
+            elif chunk_type == "updates" and logger is not None:
+                for _node_name, update in payload.items():
+                    logger.log_update(update)
+        return last_state
+    finally:
+        # workflow_end emits even on streaming error so the JSONL is
+        # always self-terminated. Mirrors cli/main.py::_run_async.
+        if owns_logger:
+            logger.emit({
+                "event": "workflow_end",
+                "completed": len(last_state.get("completed_nodes", [])),
+                "failed": len(last_state.get("failed_nodes", [])),
+            })
+            logger.close()

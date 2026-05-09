@@ -12,6 +12,8 @@ Two layers:
 """
 from __future__ import annotations
 
+import importlib.util
+
 import pytest
 
 from abe_froman.runtime.executor.backends.factory import (
@@ -27,13 +29,17 @@ from abe_froman.runtime.result import OverloadError
 # ---------------------------------------------------------------------
 
 DEEPSEEK_KEY = _resolve_deepseek_key()
+_OPENAI_SDK_INSTALLED = importlib.util.find_spec("openai") is not None
 LIVE_REASON = (
     "DeepSeek API key not available "
     "(set DEEPSEEK_API_KEY in the environment; see .env.example)"
 )
+_SDK_REASON = "openai SDK not installed (uv sync --extra openai)"
 
 
+@pytest.mark.live
 @pytest.mark.skipif(DEEPSEEK_KEY is None, reason=LIVE_REASON)
+@pytest.mark.skipif(not _OPENAI_SDK_INSTALLED, reason=_SDK_REASON)
 class TestDeepSeekLive:
     """Real network calls to DeepSeek — proves the wire-level path
     works end-to-end."""
@@ -77,10 +83,7 @@ class TestDeepSeekLive:
         verbatim), so the drift target is the pinned ID inside this
         test file rather than a runtime dictionary.
         """
-        try:
-            from openai import AsyncOpenAI
-        except ImportError:
-            pytest.skip("openai SDK not installed (uv sync --extra openai)")
+        from openai import AsyncOpenAI
 
         client = AsyncOpenAI(api_key=DEEPSEEK_KEY, base_url=DEEPSEEK_BASE_URL)
         try:

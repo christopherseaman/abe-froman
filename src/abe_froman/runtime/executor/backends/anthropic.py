@@ -14,11 +14,16 @@ need to.
 """
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
-from abe_froman.runtime.executor.backends._lazy_client import LazyClientMixin
-from abe_froman.runtime.executor.backends._overload import maybe_raise_overload
+from abe_froman.runtime.executor.backends._lazy_client import (
+    LazyClientMixin,
+    await_with_timeout,
+)
+from abe_froman.runtime.executor.backends._overload import (
+    ANTHROPIC_OVERLOAD_NAMES,
+    maybe_raise_overload,
+)
 from abe_froman.runtime.result import ExecutionResult
 
 
@@ -49,19 +54,6 @@ _DEFAULT_MAX_TOKENS = 8192
 def _resolve_model(model: str) -> str:
     """Generic alias → vendor ID; pass-through otherwise."""
     return _MODEL_ALIASES.get(model, model)
-
-
-# Anthropic SDK exception classes that don't always carry a numeric
-# status_code but should still trigger downgrade. Class-name string
-# match (vs class import) keeps this robust to SDK version churn.
-# Verified against anthropic 0.99.0 — extend if a future version adds
-# a transient-failure class not covered by the status-code path.
-_OVERLOAD_EXCEPTION_NAMES = frozenset({
-    "RateLimitError",        # 429
-    "APIConnectionError",    # transient network
-    "APITimeoutError",       # request timeout
-    "InternalServerError",   # 5xx
-})
 
 
 class AnthropicBackend(LazyClientMixin):
@@ -96,17 +88,16 @@ class AnthropicBackend(LazyClientMixin):
         resolved_model = _resolve_model(model)
 
         try:
-            coro = client.messages.create(
-                model=resolved_model,
-                max_tokens=_DEFAULT_MAX_TOKENS,
-                messages=[{"role": "user", "content": prompt}],
+            resp = await await_with_timeout(
+                client.messages.create(
+                    model=resolved_model,
+                    max_tokens=_DEFAULT_MAX_TOKENS,
+                    messages=[{"role": "user", "content": prompt}],
+                ),
+                timeout,
             )
-            if timeout is not None:
-                resp = await asyncio.wait_for(coro, timeout=timeout)
-            else:
-                resp = await coro
         except Exception as e:
-            maybe_raise_overload(e, class_names=_OVERLOAD_EXCEPTION_NAMES)
+            maybe_raise_overload(e, class_names=ANTHROPIC_OVERLOAD_NAMES)
             raise
 
         if not resp.content:

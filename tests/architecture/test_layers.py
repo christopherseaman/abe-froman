@@ -53,6 +53,21 @@ class TestSchemaLayerIsolation:
 
 
 class TestCompileLayerIsolation:
+    # The runtime modules compile/ is allowed to import. compile/ sits
+    # above runtime/ in the dependency direction (compile → runtime),
+    # but only narrow shared-shape pieces — not orchestration objects
+    # like ForemanExecutor, Runner, or auto-detect machinery. Adding a
+    # new compile→runtime import means adding it here AND justifying
+    # why the imported thing is shared shape rather than orchestration.
+    ALLOWED_RUNTIME_MODULES = frozenset({
+        "abe_froman.runtime.executor.prompt",  # render_template (pure)
+        "abe_froman.runtime.gates",            # eval execution + preamble
+        "abe_froman.runtime.logging",          # SubgraphLogger (subgraph wrap)
+        "abe_froman.runtime.result",           # ExecutionResult, NodeExecutor
+        "abe_froman.runtime.settings_merge",   # merge_settings (pure)
+        "abe_froman.runtime.state",            # WorkflowState, REDUCERS
+    })
+
     def test_no_cli(self):
         for f in _files_under("compile"):
             imports = _imports_in_file(f)
@@ -67,6 +82,29 @@ class TestCompileLayerIsolation:
         imports = _imports_in_file(f)
         assert not _starts_with(imports, "langgraph"), (
             f"{f.relative_to(SRC)} imports langgraph"
+        )
+
+    def test_only_imports_allowed_runtime_modules(self):
+        """compile/ may only import the narrow runtime shape modules
+        listed in ``ALLOWED_RUNTIME_MODULES``. Importing orchestration
+        modules (``runtime.foreman``, ``runtime.runner``,
+        ``runtime.executor.dispatch``, ``runtime.executor.backends.*``,
+        ``runtime.secrets``, ``runtime.url``) inverts the layer:
+        compile would depend on the runtime's wiring rather than its
+        shared shape. Add to ``ALLOWED_RUNTIME_MODULES`` only when the
+        new import is justified as shared-shape, not orchestration."""
+        violations: list[tuple[str, str]] = []
+        for f in _files_under("compile"):
+            for imp in _imports_in_file(f):
+                if not _starts_with({imp}, "abe_froman.runtime"):
+                    continue
+                if imp in self.ALLOWED_RUNTIME_MODULES:
+                    continue
+                violations.append((str(f.relative_to(SRC)), imp))
+        assert not violations, (
+            f"compile/ imports forbidden runtime modules: {violations}. "
+            f"Add to ALLOWED_RUNTIME_MODULES with justification, or "
+            f"reshape so compile only imports shared shape."
         )
 
 

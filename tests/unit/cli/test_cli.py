@@ -148,6 +148,11 @@ class TestRunOptions:
             cli, ["run", str(config), "--executor", "bogus", "--workdir", str(tmp_path)]
         )
         assert result.exit_code != 0
+        # Validates the diagnostic, not just absence-of-success: the
+        # error must name the offending value AND list valid choices.
+        combined = (result.output or "") + str(result.exception or "")
+        assert "bogus" in combined
+        assert "Unknown executor" in combined or "executor" in combined.lower()
 
 
 class TestResumeCommand:

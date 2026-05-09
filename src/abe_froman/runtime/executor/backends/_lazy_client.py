@@ -4,15 +4,24 @@ Anthropic and OpenAI backends both wrap an SDK client whose
 construction is deferred until first call (zero import-time cost) and
 whose teardown is idempotent. This mixin captures that pattern so
 each backend file is just the SDK-specific wiring (model resolution,
-response shape, error mapping).
+response shape, error mapping). The ``await_with_timeout`` helper
+captures the matching await-with-optional-timeout shape.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from typing import Any, Awaitable
 
 logger = logging.getLogger(__name__)
+
+
+async def await_with_timeout(coro: Awaitable[Any], timeout: float | None) -> Any:
+    """Await ``coro`` with optional timeout. ``timeout=None`` awaits
+    without bound; otherwise delegates to ``asyncio.wait_for``."""
+    if timeout is None:
+        return await coro
+    return await asyncio.wait_for(coro, timeout=timeout)
 
 
 class LazyClientMixin:

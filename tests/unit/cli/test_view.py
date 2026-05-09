@@ -453,3 +453,8 @@ class TestViewCommand:
         )
         assert result.exit_code == 0
         assert out.exists()
+        # Existence alone could pass against a regression that wrote
+        # an empty file; pin that the output is a real rendered HTML.
+        text = out.read_text()
+        assert "<title>" in text
+        assert "Test" in text  # workflow name embedded in title
