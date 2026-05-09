@@ -25,7 +25,11 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
-from abe_froman.compile.nodes import build_context
+from abe_froman.compile.nodes import (
+    all_deps_completed,
+    build_context,
+    check_dep_failed,
+)
 from abe_froman.runtime.executor.prompt import render_template
 from abe_froman.runtime.result import ExecutionResult
 from abe_froman.runtime.settings_merge import merge_settings
@@ -115,25 +119,18 @@ def make_subgraph_node(
             outputs_decl = dict(params["outputs"])
 
     async def wrapper(parent_state: WorkflowState) -> dict[str, Any]:
-        # Skip if parent node already terminal (re-entry on dep updates).
-        if parent_id in parent_state.get("completed_nodes", []):
-            return {}
         if parent_id in parent_state.get("failed_nodes", []):
             return {}
-        # Wait for dependencies — same join semantics as a regular node.
-        completed = set(parent_state.get("completed_nodes", []))
-        failed = set(parent_state.get("failed_nodes", []))
-        for dep in parent_node.depends_on:
-            if dep in failed:
-                return {
-                    "failed_nodes": [parent_id],
-                    "errors": [{
-                        "node": parent_id,
-                        "error": f"dependency '{dep}' failed",
-                    }],
-                }
-            if dep not in completed:
-                return {}
+        # Dep-join: same semantics as a regular execution node. The
+        # `completed_nodes` re-entry guard removed in audit fix #19
+        # (Stage 5c) is intentionally absent here too — Command(goto=)
+        # re-fires must re-execute the subgraph wrapper, not no-op.
+        if (failure := check_dep_failed(parent_node, parent_state)) is not None:
+            return failure
+        if parent_node.depends_on and not all_deps_completed(
+            parent_node, parent_state,
+        ):
+            return {}
 
         parent_context = build_context(parent_node, parent_state)
         rendered_inputs = {
