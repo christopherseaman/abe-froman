@@ -16,7 +16,7 @@ follow-up; items 3+ are real cleanup wins held for explicit decisions.
 - [x] **(1) `_Capture` test backend violation** — _fixed._ Extracted `prepend_eval_preamble(rendered, context) -> str` as a pure helper in `runtime/executor/prompt.py`; unit-tested directly via `TestPrependEvalPreamble` (no backend involvement). The e2e test `tests/e2e/test_inline_route_with_eval.py` rewritten to assert on `state["_route_eval_preamble"]` and `state["_route_sender"]` only (real subprocess + real script gate; no `PromptBackend` instrumentation).
 - [x] **(2) `apply_preamble` sum-type return** — _fixed._ `PromptExecutor.apply_preamble` now raises `FileNotFoundError` for missing preamble files and returns plain `str` on the success path. `_dispatch_prompt` catches the exception once at the boundary and translates to `ExecutionResult(success=False, error=...)`.
 - [x] **(3) `auto_detect_executor` silent fallthrough on `ANTHROPIC_API_KEY`** — _delivered alongside StubBackend removal._ The dedicated `AnthropicBackend` (`runtime/executor/backends/anthropic.py`) now resolves first in the auto-detect chain (Anthropic key → DeepSeek key → ACP), so `ANTHROPIC_API_KEY` no longer silently falls through. Without any backend resolvable, `auto_detect_executor()` raises `RuntimeError` naming all three remediation paths.
-- [ ] **(4) `Route.validate_shape` allows `else_` without `cases:`** (`schema/models.py:82-99`) — a bare `Route(else_=RouteElse(goto="x"))` validates as a silent unconditional redirect, identical to `goto: x` but with confusing structure. Test `test_route_empty_cases_with_else_is_legal` documents it as legal. Decide: reject with helpful error ("use `goto:` for unconditional"), or document the form as first-class.
+- [x] **(4) `Route.validate_shape` rejects `else_` without `cases:`** — _delivered (commit `f563935`)._ `schema/models.py::Route.validate_shape` now raises `ValueError("Route with 'else:' requires 'cases:' — use 'goto:' shorthand for unconditional dispatch")` for the bare-else_ form. Authors pick the unambiguous `goto:` shorthand or the full `cases:` + `else:` ladder.
 - [x] **(5) `EvaluationResult.score=0.0` for multi-dim evals** — _delivered (decided 2026-05-06)._ The threshold check is well-formed for multi-dim — it uses per-dim `result.scores.<field>` clauses and never reads `result.score` for routing. The JSONL-log confusion is purely cosmetic: a passing multi-dim gate emits `score=0.0` in events. Bonus runtime fix in `_parse_evaluation_output`: when JSON has dim_scores but no top-level `score`, derive `score = min(dim_scores)` so the headline matches the weakest-link semantics already in `dimensions[].min`. Two existing tests pinning the 0.0 default flipped to assert the derived value.
 - [x] **(6) `_PrefixingProxy.emit` duplicates `SubgraphLogger.emit` verbatim** — _delivered alongside `stream_mode="updates"`._ The `_PrefixingProxy` class was removed entirely; with the snapshot path gone, the prefix is applied directly to `node_name` before dispatch in `SubgraphLogger.log_update`, so there's only one place that knows about prefixing now.
 - [x] **(7) `FanOut.enabled: false` silently no-ops the block** — _delivered (decided 2026-05-06)._ Dropped the `enabled` field entirely; the presence of the `fan_out:` block IS the activation. To disable fan-out, remove the block. `FanOut` got `extra="forbid"` so legacy YAML carrying `enabled: true|false` fails at `validate` time with a clear ValidationError pointing at the unsupported field. Breaking schema change documented in CHANGELOG; author migration is "delete the line."
@@ -29,8 +29,8 @@ follow-up; items 3+ are real cleanup wins held for explicit decisions.
 ## Post-merge findings (2026-05-06, native-events + Anthropic + stubectomy branch)
 
 - [ ] ~~**(13) `AnthropicBackend` doesn't surface `tokens_used`**~~ — _out of scope (decided 2026-05-06)._ Token-count surfacing on `ExecutionResult` was previously removed from scope; Samus's "Phase 5 (high)" priority on this is not a binding requirement on abe-froman. If a future consumer needs token counts, they can be threaded then; until that consumer exists, adding the field is YAGNI.
-- [ ] **(14) `Settings.executor` accepts unknown strings without schema-time rejection** (`schema/models.py:194-202`) — typing `executor: stub` in YAML now passes Pydantic validation and only errors at `create_prompt_backend("stub")` time during `run`. Add a `Literal[...]` or model_validator listing the known set so typos surface at `validate` time. Coupled with the post-stubectomy choice list — `acp` / `anthropic` / `deepseek` / `openai`.
-- [ ] **(15) `AnthropicBackend` empty-text-block edge case** (`runtime/executor/backends/anthropic.py:135-149`) — if the SDK ever returns a `type="text"` block with empty `text=""`, the current filter accepts it: `text_parts=[""]` is truthy, so we fall through to `ExecutionResult(output="")` instead of the explicit no-text-block failure. Unlikely (the SDK normalizes empty content to no-block-at-all), but the asymmetry between "no text block" → loud failure and "text block with empty text" → silent empty success is a footgun. Either tighten the filter (drop empty text blocks before the `if not text_parts:` check) or document.
+- [x] **(14) `Settings.executor` rejects unknown strings at schema time** — _delivered (commit `f563935`)._ `schema/models.py::Settings.executor` is now `Literal["acp", "anthropic", "custom", "deepseek", "openai"] | None`. Typo'd values fail at `validate` time rather than late at `run`. The `custom` choice covers OpenRouter / Ollama / LM Studio / LiteLLM / Azure OpenAI / vLLM via `CUSTOM_API_KEY` + `CUSTOM_API_BASE_URL`.
+- [x] **(15) `AnthropicBackend` empty-text-block edge case** — _delivered (commit `f563935`)._ The text-block filter now drops empty-text blocks before the `if not text_parts:` check (`anthropic.py:128-133`: `... and getattr(block, "text", "")`). An all-empty-text response now triggers the loud "no non-empty text block" failure path instead of silently returning `ExecutionResult(output="")`.
 - [x] **(16) `_OVERLOAD_EXCEPTION_NAMES` includes speculative class names** — _delivered (commit `f563935`)._ Dropped the speculative `OverloadedError` entry from the frozenset and replaced the "(newer SDK versions)" comment with a verified-against-0.99 note. Final set: `RateLimitError` / `APIConnectionError` / `APITimeoutError` / `InternalServerError` — all observed in the live SDK.
 - [x] **(17) `_is_overload_status` duplicated between `openai.py` and `anthropic.py`** — _delivered, post-merge audit._ Extracted `runtime/executor/backends/_overload.py::maybe_raise_overload(exc, *, class_names)` shared by both backends. Each backend keeps only its provider-specific class-name set as a frozenset constant.
 - [x] **(18) Subgraph state isolation lacked unit-level coverage after `test_subgraph_isolation_no_parent_state_leak` was deleted in the stubectomy** — _delivered, post-merge audit._ Restored the test using `_ECHO`-rendered script-args (`leak={{parent_only}}|input={{from_parent}}`) as the observable. Mutation-tested: leaking parent's `node_outputs` into the subgraph's `node_inputs` flips the assertion with a clear "leak=PARENT_VALUE" diagnostic. Real subprocess only.
@@ -67,21 +67,22 @@ than fixes to existing code.
   `memory_threshold_pct` into the example's settings as documentation
   surface for that feature. Spike file deleted as part of the
   example landing.
-- [ ] **(23) Live-backend e2e round-trip** — only Anthropic catalog
-  drift and DeepSeek SDK error-mapping have live coverage. Real
-  OpenAI and `--executor custom` (OpenRouter et al.) have zero live
-  tests despite all four backends being verified manually. Plan:
-  parametrized e2e running `examples/jokes/workflow.yaml` per backend
-  with key on disk, marked `pytest.mark.live`, asserting only
-  structural properties (exit 0, both nodes complete). Coming in
-  the same branch.
-- [ ] **(24) DeepSeek model-availability drift** — Anthropic gets
-  `test_alias_table_resolves_in_live_catalog`; DeepSeek doesn't. The
-  test fixtures pin `deepseek-v4-flash`; if that retires we get a
-  confusing 404 instead of a clean "update the test fixture"
-  diagnostic. Plan: mirror the Anthropic test against
-  `client.models.list()` for DeepSeek's pinned model ID. Coming in
-  the same branch.
+- [x] **(23) Live-backend e2e round-trip** — _delivered._
+  `tests/e2e/test_live_backend_roundtrip.py` exercises the full CLI
+  pipeline (Click runner + `AsyncSqliteSaver` + `DispatchExecutor` +
+  real backend) against `examples/jokes/workflow.yaml` parametrized
+  over all four backends (`anthropic` / `deepseek` / `openai` /
+  `custom`). Marked `pytest.mark.live`; per-backend skip when the
+  matching API key is absent — runs cleanly offline (zero
+  parametrized cases execute) and gradually fills in coverage as
+  keys get configured. Asserts only structural properties (exit 0,
+  both nodes complete) so it stays robust to model output drift.
+- [x] **(24) DeepSeek model-availability drift** — _delivered._
+  `tests/unit/runtime/test_openai_backend.py::test_alias_table_resolves_in_live_catalog`
+  (line 69-92) mirrors the Anthropic test: queries `client.models.list()`
+  against DeepSeek with the test-pinned `deepseek-v4-flash`; fails
+  with a clear "update the test fixture" diagnostic when the model
+  retires. Skipped when no DeepSeek key is on disk.
 - [x] **(25) Resume-from-checkpoint e2e** — _delivered._
   `tests/e2e/test_resume_fan_out.py` exercises a real
   `AsyncSqliteSaver` round-trip across two phases with mid-chain
