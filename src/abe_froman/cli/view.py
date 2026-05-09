@@ -101,7 +101,10 @@ def _route_targets(graph: Graph) -> dict[str, list[tuple[str, str | None]]]:
     return out
 
 
-def _classify_endpoints(graph: Graph) -> tuple[set[str], set[str]]:
+def _classify_endpoints(
+    graph: Graph,
+    routes: dict[str, list[tuple[str, str | None]]],
+) -> tuple[set[str], set[str]]:
     """Return (entry_ids, terminal_ids).
 
     Entry: nodes with no incoming dep edge AND no incoming route
@@ -109,6 +112,9 @@ def _classify_endpoints(graph: Graph) -> tuple[set[str], set[str]]:
     Terminal: nodes with no outgoing dep edge AND no outgoing route
     edge to another in-graph node (route to ``__end__`` counts as
     outgoing-to-END, not in-graph).
+
+    Caller passes pre-computed ``routes`` (from ``_route_targets``)
+    so render_mermaid can reuse the single traversal.
     """
     all_ids = {n.id for n in graph.nodes}
     has_incoming: set[str] = set()
@@ -124,7 +130,6 @@ def _classify_endpoints(graph: Graph) -> tuple[set[str], set[str]]:
 
     # Routes contribute outgoing for the source, incoming for the
     # target (unless target is __end__).
-    routes = _route_targets(graph)
     for src, edges in routes.items():
         has_outgoing.add(src)
         for tgt, _label in edges:
@@ -136,9 +141,11 @@ def _classify_endpoints(graph: Graph) -> tuple[set[str], set[str]]:
     return entry_ids, terminal_ids
 
 
-def _routes_to_end(graph: Graph, node_id: str) -> bool:
+def _routes_to_end(
+    routes: dict[str, list[tuple[str, str | None]]],
+    node_id: str,
+) -> bool:
     """True iff the node has at least one route target == ``__end__``."""
-    routes = _route_targets(graph)
     edges = routes.get(node_id, [])
     return any(tgt == _END_TARGET for tgt, _label in edges)
 
@@ -160,8 +167,8 @@ def render_mermaid(graph: Graph, direction: str = "TB") -> str:
             f"direction must be one of TB/LR/BT/RL, got {direction!r}"
         )
 
-    entry_ids, terminal_ids = _classify_endpoints(graph)
     routes = _route_targets(graph)
+    entry_ids, terminal_ids = _classify_endpoints(graph, routes)
 
     lines: list[str] = []
     lines.append(f"flowchart {direction}")
@@ -205,7 +212,7 @@ def render_mermaid(graph: Graph, direction: str = "TB") -> str:
     for entry in sorted(entry_ids):
         lines.append(f"    START --> {entry}")
     for term in sorted(terminal_ids):
-        if _routes_to_end(graph, term):
+        if _routes_to_end(routes, term):
             continue  # already routes to __end__ explicitly
         lines.append(f"    {term} --> END")
 
