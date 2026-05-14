@@ -23,7 +23,7 @@ environment quirks).
 YAML → Pydantic Graph → build_workflow_graph() → compiled LangGraph
                                                          │
                                                          ▼
-                              Phase Node → ForemanExecutor → DispatchExecutor
+                              Execution Node → ForemanExecutor → DispatchExecutor
                                     │         (queue +              │
                                     │          worktree             │
                                     │          pool)        ┌───────┼───────┐
@@ -46,13 +46,14 @@ uv sync                                      # core deps
 uv sync --extra openai                       # add OpenAI/DeepSeek backend
 npm i -g @zed-industries/claude-code-acp     # for ACP backend / acp tests
 
-uv run pytest tests/ --ignore=tests/acp -v   # ~754 tests, ~35s
-uv run pytest tests/acp -v                   # ~14 ACP tests, ~2 min, requires npm package above
+uv run pytest tests/ --ignore=tests/acp -v   # ~878 tests, ~50s
+uv run pytest tests/acp -v                   # ACP tests, ~2 min, requires npm package above
+uv run pytest -m live                        # live-backend tests (skipped per-key when absent)
 uv run pytest tests/architecture/test_layers.py  # layer rule enforcement
 
 uv run abe-froman validate config.yaml
 uv run abe-froman run config.yaml             # auto-detect backend
-uv run abe-froman run config.yaml -e acp      # force ACP
+uv run abe-froman run config.yaml -e acp      # force ACP (choices: acp | anthropic | custom | deepseek | openai)
 uv run abe-froman run config.yaml --resume    # resume from checkpoint
 uv run abe-froman run config.yaml --log out.jsonl
 uv run abe-froman graph config.yaml           # Mermaid topology
@@ -102,10 +103,19 @@ langgraph-free).
   scope-aware inheritance.
 - `url.py` — `resolve_url`, `fetch_url`, `_RemoteFetchCache`,
   remote URL gates.
+- `secrets.py` — `resolve_secret(name, *, settings, settings_attr)`
+  (env → workflow YAML → project-local `.env`, walking up from CWD).
 - `executor/dispatch.py` — `DispatchExecutor` (10-row URL dispatch).
 - `executor/prompt.py` — `PromptExecutor` (template render, model
   downgrade).
 - `executor/backends/{acp,anthropic,openai,factory}.py`.
+- `executor/backends/_lazy_client.py` — `LazyClientMixin` (lazy SDK
+  client init + idempotent close) and `await_with_timeout` helper.
+  Shared by anthropic + openai backends.
+- `executor/backends/_overload.py` — `maybe_raise_overload` +
+  per-provider `ANTHROPIC_OVERLOAD_NAMES` / `OPENAI_OVERLOAD_NAMES`
+  frozensets. Both backends map transient SDK errors to
+  `OverloadError` through this.
 
 **`src/abe_froman/cli/`** — entry points.
 - `main.py` — Click CLI; wires `AsyncSqliteSaver`, `ForemanExecutor`,
@@ -224,6 +234,9 @@ mapping (we're testing our wrapping code, not the SDK).
 | New WorkflowState field | `src/abe_froman/runtime/state.py` (TypedDict + REDUCERS) — beware of parity invariant in `compile/dynamic.py::_merge_updates` |
 | Inline routing (route block, sender bindings, include_eval preamble) | `src/abe_froman/schema/models.py::Route`, `src/abe_froman/compile/graph.py::_make_inline_route_node`, `src/abe_froman/runtime/gates.py::build_eval_preamble` |
 | Layer rule violation | `tests/architecture/test_layers.py` errors point to the offending file |
+| Live-backend regression test | `tests/e2e/test_live_backend_roundtrip.py` (parametrized over 4 backends; `pytest.mark.live`, skipif per-key) |
+| Backend lazy-init + close | `src/abe_froman/runtime/executor/backends/_lazy_client.py::LazyClientMixin` — subclass + implement `_create_client()` |
+| Transient-error → `OverloadError` mapping | `src/abe_froman/runtime/executor/backends/_overload.py::maybe_raise_overload` (status-code set + per-provider class-name frozensets) |
 
 When in doubt, read `TECHNICAL.md` Section 11 ("Key non-obvious
 invariants") before changing compile or runtime layer code — five of
