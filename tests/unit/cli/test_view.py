@@ -374,7 +374,7 @@ class TestRenderView:
         events = [{"event": "node_completed", "node": "a"}]
         html = render_view(config, events=events)
         # Extract the embedded JSON
-        marker = 'id="abe-payload" type="application/json">'
+        marker = 'id="sqrlly-payload" type="application/json">'
         start = html.index(marker) + len(marker)
         end = html.index("</script>", start)
         payload = json.loads(html[start:end])
