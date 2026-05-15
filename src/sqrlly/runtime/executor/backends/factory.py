@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import shutil
 
-from abe_froman.runtime.result import PromptBackend
-from abe_froman.runtime.secrets import resolve_secret
+from sqrlly.runtime.result import PromptBackend
+from sqrlly.runtime.secrets import resolve_secret
 
 DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
 
@@ -30,7 +30,7 @@ def create_prompt_backend(executor_type: str, **kwargs: object) -> PromptBackend
     - "openai": OpenAI-compatible backend (caller supplies key/base_url)
     """
     if executor_type == "acp":
-        from abe_froman.runtime.executor.backends.acp import ACPBackend
+        from sqrlly.runtime.executor.backends.acp import ACPBackend
 
         return ACPBackend(
             program=kwargs.get("program", "npx"),
@@ -38,7 +38,7 @@ def create_prompt_backend(executor_type: str, **kwargs: object) -> PromptBackend
         )
 
     if executor_type == "anthropic":
-        from abe_froman.runtime.executor.backends.anthropic import (
+        from sqrlly.runtime.executor.backends.anthropic import (
             AnthropicBackend,
         )
 
@@ -51,7 +51,7 @@ def create_prompt_backend(executor_type: str, **kwargs: object) -> PromptBackend
         return AnthropicBackend(api_key=api_key)
 
     if executor_type == "deepseek":
-        from abe_froman.runtime.executor.backends.openai import OpenAIBackend
+        from sqrlly.runtime.executor.backends.openai import OpenAIBackend
 
         api_key = kwargs.get("api_key") or _resolve_deepseek_key()
         if not api_key:
@@ -62,7 +62,7 @@ def create_prompt_backend(executor_type: str, **kwargs: object) -> PromptBackend
         return OpenAIBackend(api_key=api_key, base_url=DEEPSEEK_BASE_URL)
 
     if executor_type == "openai":
-        from abe_froman.runtime.executor.backends.openai import OpenAIBackend
+        from sqrlly.runtime.executor.backends.openai import OpenAIBackend
 
         api_key = kwargs.get("api_key") or resolve_secret("OPENAI_API_KEY")
         if not api_key:
@@ -81,7 +81,7 @@ def create_prompt_backend(executor_type: str, **kwargs: object) -> PromptBackend
         return OpenAIBackend(api_key=api_key, base_url=base_url)
 
     if executor_type == "custom":
-        from abe_froman.runtime.executor.backends.openai import OpenAIBackend
+        from sqrlly.runtime.executor.backends.openai import OpenAIBackend
 
         api_key = kwargs.get("api_key") or resolve_secret("CUSTOM_API_KEY")
         base_url = (

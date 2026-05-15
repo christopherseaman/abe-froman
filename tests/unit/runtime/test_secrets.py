@@ -1,7 +1,7 @@
 """Tests for `runtime/secrets.py::resolve_secret`.
 
 Covers the layered resolution chain: YAML settings field > process env
-> project-local `.env` file. abe-froman never reads from machine-global
+> project-local `.env` file. sqrlly never reads from machine-global
 keystores — `.env` discovery walks up from CWD only.
 """
 from __future__ import annotations
@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from abe_froman.runtime.secrets import _reset_dotenv_cache, resolve_secret
+from sqrlly.runtime.secrets import _reset_dotenv_cache, resolve_secret
 
 
 @dataclass

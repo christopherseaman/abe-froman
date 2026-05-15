@@ -1,1 +1,1 @@
-Respond with exactly: "Hello from Abe Froman!" and nothing else.
+Respond with exactly: "Hello from sqrlly!" and nothing else.

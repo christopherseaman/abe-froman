@@ -6,11 +6,11 @@ from io import StringIO
 
 import pytest
 
-from abe_froman.compile.graph import build_workflow_graph
-from abe_froman.runtime.logging import JsonlLogger
-from abe_froman.runtime.runner import run_workflow
-from abe_froman.runtime.state import make_initial_state
-from abe_froman.runtime.executor.dispatch import DispatchExecutor
+from sqrlly.compile.graph import build_workflow_graph
+from sqrlly.runtime.logging import JsonlLogger
+from sqrlly.runtime.runner import run_workflow
+from sqrlly.runtime.state import make_initial_state
+from sqrlly.runtime.executor.dispatch import DispatchExecutor
 
 from helpers import cmd_phase, fail_phase, make_config
 
@@ -270,7 +270,7 @@ class TestCliLogFlag:
     def test_cli_log_flag_creates_file(self, tmp_path):
         from click.testing import CliRunner
 
-        from abe_froman.cli.main import cli
+        from sqrlly.cli.main import cli
 
         config_path = tmp_path / "workflow.yaml"
         config_path.write_text(
@@ -302,7 +302,7 @@ class TestSubgraphLogger:
     `ainvoke()` and emitted nothing for internal nodes."""
 
     def test_prefix_is_applied_to_node_field(self):
-        from abe_froman.runtime.logging import SubgraphLogger
+        from sqrlly.runtime.logging import SubgraphLogger
 
         buf = StringIO()
         base = JsonlLogger(buf)
@@ -313,7 +313,7 @@ class TestSubgraphLogger:
         assert record["node"] == "paper::reconcile"
 
     def test_nested_prefixing_composes(self):
-        from abe_froman.runtime.logging import SubgraphLogger
+        from sqrlly.runtime.logging import SubgraphLogger
 
         buf = StringIO()
         base = JsonlLogger(buf)
@@ -325,7 +325,7 @@ class TestSubgraphLogger:
         assert record["node"] == "paper::reconcile::step1"
 
     def test_log_update_emits_with_prefix(self):
-        from abe_froman.runtime.logging import SubgraphLogger
+        from sqrlly.runtime.logging import SubgraphLogger
 
         buf = StringIO()
         base = JsonlLogger(buf)
@@ -340,7 +340,7 @@ class TestSubgraphLogger:
     def test_event_without_node_passes_through(self):
         """Workflow-level events (workflow_start / workflow_end) carry no
         `node` field and should pass through unmodified."""
-        from abe_froman.runtime.logging import SubgraphLogger
+        from sqrlly.runtime.logging import SubgraphLogger
 
         buf = StringIO()
         base = JsonlLogger(buf)

@@ -1,7 +1,7 @@
 """Unit tests for output contract validation."""
 
-from abe_froman.runtime.gates import validate_output_contract
-from abe_froman.schema.models import OutputContract
+from sqrlly.runtime.gates import validate_output_contract
+from sqrlly.schema.models import OutputContract
 
 
 class TestValidateOutputContract:

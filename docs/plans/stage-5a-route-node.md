@@ -47,7 +47,7 @@ working unchanged.
    `max_retries`, `retry_backoff`) for backwards compatibility through
    Stage 5b; Stage 5c will desugar it into authored route cases.
 
-## Schema (`src/abe_froman/schema/models.py`)
+## Schema (`src/sqrlly/schema/models.py`)
 
 Add to the `Execution` discriminated union:
 
@@ -89,7 +89,7 @@ YAML shape:
     else: produce
 ```
 
-## Compile (`src/abe_froman/compile/`)
+## Compile (`src/sqrlly/compile/`)
 
 **New module: `compile/route.py`** (small, ~120 LOC) — the simpleeval
 sandbox + namespace builder + case-walker. Imports nothing from
@@ -201,10 +201,10 @@ Append to WISHLIST.md (informational, not in 5a scope):
 | File | Change |
 |---|---|
 | `pyproject.toml` | Add `simpleeval>=0.9` to dependencies |
-| `src/abe_froman/schema/models.py` | Add `RouteCase`, `RouteExecution`; extend `Execution` union; add Graph-level goto-resolution validator |
-| `src/abe_froman/compile/route.py` | **New** — `build_route_namespace`, `evaluate_case`, `_SAFE_FUNCS` |
-| `src/abe_froman/compile/nodes.py` | Add `_make_route_node`, `_resolve_goto`; import `Command` from `langgraph.types` |
-| `src/abe_froman/compile/graph.py` | Dispatch `RouteExecution` nodes to `_make_route_node` in the build loop |
+| `src/sqrlly/schema/models.py` | Add `RouteCase`, `RouteExecution`; extend `Execution` union; add Graph-level goto-resolution validator |
+| `src/sqrlly/compile/route.py` | **New** — `build_route_namespace`, `evaluate_case`, `_SAFE_FUNCS` |
+| `src/sqrlly/compile/nodes.py` | Add `_make_route_node`, `_resolve_goto`; import `Command` from `langgraph.types` |
+| `src/sqrlly/compile/graph.py` | Dispatch `RouteExecution` nodes to `_make_route_node` in the build loop |
 | `tests/unit/compile/test_route.py` | **New** — see Tests section |
 | `tests/unit/schema/test_route_schema.py` | **New** — RouteExecution parsing + validator tests |
 | `tests/e2e/test_route_node.py` | **New** — end-to-end produce→judge→route flows |
@@ -287,8 +287,8 @@ A `prompt` node whose stub backend is monkey-patched to return `structured_outpu
 3. `uv run pytest tests/unit/compile/test_route.py tests/unit/schema/test_route_schema.py tests/e2e/test_route_node.py -v` — all green.
 4. Full suite: `uv run pytest tests/ -v` — 490 prior tests still pass; new tests add ~15.
 5. `uv run pytest tests/architecture/test_layers.py` — layer rules clean (compile/route.py is langgraph-free).
-6. `uv run abe-froman validate examples/smoke_test.yaml` — smoke runs unchanged (no route node yet in examples).
-7. `uv run abe-froman run tests/fixtures/route/flow_b_retry.yaml --workdir <tmp>` (manually authored) — completes; logs show 3 produce→judge→route loops then halt.
+6. `uv run sqrlly validate examples/smoke_test.yaml` — smoke runs unchanged (no route node yet in examples).
+7. `uv run sqrlly run tests/fixtures/route/flow_b_retry.yaml --workdir <tmp>` (manually authored) — completes; logs show 3 produce→judge→route loops then halt.
 8. `rg "Command\\(" src/` — confirms `Command` introduced only in `compile/nodes.py` (route factory).
 
 ## Exit criteria

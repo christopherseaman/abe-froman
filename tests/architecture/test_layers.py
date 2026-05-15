@@ -7,7 +7,7 @@ are respected at CI time. Zero extra dependencies.
 import ast
 from pathlib import Path
 
-SRC = Path(__file__).resolve().parent.parent.parent / "src" / "abe_froman"
+SRC = Path(__file__).resolve().parent.parent.parent / "src" / "sqrlly"
 
 
 def _imports_in_file(path: Path) -> set[str]:
@@ -40,15 +40,15 @@ class TestSchemaLayerIsolation:
     def test_no_compile(self):
         for f in _files_under("schema"):
             imports = _imports_in_file(f)
-            assert not _starts_with(imports, "abe_froman.compile"), (
-                f"{f.relative_to(SRC)} imports abe_froman.compile"
+            assert not _starts_with(imports, "sqrlly.compile"), (
+                f"{f.relative_to(SRC)} imports sqrlly.compile"
             )
 
     def test_no_runtime(self):
         for f in _files_under("schema"):
             imports = _imports_in_file(f)
-            assert not _starts_with(imports, "abe_froman.runtime"), (
-                f"{f.relative_to(SRC)} imports abe_froman.runtime"
+            assert not _starts_with(imports, "sqrlly.runtime"), (
+                f"{f.relative_to(SRC)} imports sqrlly.runtime"
             )
 
 
@@ -60,19 +60,19 @@ class TestCompileLayerIsolation:
     # new compile→runtime import means adding it here AND justifying
     # why the imported thing is shared shape rather than orchestration.
     ALLOWED_RUNTIME_MODULES = frozenset({
-        "abe_froman.runtime.executor.prompt",  # render_template (pure)
-        "abe_froman.runtime.gates",            # eval execution + preamble
-        "abe_froman.runtime.logging",          # SubgraphLogger (subgraph wrap)
-        "abe_froman.runtime.result",           # ExecutionResult, NodeExecutor
-        "abe_froman.runtime.settings_merge",   # merge_settings (pure)
-        "abe_froman.runtime.state",            # WorkflowState, REDUCERS
+        "sqrlly.runtime.executor.prompt",  # render_template (pure)
+        "sqrlly.runtime.gates",            # eval execution + preamble
+        "sqrlly.runtime.logging",          # SubgraphLogger (subgraph wrap)
+        "sqrlly.runtime.result",           # ExecutionResult, NodeExecutor
+        "sqrlly.runtime.settings_merge",   # merge_settings (pure)
+        "sqrlly.runtime.state",            # WorkflowState, REDUCERS
     })
 
     def test_no_cli(self):
         for f in _files_under("compile"):
             imports = _imports_in_file(f)
-            assert not _starts_with(imports, "abe_froman.cli"), (
-                f"{f.relative_to(SRC)} imports abe_froman.cli"
+            assert not _starts_with(imports, "sqrlly.cli"), (
+                f"{f.relative_to(SRC)} imports sqrlly.cli"
             )
 
     def test_route_is_langgraph_free(self):
@@ -96,7 +96,7 @@ class TestCompileLayerIsolation:
         violations: list[tuple[str, str]] = []
         for f in _files_under("compile"):
             for imp in _imports_in_file(f):
-                if not _starts_with({imp}, "abe_froman.runtime"):
+                if not _starts_with({imp}, "sqrlly.runtime"):
                     continue
                 if imp in self.ALLOWED_RUNTIME_MODULES:
                     continue
@@ -112,8 +112,8 @@ class TestRuntimeLayerIsolation:
     def test_no_compile(self):
         for f in _files_under("runtime"):
             imports = _imports_in_file(f)
-            assert not _starts_with(imports, "abe_froman.compile"), (
-                f"{f.relative_to(SRC)} imports abe_froman.compile"
+            assert not _starts_with(imports, "sqrlly.compile"), (
+                f"{f.relative_to(SRC)} imports sqrlly.compile"
             )
 
     def test_no_langgraph(self):

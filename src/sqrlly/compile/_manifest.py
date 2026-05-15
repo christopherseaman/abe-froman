@@ -11,8 +11,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from abe_froman.runtime.state import WorkflowState
-from abe_froman.schema.models import Node
+from sqrlly.runtime.state import WorkflowState
+from sqrlly.schema.models import Node
 
 
 def _read_manifest(state: WorkflowState, node: Node) -> list[dict]:

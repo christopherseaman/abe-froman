@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from abe_froman.runtime.result import ExecutionResult
-from abe_froman.schema.models import Node, Settings
+from sqrlly.runtime.result import ExecutionResult
+from sqrlly.schema.models import Node, Settings
 
 
 class MockExecutor:

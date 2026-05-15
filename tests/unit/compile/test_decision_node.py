@@ -21,9 +21,9 @@ import pytest
 from langgraph.graph import END
 from langgraph.types import Command
 
-from abe_froman.compile.nodes import _make_decision_node
-from abe_froman.runtime.state import make_initial_state
-from abe_froman.schema.models import (
+from sqrlly.compile.nodes import _make_decision_node
+from sqrlly.runtime.state import make_initial_state
+from sqrlly.schema.models import (
     Evaluation,
     Execute,
     Graph,

@@ -22,9 +22,9 @@ from pathlib import Path
 
 import pytest
 
-from abe_froman.runtime.executor.dispatch import DispatchExecutor
-from abe_froman.runtime.state import make_initial_state
-from abe_froman.schema.models import Execute, Node, Settings
+from sqrlly.runtime.executor.dispatch import DispatchExecutor
+from sqrlly.runtime.state import make_initial_state
+from sqrlly.schema.models import Execute, Node, Settings
 
 
 @pytest.fixture
@@ -96,7 +96,7 @@ class TestScriptDispatch:
         )
         # Pin the interpreter to the running pytest's sys.executable so
         # the test doesn't depend on a system-installed python3.
-        from abe_froman.runtime.executor import dispatch
+        from sqrlly.runtime.executor import dispatch
         monkeypatch.setitem(
             dispatch._SCRIPT_INTERPRETERS, ".py", [sys.executable]
         )

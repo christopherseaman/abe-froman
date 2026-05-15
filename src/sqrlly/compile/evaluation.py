@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from abe_froman.schema.models import Evaluation
+from sqrlly.schema.models import Evaluation
 
 
 @dataclass

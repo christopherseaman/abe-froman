@@ -1,9 +1,9 @@
 """Render a workflow as a single self-contained HTML viewer.
 
 Two modes:
-  - Authoring: ``abe-froman view <yaml>`` — topology + per-node
+  - Authoring: ``sqrlly view <yaml>`` — topology + per-node
     config panel. No runtime overlay.
-  - Debug: ``abe-froman view <yaml> --log <jsonl>`` — same as above,
+  - Debug: ``sqrlly view <yaml> --log <jsonl>`` — same as above,
     plus per-node status overlay (passed/failed/retried/untouched)
     and per-node log slices on click.
 
@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from abe_froman.schema.models import Graph, Node
+from sqrlly.schema.models import Graph, Node
 
 
 # ----- Mermaid emission -----------------------------------------------------

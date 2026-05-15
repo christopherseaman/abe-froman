@@ -79,7 +79,7 @@ The prior audit's "~314 tests" line undercounted: current suite reads 335+ test 
 
 ### 🔴 NF-1 — Fake PromptBackend doubles violate memory policy — `test_prompt.py:91–130,431–448`
 
-`test_prompt.py` defines three custom `PromptBackend` implementations (`MemoryBackend`, `ErrorBackend`, `_OverloadBackend`) used across ~11 test methods. The memory file `feedback_no_fake_backends.md` explicitly states: *"Do not introduce FakeBackend / StubBackend subclasses, unittest.mock, or monkeypatch spies in abe-froman tests … A PromptBackend represents Claude — it is an external system."* These three classes are exactly what the policy forbids.
+`test_prompt.py` defines three custom `PromptBackend` implementations (`MemoryBackend`, `ErrorBackend`, `_OverloadBackend`) used across ~11 test methods. The memory file `feedback_no_fake_backends.md` explicitly states: *"Do not introduce FakeBackend / StubBackend subclasses, unittest.mock, or monkeypatch spies in sqrlly tests … A PromptBackend represents Claude — it is an external system."* These three classes are exactly what the policy forbids.
 
 **Complication**: the model-downgrade branch (`prompt.py:74–91`) is the hardest thing in the codebase to test without a backend double — the real `StubBackend` never raises `OverloadError`. The policy suggests: "For LLM gate behaviors, test pure parser functions directly with string inputs." Downgrade logic could similarly be extracted and tested without a backend, but that's a src refactor, not a test fix.
 

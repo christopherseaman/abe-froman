@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from abe_froman.schema.models import Evaluation, OutputContract
+from sqrlly.schema.models import Evaluation, OutputContract
 
 
 def build_eval_preamble(
@@ -331,7 +331,7 @@ async def run_evaluation_llm(
     backend's response must be JSON matching the feedback schema. See
     ``build_llm_gate_context`` for the dep projection rules.
     """
-    from abe_froman.runtime.executor.prompt import render_template
+    from sqrlly.runtime.executor.prompt import render_template
 
     template_path = Path(workdir) / evaluation.validator
     try:

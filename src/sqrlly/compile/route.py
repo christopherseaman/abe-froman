@@ -18,7 +18,7 @@ from typing import Any
 
 from simpleeval import EvalWithCompoundTypes
 
-from abe_froman.runtime.state import WorkflowState
+from sqrlly.runtime.state import WorkflowState
 
 _BASE_SAFE_FUNCS = {
     "len": len,

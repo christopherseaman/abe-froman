@@ -1,8 +1,8 @@
 import pytest
 from langgraph.graph import END, START
 
-from abe_froman.compile.graph import build_workflow_graph
-from abe_froman.schema.models import Graph
+from sqrlly.compile.graph import build_workflow_graph
+from sqrlly.schema.models import Graph
 
 from helpers import make_config
 

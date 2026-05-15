@@ -31,10 +31,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
-from abe_froman.schema.params import SCRIPT_EXTS as _SCRIPT_EXTS
+from sqrlly.schema.params import SCRIPT_EXTS as _SCRIPT_EXTS
 
 if TYPE_CHECKING:
-    from abe_froman.schema.models import Settings
+    from sqrlly.schema.models import Settings
 
 
 class RemoteURLBlockedError(ValueError):

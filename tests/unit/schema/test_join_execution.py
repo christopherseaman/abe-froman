@@ -14,9 +14,9 @@ from __future__ import annotations
 
 import pytest
 
-from abe_froman.runtime.executor.dispatch import DispatchExecutor
-from abe_froman.runtime.result import ExecutionResult
-from abe_froman.schema.models import Execute, Node
+from sqrlly.runtime.executor.dispatch import DispatchExecutor
+from sqrlly.runtime.result import ExecutionResult
+from sqrlly.schema.models import Execute, Node
 from pydantic import ValidationError
 
 

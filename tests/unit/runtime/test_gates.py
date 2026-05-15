@@ -3,11 +3,11 @@ import shutil
 
 import pytest
 
-from abe_froman.compile.graph import build_workflow_graph
-from abe_froman.runtime.gates import EvaluationResult, run_evaluation
-from abe_froman.runtime.state import make_initial_state
-from abe_froman.runtime.executor.dispatch import DispatchExecutor
-from abe_froman.schema.models import Evaluation
+from sqrlly.compile.graph import build_workflow_graph
+from sqrlly.runtime.gates import EvaluationResult, run_evaluation
+from sqrlly.runtime.state import make_initial_state
+from sqrlly.runtime.executor.dispatch import DispatchExecutor
+from sqrlly.schema.models import Evaluation
 
 from helpers import make_config
 
@@ -508,12 +508,12 @@ class TestScriptGateStructuredFeedback:
     async def test_nonexistent_validator_populates_feedback(self):
         """Missing validator script surfaces a clear path in feedback."""
         gate = Evaluation(
-            validator="/tmp/abe_froman_does_not_exist_99999.py", threshold=0.8
+            validator="/tmp/sqrlly_does_not_exist_99999.py", threshold=0.8
         )
         result = await run_evaluation(gate, "p1")
         assert result.score == 0.0
         assert result.feedback is not None
-        assert "/tmp/abe_froman_does_not_exist_99999.py" in result.feedback
+        assert "/tmp/sqrlly_does_not_exist_99999.py" in result.feedback
 
     @pytest.mark.asyncio
     async def test_nonzero_exit_captures_stderr(self, tmp_path):
@@ -544,7 +544,7 @@ class TestGateOutputParser:
     """
 
     def test_full_schema_parsed(self):
-        from abe_froman.runtime.gates import _parse_evaluation_output
+        from sqrlly.runtime.gates import _parse_evaluation_output
 
         raw = json.dumps({
             "score": 0.85,
@@ -559,28 +559,28 @@ class TestGateOutputParser:
         assert result.pass_criteria_unmet == []
 
     def test_score_only_parsed(self):
-        from abe_froman.runtime.gates import _parse_evaluation_output
+        from sqrlly.runtime.gates import _parse_evaluation_output
 
         result = _parse_evaluation_output(json.dumps({"score": 0.5}))
         assert result.score == 0.5
         assert result.feedback is None
 
     def test_bare_float_accepted_for_scripts(self):
-        from abe_froman.runtime.gates import _parse_evaluation_output
+        from sqrlly.runtime.gates import _parse_evaluation_output
 
         result = _parse_evaluation_output("0.85", allow_bare_float=True)
         assert result.score == 0.85
         assert result.feedback is None
 
     def test_bare_float_rejected_for_llm(self):
-        from abe_froman.runtime.gates import _parse_evaluation_output
+        from sqrlly.runtime.gates import _parse_evaluation_output
 
         result = _parse_evaluation_output("0.85")
         assert result.score == 0.0
         assert "score" in result.feedback
 
     def test_malformed_json_loud_failure(self):
-        from abe_froman.runtime.gates import _parse_evaluation_output
+        from sqrlly.runtime.gates import _parse_evaluation_output
 
         result = _parse_evaluation_output("this is not json at all")
         assert result.score == 0.0
@@ -588,21 +588,21 @@ class TestGateOutputParser:
         assert "unparseable" in result.feedback
 
     def test_missing_score_loud_failure(self):
-        from abe_froman.runtime.gates import _parse_evaluation_output
+        from sqrlly.runtime.gates import _parse_evaluation_output
 
         result = _parse_evaluation_output(json.dumps({"feedback": "ok"}))
         assert result.score == 0.0
         assert "missing" in result.feedback and "score" in result.feedback
 
     def test_non_numeric_score_loud_failure(self):
-        from abe_froman.runtime.gates import _parse_evaluation_output
+        from sqrlly.runtime.gates import _parse_evaluation_output
 
         result = _parse_evaluation_output(json.dumps({"score": "high"}))
         assert result.score == 0.0
         assert "score" in result.feedback
 
     def test_non_dict_top_level_loud_failure(self):
-        from abe_froman.runtime.gates import _parse_evaluation_output
+        from sqrlly.runtime.gates import _parse_evaluation_output
 
         result = _parse_evaluation_output(json.dumps([1, 2, 3]))
         assert result.score == 0.0
@@ -613,7 +613,7 @@ class TestMultiDimensionParser:
     """_parse_evaluation_output extracts numeric fields as dimension scores."""
 
     def test_dimension_scores_extracted(self):
-        from abe_froman.runtime.gates import _parse_evaluation_output
+        from sqrlly.runtime.gates import _parse_evaluation_output
 
         raw = json.dumps({"correctness": 0.8, "style": 0.6, "score": 0.7})
         result = _parse_evaluation_output(raw)
@@ -628,7 +628,7 @@ class TestMultiDimensionParser:
         so this derivation is purely cosmetic — but it makes JSONL log
         events meaningful instead of misleadingly showing 0.0 for
         passing gates."""
-        from abe_froman.runtime.gates import _parse_evaluation_output
+        from sqrlly.runtime.gates import _parse_evaluation_output
 
         raw = json.dumps({"correctness": 0.8, "style": 0.6})
         result = _parse_evaluation_output(raw, require_score=False)
@@ -640,7 +640,7 @@ class TestMultiDimensionParser:
 
     def test_single_dimension_no_score_derives_min(self):
         """One dim, no top-level score: derived score == that dim's value."""
-        from abe_froman.runtime.gates import _parse_evaluation_output
+        from sqrlly.runtime.gates import _parse_evaluation_output
 
         raw = json.dumps({"correctness": 0.8})
         result = _parse_evaluation_output(raw)
@@ -649,7 +649,7 @@ class TestMultiDimensionParser:
         assert result.scores == {"correctness": 0.8}
 
     def test_non_numeric_fields_ignored(self):
-        from abe_froman.runtime.gates import _parse_evaluation_output
+        from sqrlly.runtime.gates import _parse_evaluation_output
 
         raw = json.dumps({"score": 0.5, "label": "good", "count": 3})
         result = _parse_evaluation_output(raw)
@@ -657,7 +657,7 @@ class TestMultiDimensionParser:
         assert "label" not in result.scores
 
     def test_feedback_field_not_treated_as_dimension(self):
-        from abe_froman.runtime.gates import _parse_evaluation_output
+        from sqrlly.runtime.gates import _parse_evaluation_output
 
         raw = json.dumps({"score": 0.5, "feedback": "ok", "quality": 0.9})
         result = _parse_evaluation_output(raw)
@@ -778,9 +778,9 @@ class TestRetryWithFeedback:
         We verify the rendered-prompt path by constructing the context the way
         inject_retry_reason does and asserting the rendering substitutes.
         """
-        from abe_froman.compile.nodes import inject_retry_reason
-        from abe_froman.runtime.executor.prompt import render_template
-        from abe_froman.schema.models import Node, Evaluation
+        from sqrlly.compile.nodes import inject_retry_reason
+        from sqrlly.runtime.executor.prompt import render_template
+        from sqrlly.schema.models import Node, Evaluation
 
         node = Node(
             id="p",
@@ -820,8 +820,8 @@ class TestRetryWithFeedback:
 
 class TestInjectRetryReasonFeedback:
     def test_retry_reason_without_feedback_is_score_only(self):
-        from abe_froman.compile.nodes import inject_retry_reason
-        from abe_froman.schema.models import Node, Evaluation
+        from sqrlly.compile.nodes import inject_retry_reason
+        from sqrlly.schema.models import Node, Evaluation
 
         node = Node(
             id="p",
@@ -850,8 +850,8 @@ class TestInjectRetryReasonFeedback:
         assert "failed" not in ctx["_retry_reason"].lower()
 
     def test_retry_reason_with_feedback_includes_it(self):
-        from abe_froman.compile.nodes import inject_retry_reason
-        from abe_froman.schema.models import Node, Evaluation
+        from sqrlly.compile.nodes import inject_retry_reason
+        from sqrlly.schema.models import Node, Evaluation
 
         node = Node(
             id="p",
@@ -881,8 +881,8 @@ class TestInjectRetryReasonFeedback:
         assert "- nuance" in reason
 
     def test_retry_reason_no_retry_returns_context_unchanged(self):
-        from abe_froman.compile.nodes import inject_retry_reason
-        from abe_froman.schema.models import Node, Evaluation
+        from sqrlly.compile.nodes import inject_retry_reason
+        from sqrlly.schema.models import Node, Evaluation
 
         node = Node(
             id="p",
@@ -906,7 +906,7 @@ class TestEvaluationReasons:
     `EvaluationResult.reasons`."""
 
     def test_dim_reason_field_captured(self):
-        from abe_froman.runtime.gates import _parse_evaluation_output
+        from sqrlly.runtime.gates import _parse_evaluation_output
         raw = json.dumps({
             "score": 0.55,
             "coverage": 0.7,
@@ -925,7 +925,7 @@ class TestEvaluationReasons:
         assert result.feedback == "see per-dim reasons"
 
     def test_no_reason_fields_means_empty_dict(self):
-        from abe_froman.runtime.gates import _parse_evaluation_output
+        from sqrlly.runtime.gates import _parse_evaluation_output
         raw = json.dumps({"score": 0.8, "coverage": 0.9})
         result = _parse_evaluation_output(raw)
         assert result.reasons == {}
@@ -934,7 +934,7 @@ class TestEvaluationReasons:
         # `<dim>_reason: <number>` shouldn't crash the parser; it's
         # neither a numeric dim score (suffix is "_reason") nor a string
         # reason. Drop silently rather than capture noise.
-        from abe_froman.runtime.gates import _parse_evaluation_output
+        from sqrlly.runtime.gates import _parse_evaluation_output
         raw = json.dumps({"score": 0.5, "x": 0.7, "x_reason": 42})
         result = _parse_evaluation_output(raw)
         assert result.scores == {"x": 0.7}
@@ -951,8 +951,8 @@ class TestEvalPreamble:
     no "failed" framing; per-dimension reasons surfaced inline."""
 
     def test_no_dimensions_simple_score(self):
-        from abe_froman.runtime.gates import build_eval_preamble
-        from abe_froman.schema.models import Evaluation
+        from sqrlly.runtime.gates import build_eval_preamble
+        from sqrlly.schema.models import Evaluation
         evaluation = Evaluation(validator="v.md", threshold=0.8)
         result = {"score": 0.42, "feedback": None}
         text = build_eval_preamble(result, evaluation)
@@ -961,8 +961,8 @@ class TestEvalPreamble:
         assert "failed" not in text.lower()
 
     def test_with_dimensions_and_reasons(self):
-        from abe_froman.runtime.gates import build_eval_preamble
-        from abe_froman.schema.models import Evaluation, DimensionCheck
+        from sqrlly.runtime.gates import build_eval_preamble
+        from sqrlly.schema.models import Evaluation, DimensionCheck
         evaluation = Evaluation(
             validator="v.md",
             dimensions=[
@@ -982,7 +982,7 @@ class TestEvalPreamble:
         assert "failed" not in text.lower()
 
     def test_attempt_footer_only_when_provided(self):
-        from abe_froman.runtime.gates import build_eval_preamble
+        from sqrlly.runtime.gates import build_eval_preamble
         result = {"score": 0.5, "feedback": None}
         without = build_eval_preamble(result, None)
         with_attempt = build_eval_preamble(
@@ -994,8 +994,8 @@ class TestEvalPreamble:
     def test_extra_dimensions_surfaced(self):
         # Gate returned a dimension the evaluation didn't declare —
         # surface it rather than drop, so unexpected coverage is visible.
-        from abe_froman.runtime.gates import build_eval_preamble
-        from abe_froman.schema.models import Evaluation, DimensionCheck
+        from sqrlly.runtime.gates import build_eval_preamble
+        from sqrlly.schema.models import Evaluation, DimensionCheck
         evaluation = Evaluation(
             validator="v.md",
             dimensions=[DimensionCheck(field="coverage", min=0.6)],
@@ -1091,8 +1091,8 @@ class TestGateDepOutputs:
         """An LLM gate template referencing `{{ research }}` resolves
         to research's stdout — same shape executor templates use via
         `build_context`."""
-        from abe_froman.runtime.executor.prompt import render_template
-        from abe_froman.runtime.gates import build_llm_gate_context
+        from sqrlly.runtime.executor.prompt import render_template
+        from sqrlly.runtime.gates import build_llm_gate_context
 
         context = build_llm_gate_context(
             node_id="writer",
@@ -1106,8 +1106,8 @@ class TestGateDepOutputs:
     def test_llm_gate_template_aggregate_deps_form(self):
         """`{{ _deps }}` is a JSON dump of all dep outputs — useful
         for templates that want to iterate generically."""
-        from abe_froman.runtime.executor.prompt import render_template
-        from abe_froman.runtime.gates import build_llm_gate_context
+        from sqrlly.runtime.executor.prompt import render_template
+        from sqrlly.runtime.gates import build_llm_gate_context
 
         context = build_llm_gate_context(
             node_id="writer",
@@ -1129,8 +1129,8 @@ class TestGateScopingByDeps:
 
     def test_scoped_to_declared_deps(self, tmp_path):
         """Direct test of the scoping helper."""
-        from abe_froman.compile.nodes import _scope_dep_outputs_for_gate
-        from abe_froman.schema.models import Node
+        from sqrlly.compile.nodes import _scope_dep_outputs_for_gate
+        from sqrlly.schema.models import Node
 
         node = Node(
             id="writer", name="Writer",
@@ -1153,8 +1153,8 @@ class TestGateScopingByDeps:
     def test_gate_only_phase_sees_all_completed(self, tmp_path):
         """Node with no `execute:`, no `depends_on:`, only
         `evaluation:` — gets all completed outputs."""
-        from abe_froman.compile.nodes import _scope_dep_outputs_for_gate
-        from abe_froman.schema.models import Node
+        from sqrlly.compile.nodes import _scope_dep_outputs_for_gate
+        from sqrlly.schema.models import Node
 
         node = Node(
             id="checker", name="Checker",
@@ -1172,8 +1172,8 @@ class TestGateScopingByDeps:
         """Empty state → None (run_evaluation_script writes
         DEPS_JSON='{}' anyway, so the validator sees an empty dict
         either way)."""
-        from abe_froman.compile.nodes import _scope_dep_outputs_for_gate
-        from abe_froman.schema.models import Node
+        from sqrlly.compile.nodes import _scope_dep_outputs_for_gate
+        from sqrlly.schema.models import Node
 
         node = Node(
             id="writer", name="Writer",

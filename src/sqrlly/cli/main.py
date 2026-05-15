@@ -8,14 +8,14 @@ from typing import Any
 import click
 import yaml
 
-from abe_froman.compile.graph import build_workflow_graph
-from abe_froman.runtime.executor.dispatch import DispatchExecutor
-from abe_froman.runtime.foreman import ForemanExecutor
-from abe_froman.runtime.runner import run_workflow
-from abe_froman.runtime.state import make_initial_state
-from abe_froman.schema.models import Graph
+from sqrlly.compile.graph import build_workflow_graph
+from sqrlly.runtime.executor.dispatch import DispatchExecutor
+from sqrlly.runtime.foreman import ForemanExecutor
+from sqrlly.runtime.runner import run_workflow
+from sqrlly.runtime.state import make_initial_state
+from sqrlly.schema.models import Graph
 
-CHECKPOINT_DB = ".abe-froman-checkpoint.db"
+CHECKPOINT_DB = ".sqrlly-checkpoint.db"
 
 
 def _is_git_repo(workdir: str) -> bool:
@@ -51,7 +51,7 @@ def _db_path(workdir: str) -> str:
 
 @click.group()
 def cli():
-    """Abe Froman — workflow orchestrator."""
+    """sqrlly — workflow orchestrator."""
     pass
 
 
@@ -89,7 +89,7 @@ def migrate(config_file: str, dry_run: bool, in_place: bool):
     Comments, anchors, and templated {{}} strings are preserved.
     Idempotent: running on already-migrated YAML is a no-op.
     """
-    from abe_froman.cli.migrate import migrate_file
+    from sqrlly.cli.migrate import migrate_file
 
     if dry_run and in_place:
         raise click.UsageError(
@@ -137,7 +137,7 @@ def graph(config_file: str):
 @click.option(
     "--out", "out_path", type=click.Path(),
     help="Output HTML path. Defaults to "
-         "<workdir>/abe-froman-view.html.",
+         "<workdir>/sqrlly-view.html.",
 )
 @click.option(
     "--workdir", "-w", default=".",
@@ -159,13 +159,13 @@ def view(
     """Render a workflow as a self-contained HTML viewer.
 
     Two modes:
-      Authoring: `abe-froman view <yaml>` — topology + per-node
+      Authoring: `sqrlly view <yaml>` — topology + per-node
         config panel. No runtime overlay.
-      Debug: `abe-froman view <yaml> --log <jsonl>` — same plus
+      Debug: `sqrlly view <yaml> --log <jsonl>` — same plus
         status overlay (passed/failed/retried/untouched) and
         per-node log slices on click.
     """
-    from abe_froman.cli.view import read_jsonl_log, render_view
+    from sqrlly.cli.view import read_jsonl_log, render_view
 
     try:
         config = load_config(config_file)
@@ -182,7 +182,7 @@ def view(
     html = render_view(config, events, direction=direction.upper())
 
     if out_path is None:
-        out_path = str(Path(workdir) / "abe-froman-view.html")
+        out_path = str(Path(workdir) / "sqrlly-view.html")
     Path(out_path).write_text(html)
     click.echo(f"Wrote {out_path}", err=True)
 
@@ -203,7 +203,7 @@ async def _run_async(
     only handles the outer state stream; CLI owns workflow_start /
     workflow_end / close().
     """
-    from abe_froman.runtime.logging import JsonlLogger
+    from sqrlly.runtime.logging import JsonlLogger
 
     thread_id = _thread_id_for(config, workdir)
 
@@ -256,7 +256,7 @@ async def _execute_workflow(
 
     from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
-    from abe_froman.runtime.executor.backends.factory import create_prompt_backend
+    from sqrlly.runtime.executor.backends.factory import create_prompt_backend
 
     backend = create_prompt_backend(executor_type)
     dispatch = DispatchExecutor(
@@ -365,7 +365,7 @@ def run(
     # Resolution order: --executor flag > YAML settings.executor > auto-detect.
     # auto_detect_executor warns when nothing is on disk and falls back to
     # 'stub'; explicit choices never trigger that warning.
-    from abe_froman.runtime.executor.backends.factory import auto_detect_executor
+    from sqrlly.runtime.executor.backends.factory import auto_detect_executor
 
     executor_type = executor or config.settings.executor or auto_detect_executor()
 

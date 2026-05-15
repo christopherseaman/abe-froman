@@ -1,22 +1,34 @@
-# abe-froman
+# sqrlly
 
 Workflow orchestrator using LangGraph for graph topology and Claude / DeepSeek / scripts for execution.
 
 ## What it is
 
-abe-froman compiles a YAML workflow into a LangGraph `StateGraph`. Each node executes one of: a prompt against an LLM backend, an interpreted script (`.py` / `.js` / `.ts` / `.sh`), a binary, a `join` topology marker, or a recursive subgraph reference. The shape of every executable node is the unified Stage 5b `execute: { url, params }` block — the URL extension (or `mode:` override) drives the dispatcher. Forward-edge dispatch lives on the orthogonal Stage 5c `route:` block, which can stand alone (a pure dispatcher) or pair with `execute:` on the same node.
+sqrlly compiles a YAML workflow into a LangGraph `StateGraph`. Each node executes one of: a prompt against an LLM backend, an interpreted script (`.py` / `.js` / `.ts` / `.sh`), a binary, a `join` topology marker, or a recursive subgraph reference. The shape of every executable node is the unified Stage 5b `execute: { url, params }` block — the URL extension (or `mode:` override) drives the dispatcher. Forward-edge dispatch lives on the orthogonal Stage 5c `route:` block, which can stand alone (a pure dispatcher) or pair with `execute:` on the same node.
 
-Quality gates wrap each node. A gate is a script (`.py` / `.js`) reading the node output on stdin, or an `.md` Jinja prompt evaluated by the node's LLM backend. Gate failures retry the node with `{{_retry_reason}}` injected. Subgraphs are recursive — the same YAML schema is runnable standalone via `abe-froman run` or as a node reference from another graph. Fan-out spawns a `Send` per manifest item, optionally backed by a per-Send subgraph.
+Quality gates wrap each node. A gate is a script (`.py` / `.js`) reading the node output on stdin, or an `.md` Jinja prompt evaluated by the node's LLM backend. Gate failures retry the node with `{{_retry_reason}}` injected. Subgraphs are recursive — the same YAML schema is runnable standalone via `sqrlly run` or as a node reference from another graph. Fan-out spawns a `Send` per manifest item, optionally backed by a per-Send subgraph.
 
-State persists through LangGraph's `AsyncSqliteSaver` checkpointer at `<workdir>/.abe-froman-checkpoint.db`, keyed by a deterministic SHA1 of `(workflow_name, resolved_workdir)`. `--resume` reads the last checkpoint and restarts from where the previous run stopped. When `--workdir` is a git repo, every node runs in its own git worktree under `<workdir>/.abe-foreman/`, retained across retries so prompt nodes can iterate on prior files.
+State persists through LangGraph's `AsyncSqliteSaver` checkpointer at `<workdir>/.sqrlly-checkpoint.db`, keyed by a deterministic SHA1 of `(workflow_name, resolved_workdir)`. `--resume` reads the last checkpoint and restarts from where the previous run stopped. When `--workdir` is a git repo, every node runs in its own git worktree under `<workdir>/.sqrlly/`, retained across retries so prompt nodes can iterate on prior files.
 
 ## Install
 
+**From source (development):**
 ```bash
+git clone https://github.com/christopherseaman/sqrlly.git
+cd sqrlly
 uv sync                                  # core
-uv sync --extra openai                   # for OpenAI / DeepSeek backend
+uv sync --extra openai --extra anthropic # add OpenAI / DeepSeek / Anthropic backends
 npm i -g @zed-industries/claude-code-acp # for ACP backend
 ```
+
+**From the GitHub repo (as a tool):**
+```bash
+pip install git+https://github.com/christopherseaman/sqrlly.git
+# Or with extras:
+pip install "sqrlly[anthropic,openai] @ git+https://github.com/christopherseaman/sqrlly.git"
+```
+
+Once installed, the `sqrlly` command is on your PATH. PyPI / pipx packaging is on the roadmap — see [WISHLIST.md](WISHLIST.md).
 
 Python 3.11+ is required. The project develops on 3.14.
 
@@ -32,9 +44,9 @@ CUSTOM_API_KEY=sk-or-v1-...         # --executor custom (any OpenAI-compatible t
 CUSTOM_API_BASE_URL=https://openrouter.ai/api/v1
 ```
 
-Load via `uv run --env-file .env abe-froman run <config.yaml>`, or `set -a; source .env; set +a` in your shell.
+Load via `uv run --env-file .env sqrlly run <config.yaml>`, or `set -a; source .env; set +a` in your shell.
 
-Resolution order: workflow YAML setting (when a binding exists) → process env (`os.environ`) → project-local `.env` file (auto-discovered by walking up from CWD). abe-froman never reads from machine-global keystores; keys live in the project's environment.
+Resolution order: workflow YAML setting (when a binding exists) → process env (`os.environ`) → project-local `.env` file (auto-discovered by walking up from CWD). sqrlly never reads from machine-global keystores; keys live in the project's environment.
 
 **`openai` vs `custom`**: `--executor openai` is reserved for real openai.com. For OpenAI-compatible third parties — OpenRouter, Ollama, LM Studio, LiteLLM, Azure OpenAI, vLLM, etc. — use `--executor custom` with `CUSTOM_API_KEY` and `CUSTOM_API_BASE_URL`. Both vars are required for `custom` (no silent fallback to OpenAI's default endpoint with a non-OpenAI key). Example endpoints: `https://openrouter.ai/api/v1` (OpenRouter), `http://localhost:11434/v1` (Ollama), `http://localhost:1234/v1` (LM Studio), `http://localhost:4000` (LiteLLM proxy).
 
@@ -70,8 +82,8 @@ settings:
 Validate, then run with a JSONL log:
 
 ```bash
-uv run abe-froman validate examples/jokes/workflow.yaml
-uv run abe-froman run examples/jokes/workflow.yaml --log /tmp/jokes.jsonl
+uv run sqrlly validate examples/jokes/workflow.yaml
+uv run sqrlly run examples/jokes/workflow.yaml --log /tmp/jokes.jsonl
 ```
 
 The validate command echoes `Valid: Joke Generator v0.1.0 (2 nodes)`. The run command echoes per-node progress and finishes with a `Completed:` summary. Inspect `/tmp/jokes.jsonl` for `workflow_start`, `node_completed`, `gate_evaluated`, `node_retried`, `workflow_end` events.
@@ -102,7 +114,7 @@ Four commands. `validate`, `run`, `migrate`, `graph`.
 Compile the YAML and report node count.
 
 ```bash
-uv run abe-froman validate config.yaml
+uv run sqrlly validate config.yaml
 ```
 
 ### run
@@ -119,8 +131,8 @@ Execute the workflow.
 | `--log`        | (none)  | JSONL event log path. |
 
 ```bash
-uv run abe-froman run config.yaml -w ./run --executor deepseek --log run.jsonl
-uv run abe-froman run config.yaml --resume
+uv run sqrlly run config.yaml -w ./run --executor deepseek --log run.jsonl
+uv run sqrlly run config.yaml --resume
 ```
 
 ### migrate
@@ -133,7 +145,7 @@ Rewrite pre-Stage-4 YAML (with `phases:` / `quality_gate:` / `dynamic_subphases:
 | `--in-place`| `false` | Rewrite the file on disk (default: print to stdout). |
 
 ```bash
-uv run abe-froman migrate old.yaml --in-place
+uv run sqrlly migrate old.yaml --in-place
 ```
 
 ### graph
@@ -141,7 +153,7 @@ uv run abe-froman migrate old.yaml --in-place
 Render the compiled LangGraph as a Mermaid diagram on stdout.
 
 ```bash
-uv run abe-froman graph config.yaml
+uv run sqrlly graph config.yaml
 ```
 
 ### view
@@ -153,14 +165,14 @@ Two modes:
 
 ```bash
 # Authoring: topology + per-node config inspector. No log needed.
-uv run abe-froman view config.yaml
+uv run sqrlly view config.yaml
 
 # Debug: same, plus per-node status overlay + log slices on click.
-uv run abe-froman view config.yaml --log out.jsonl
+uv run sqrlly view config.yaml --log out.jsonl
 ```
 
 Flags:
-- `--out <path.html>` — output path (default `<workdir>/abe-froman-view.html`).
+- `--out <path.html>` — output path (default `<workdir>/sqrlly-view.html`).
 - `--direction TB|LR|BT|RL` — Mermaid layout direction (default `TB`).
 - `--workdir <path>` — for resolving the default `--out` path.
 
@@ -183,7 +195,7 @@ Top-level fields: `name`, `version`, `nodes`, `settings`. Schema validation reje
 
 ### Settings
 
-All defaults in the table below are pulled from `Settings(BaseModel)` in `src/abe_froman/schema/models.py`.
+All defaults in the table below are pulled from `Settings(BaseModel)` in `src/sqrlly/schema/models.py`.
 
 **Output / retries / timeout / preamble / backoff**
 
@@ -320,7 +332,7 @@ route:
 
 When `include_eval: true` fires, the goto target's prompt gets the eval preamble auto-prepended — no template syntax needed. This sits ahead of the rendered template body as a system-style block.
 
-**Standalone vs synthetic dispatch.** A node with `route:` and no `execute:` is a standalone router (the form previously written as `execute: { type: route, cases, else }`). A node with both `execute:` and `route:` runs the execute body (and eval, if present), then a synthetic `_route_<id>` dispatcher fires post-eval and resolves the route. Old YAML using `execute: { type: route, ... }` is auto-migrated to inline `route:` by `abe-froman migrate` (idempotent).
+**Standalone vs synthetic dispatch.** A node with `route:` and no `execute:` is a standalone router (the form previously written as `execute: { type: route, cases, else }`). A node with both `execute:` and `route:` runs the execute body (and eval, if present), then a synthetic `_route_<id>` dispatcher fires post-eval and resolves the route. Old YAML using `execute: { type: route, ... }` is auto-migrated to inline `route:` by `sqrlly migrate` (idempotent).
 
 **LangGraph forms produced.** A scalar `goto:` compiles to `Command(goto="target")`; a list `goto: [a, b]` compiles to `Command(goto=["a", "b"])` — LangGraph 1.x dispatches each target as its own concurrent edge in the next super-step.
 
@@ -343,7 +355,7 @@ Workflow YAML is treated as author-checked-in code, so the simpleeval sandbox is
 
 ### Per-mode params
 
-Each mode's `params:` is validated by a Pydantic model (`extra="forbid"`); typos like `arg:` instead of `args:` fail at compile time. Source: `src/abe_froman/schema/params.py`.
+Each mode's `params:` is validated by a Pydantic model (`extra="forbid"`); typos like `arg:` instead of `args:` fail at compile time. Source: `src/sqrlly/schema/params.py`.
 
 | Mode                                             | Model              | Fields |
 |--------------------------------------------------|--------------------|--------|
@@ -355,7 +367,7 @@ Authors can override the extension-driven choice with `mode:` (one of `prompt`, 
 
 ### URL dispatch table
 
-Source: `src/abe_froman/runtime/executor/dispatch.py`.
+Source: `src/sqrlly/runtime/executor/dispatch.py`.
 
 | URL pattern (scheme + extension)                       | Handler                              | Params shape       |
 |--------------------------------------------------------|--------------------------------------|--------------------|
@@ -432,7 +444,7 @@ Script extension dispatch: `.py` → `python3`, `.js` / `.mjs` → `node`, `.ts`
 
 ### Subgraph nodes (recursive)
 
-A node with `execute: { url: path/to/sub.yaml }` references another graph. The referenced YAML is loaded with the same `Graph` schema and recursively compiled. Identical schemas — the same file is runnable standalone via `abe-froman run` or as a subgraph reference.
+A node with `execute: { url: path/to/sub.yaml }` references another graph. The referenced YAML is loaded with the same `Graph` schema and recursively compiled. Identical schemas — the same file is runnable standalone via `sqrlly run` or as a subgraph reference.
 
 ```yaml
 - id: paper
@@ -464,7 +476,7 @@ A no-op topology marker for fan-in. Carries no params, no cases.
 
 Stage 5c. Inline forward-edge dispatch lives on `Node.route`; full schema reference is in the "Inline routing" section under "Workflow schema" above. Two compile-time shapes:
 
-- **Standalone** — `route:` with no `execute:`. The node body itself is the dispatcher; emits `Command(goto=...)` directly. Replaces the legacy `execute: { type: route, ... }` form (auto-migrated by `abe-froman migrate`).
+- **Standalone** — `route:` with no `execute:`. The node body itself is the dispatcher; emits `Command(goto=...)` directly. Replaces the legacy `execute: { type: route, ... }` form (auto-migrated by `sqrlly migrate`).
 - **Synthetic post-execute** — `execute:` and `route:` on the same node. After the execute body (and eval, if any) settles, a synthetic `_route_<id>` node fires, resolves the route, and dispatches via `Command(goto=...)`.
 
 Both forms support `goto: <str>`, `goto: [list]` (static fan-out), and `cases:` + `else:` ladders. Goto targets skip the START fallback edge so they only fire via `Command`. Inline-route nodes are leaves in the `depends_on` DAG (validated at compile time).
@@ -549,7 +561,7 @@ Asymmetric by design: retry is "iterate on this task" (the author writes `{{_ret
 
 ## Foreman and worktrees
 
-Foreman is enabled when `--workdir` is inside a git working tree. It allocates a worktree per node id at `<workdir>/.abe-foreman/wt-<id>-<uuid>/`, reused across retries so prompt nodes can iterate on prior files. Subphases get worktrees keyed `{parent_id}::{item_id}`. Worktrees survive resume — `state.node_worktrees` rehydrates into a fresh `ForemanExecutor`.
+Foreman is enabled when `--workdir` is inside a git working tree. It allocates a worktree per node id at `<workdir>/.sqrlly/wt-<id>-<uuid>/`, reused across retries so prompt nodes can iterate on prior files. Subphases get worktrees keyed `{parent_id}::{item_id}`. Worktrees survive resume — `state.node_worktrees` rehydrates into a fresh `ForemanExecutor`.
 
 Foreman never cleans worktrees. Authors write explicit reconciliation nodes (typically a `cp` / `git merge-file` script) that decide what flows from a worktree into the base workdir. Stray trees can be removed with `git worktree remove <path>`.
 
@@ -561,9 +573,9 @@ Concurrency caps: `settings.max_parallel_jobs` (global semaphore) and `settings.
 
 `--log <path>` writes a JSONL event stream. Event types: `workflow_start`, `workflow_end`, `node_completed`, `node_failed`, `gate_evaluated`, `node_retried`. Subgraph events are prefixed `parent::child` so nested compositions are traceable.
 
-`<workdir>/.abe-froman-checkpoint.db` is the LangGraph `AsyncSqliteSaver` store. The thread_id is a deterministic 16-char SHA1 hash of `(workflow_name, resolved_workdir)`. `--resume` reads the most recent checkpoint for that thread, strips failure bookkeeping (`failed_nodes`, `errors`, `retries`), and re-runs from where the previous attempt stopped.
+`<workdir>/.sqrlly-checkpoint.db` is the LangGraph `AsyncSqliteSaver` store. The thread_id is a deterministic 16-char SHA1 hash of `(workflow_name, resolved_workdir)`. `--resume` reads the most recent checkpoint for that thread, strips failure bookkeeping (`failed_nodes`, `errors`, `retries`), and re-runs from where the previous attempt stopped.
 
-`abe-froman graph config.yaml` emits a Mermaid diagram via LangGraph's `draw_mermaid()`.
+`sqrlly graph config.yaml` emits a Mermaid diagram via LangGraph's `draw_mermaid()`.
 
 ## Examples gallery
 

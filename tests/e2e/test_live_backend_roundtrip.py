@@ -27,12 +27,12 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from abe_froman.cli.main import cli
-from abe_froman.runtime.executor.backends.factory import (
+from sqrlly.cli.main import cli
+from sqrlly.runtime.executor.backends.factory import (
     _resolve_anthropic_key,
     _resolve_deepseek_key,
 )
-from abe_froman.runtime.secrets import resolve_secret
+from sqrlly.runtime.secrets import resolve_secret
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]

@@ -13,7 +13,7 @@ A side-channel runs-counter file per node lets us assert exactly how
 many times each body executed across both phases. This is the
 property no existing resume test pins down.
 
-DOCUMENTED CURRENT BEHAVIOR: on ``--resume``, abe-froman re-executes
+DOCUMENTED CURRENT BEHAVIOR: on ``--resume``, sqrlly re-executes
 already-completed nodes. ``a`` runs twice (once in phase 1, once again
 in phase 2); ``completed_nodes`` accumulates a duplicate entry via the
 ``operator.add`` reducer. This is correct for goto-driven re-fires
@@ -31,11 +31,11 @@ from pathlib import Path
 import pytest
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
-from abe_froman.compile.graph import build_workflow_graph
-from abe_froman.runtime.executor.dispatch import DispatchExecutor
-from abe_froman.runtime.runner import run_workflow
-from abe_froman.runtime.state import make_initial_state
-from abe_froman.schema.models import Graph
+from sqrlly.compile.graph import build_workflow_graph
+from sqrlly.runtime.executor.dispatch import DispatchExecutor
+from sqrlly.runtime.runner import run_workflow
+from sqrlly.runtime.state import make_initial_state
+from sqrlly.schema.models import Graph
 
 
 _PYTHON = sys.executable

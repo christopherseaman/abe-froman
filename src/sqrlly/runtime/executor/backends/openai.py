@@ -13,15 +13,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from abe_froman.runtime.executor.backends._lazy_client import (
+from sqrlly.runtime.executor.backends._lazy_client import (
     LazyClientMixin,
     await_with_timeout,
 )
-from abe_froman.runtime.executor.backends._overload import (
+from sqrlly.runtime.executor.backends._overload import (
     OPENAI_OVERLOAD_NAMES,
     maybe_raise_overload,
 )
-from abe_froman.runtime.result import ExecutionResult
+from sqrlly.runtime.result import ExecutionResult
 
 
 class OpenAIBackend(LazyClientMixin):

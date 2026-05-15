@@ -13,26 +13,26 @@ from typing import TYPE_CHECKING, Any, Callable
 from langgraph.graph import END
 from langgraph.types import Command
 
-from abe_froman.compile.evaluation import (
+from sqrlly.compile.evaluation import (
     EvaluationRecord,
     build_eval_context,
     evaluation_fallback,
     evaluation_to_routes,
     walk_routes,
 )
-from abe_froman.runtime.gates import (
+from sqrlly.runtime.gates import (
     EvaluationResult,
     build_eval_preamble,
     scaffold_output_directory,
     validate_output_contract,
 )
-from abe_froman.runtime.gates import run_evaluation
-from abe_froman.runtime.result import ExecutionResult
-from abe_froman.runtime.state import WorkflowState
-from abe_froman.schema.models import Node, Settings, Graph
+from sqrlly.runtime.gates import run_evaluation
+from sqrlly.runtime.result import ExecutionResult
+from sqrlly.runtime.state import WorkflowState
+from sqrlly.schema.models import Node, Settings, Graph
 
 if TYPE_CHECKING:
-    from abe_froman.runtime.result import NodeExecutor
+    from sqrlly.runtime.result import NodeExecutor
 
 
 def _get_retry_delay(retry_count: int, backoff: list[float]) -> float:
@@ -794,7 +794,7 @@ def _record_to_eval_result(payload: dict[str, Any]):
     ``state.evaluations[key][-1]["result"]`` and needs an
     ``EvaluationResult`` to feed ``classify_evaluation_outcome``.
     """
-    from abe_froman.runtime.gates import EvaluationResult as _ER
+    from sqrlly.runtime.gates import EvaluationResult as _ER
     return _ER(
         score=float(payload.get("score") or 0.0),
         scores=dict(payload.get("scores") or {}),

@@ -9,10 +9,10 @@ import shutil
 
 import pytest
 
-from abe_froman.compile.graph import build_workflow_graph
-from abe_froman.runtime.state import make_initial_state
-from abe_froman.runtime.executor.dispatch import DispatchExecutor
-from abe_froman.schema.models import Execute, Node
+from sqrlly.compile.graph import build_workflow_graph
+from sqrlly.runtime.state import make_initial_state
+from sqrlly.runtime.executor.dispatch import DispatchExecutor
+from sqrlly.schema.models import Execute, Node
 
 from helpers import cmd_phase, fail_phase, make_config
 
@@ -454,7 +454,7 @@ class TestRetryContextInjection:
         )
 
         from mock_executor import MockExecutor
-        from abe_froman.runtime.result import ExecutionResult
+        from sqrlly.runtime.result import ExecutionResult
 
         mock = MockExecutor(results={
             "p1": ExecutionResult(success=True, output="data"),
@@ -499,7 +499,7 @@ class TestRetryContextInjection:
         )
 
         from mock_executor import MockExecutor
-        from abe_froman.runtime.result import ExecutionResult
+        from sqrlly.runtime.result import ExecutionResult
 
         mock = MockExecutor(results={
             "p1": ExecutionResult(success=True, output="data"),
@@ -537,7 +537,7 @@ class TestRetryContextInjection:
         script.write_text("print(1.0)")
 
         from mock_executor import MockExecutor
-        from abe_froman.runtime.result import ExecutionResult
+        from sqrlly.runtime.result import ExecutionResult
 
         mock = MockExecutor(results={
             "p1": ExecutionResult(success=True, output="data"),
@@ -573,7 +573,7 @@ class TestContextPropagation:
     @pytest.mark.asyncio
     async def test_dependency_output_in_executor_context(self):
         from mock_executor import MockExecutor
-        from abe_froman.runtime.result import ExecutionResult
+        from sqrlly.runtime.result import ExecutionResult
 
         mock = MockExecutor(results={
             "a": ExecutionResult(success=True, output="a-output"),
@@ -592,7 +592,7 @@ class TestContextPropagation:
     @pytest.mark.asyncio
     async def test_structured_output_flows_to_dependent(self):
         from mock_executor import MockExecutor
-        from abe_froman.runtime.result import ExecutionResult
+        from sqrlly.runtime.result import ExecutionResult
 
         mock = MockExecutor(results={
             "a": ExecutionResult(

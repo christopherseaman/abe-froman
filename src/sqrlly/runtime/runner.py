@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from abe_froman.schema.models import Graph
+from sqrlly.schema.models import Graph
 
 
 async def run_workflow(
@@ -36,7 +36,7 @@ async def run_workflow(
     CLI uses the injection path so subgraph events surface end-to-end;
     direct test/standalone callers prefer the convenience path.
     """
-    from abe_froman.runtime.logging import JsonlLogger
+    from sqrlly.runtime.logging import JsonlLogger
 
     owns_logger = False
     if logger is None and log_file is not None:

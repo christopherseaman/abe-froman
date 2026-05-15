@@ -2,7 +2,7 @@
 
 import shutil
 
-from abe_froman.schema.models import Graph
+from sqrlly.schema.models import Graph
 
 # Resolve binaries once at import time; the migrate tool uses
 # shutil.which the same way, so test helpers stay consistent.

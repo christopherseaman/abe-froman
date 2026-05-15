@@ -28,7 +28,7 @@ follow-up; items 3+ are real cleanup wins held for explicit decisions.
 
 ## Post-merge findings (2026-05-06, native-events + Anthropic + stubectomy branch)
 
-- [ ] ~~**(13) `AnthropicBackend` doesn't surface `tokens_used`**~~ — _out of scope (decided 2026-05-06)._ Token-count surfacing on `ExecutionResult` was previously removed from scope; Samus's "Phase 5 (high)" priority on this is not a binding requirement on abe-froman. If a future consumer needs token counts, they can be threaded then; until that consumer exists, adding the field is YAGNI.
+- [ ] ~~**(13) `AnthropicBackend` doesn't surface `tokens_used`**~~ — _out of scope (decided 2026-05-06)._ Token-count surfacing on `ExecutionResult` was previously removed from scope; Samus's "Phase 5 (high)" priority on this is not a binding requirement on sqrlly. If a future consumer needs token counts, they can be threaded then; until that consumer exists, adding the field is YAGNI.
 - [x] **(14) `Settings.executor` rejects unknown strings at schema time** — _delivered (commit `f563935`)._ `schema/models.py::Settings.executor` is now `Literal["acp", "anthropic", "custom", "deepseek", "openai"] | None`. Typo'd values fail at `validate` time rather than late at `run`. The `custom` choice covers OpenRouter / Ollama / LM Studio / LiteLLM / Azure OpenAI / vLLM via `CUSTOM_API_KEY` + `CUSTOM_API_BASE_URL`.
 - [x] **(15) `AnthropicBackend` empty-text-block edge case** — _delivered (commit `f563935`)._ The text-block filter now drops empty-text blocks before the `if not text_parts:` check (`anthropic.py:128-133`: `... and getattr(block, "text", "")`). An all-empty-text response now triggers the loud "no non-empty text block" failure path instead of silently returning `ExecutionResult(output="")`.
 - [x] **(16) `_OVERLOAD_EXCEPTION_NAMES` includes speculative class names** — _delivered (commit `f563935`)._ Dropped the speculative `OverloadedError` entry from the frozenset and replaced the "(newer SDK versions)" comment with a verified-against-0.99 note. Final set: `RateLimitError` / `APIConnectionError` / `APITimeoutError` / `InternalServerError` — all observed in the live SDK.
@@ -104,7 +104,7 @@ than fixes to existing code.
 - [ ] **(26) `--resume` semantics are underspecified for goto-driven
   workflows** — _surfaced by (25); design question, not a bug._
   Today `--resume` is a bare boolean: state comes from the SQLite
-  checkpoint at `<workdir>/.abe-froman-checkpoint.db`, thread_id is
+  checkpoint at `<workdir>/.sqrlly-checkpoint.db`, thread_id is
   derived from `(config.name, workdir)`. cli/main.py loads the
   saved `channel_values`, resets `failed_nodes`/`retries`/`errors`,
   calls `cp.adelete_thread(thread_id)`, then re-streams. Every node
@@ -199,9 +199,9 @@ than fixes to existing code.
 - [x] **ACP process-tree leaks / zombie subprocesses under long runs** — _initial fix landed in post-Stage-5b. `ACPBackend.close()` now captures descendants from `/proc/<pid>/task/<pid>/children` BEFORE `__aexit__` (so re-parented orphans stay tracked), runs graceful shutdown under a 5s `wait_for`, then SIGTERM→0.5s→SIGKILLs each captured PID. Teardown assertion `tests/acp/test_acp_cleanup.py::test_close_reaps_descendant_tree` watches a 15-PID descendant tree disappear within 3s of close. **Open: soak-test under load** — needs a multi-hour run with `max_parallel_jobs > 1` against the absurd-paper workflow before this can be fully ticked off._
 
 - [ ] **Worktree garbage collection**
-    - Today: `ForemanExecutor` never removes trees under `<workdir>/.abe-foreman/` — disk + inodes accumulate indefinitely across runs
-    - CLI: `abe-froman worktree list` — table of (phase_id, created, last_used, size, branch)
-    - CLI: `abe-froman worktree prune [--older-than 7d] [--phase <id>] [--dry-run]` — `git worktree remove` + directory delete, with safety checks for uncommitted changes
+    - Today: `ForemanExecutor` never removes trees under `<workdir>/.sqrlly/` — disk + inodes accumulate indefinitely across runs
+    - CLI: `sqrlly worktree list` — table of (phase_id, created, last_used, size, branch)
+    - CLI: `sqrlly worktree prune [--older-than 7d] [--phase <id>] [--dry-run]` — `git worktree remove` + directory delete, with safety checks for uncommitted changes
     - Optional auto-GC: `settings.cleanup_worktrees_on_success: bool` — prune at `workflow_end` only when the final state is all-completed (preserve on partial failure so users can inspect)
     - Must preserve the across-retries reuse that foreman relies on (keys trees by `phase_id`); GC runs against _completed_ workflow threads only
 
@@ -278,7 +278,7 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
 - [x] **Subgraph with defined entry/exit nodes as a first-class primitive** — _landed, Stage 4c._ A subgraph declared via `Node.config:` is loaded as a `Graph` (identical schema), recursively compiled, and added as a node in the parent via `add_node(node.id, compiled_subgraph)`. State projection across the boundary is explicit via `inputs:` / `outputs:` declarations. Reusable subgraph libraries are a real concept now: the same YAML runs both standalone and as a subgraph reference.
 
 - [x] **Workflow run visualization tool** — _delivered 2026-05-08
-  (MVP)._ `abe-froman view <yaml> [--log <jsonl>] [--out <path>]
+  (MVP)._ `sqrlly view <yaml> [--log <jsonl>] [--out <path>]
   [--direction TB|LR|BT|RL]` emits a self-contained HTML page with
   custom Mermaid emission (not LangGraph's, for layout control and
   author-perspective output skipping synthetic `_eval_<id>` /
@@ -302,7 +302,7 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
 
     - **(26)** `--resume` semantics for goto-driven workflows.
       "Where I left off" isn't well-defined when re-fires accumulate.
-    - **391** `abe-froman replay <thread-id> --from <checkpoint>`.
+    - **391** `sqrlly replay <thread-id> --from <checkpoint>`.
       The super-step checkpointer already persists every step; we
       just don't expose them.
     - **226** Trunk/merge branch for synthesis merges
@@ -311,7 +311,7 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
 
   Integration: an author marks specific nodes as **checkpoint
   boundaries** in YAML (e.g. `checkpoint: true` on `paper` after
-  the multi-section synthesis). At runtime, abe-froman commits the
+  the multi-section synthesis). At runtime, sqrlly commits the
   worktree state at each checkpoint boundary into a per-node branch
   and tags the commit with the super-step id. Two things become
   natural:
@@ -339,7 +339,7 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
       lets a workflow author override defaults without editing each
       node; the third is zero-config but loud.
     - Worktree commit lifecycle: do commits accumulate forever in
-      `.abe-foreman/wt-<id>/` or get GC'd after N runs? Tying
+      `.sqrlly/wt-<id>/` or get GC'd after N runs? Tying
       checkpoints to the existing JSONL log (item 391's input
       shape) might let GC be log-driven.
 
@@ -399,7 +399,7 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
     - New `cache: bool` field on `Phase`, fingerprint persisted alongside state
 
 - [ ] **CLI variable overrides**
-    - `abe-froman run --var key=value` (repeatable)
+    - `sqrlly run --var key=value` (repeatable)
     - `{{vars.key}}` namespace in prompt templates
     - Optional `${var}` substitution in YAML at config-load time
 
@@ -412,7 +412,7 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
     - `asyncio.CancelledError` handling in `runtime/runner.py`
     - Propagate to executors, persist partial state, clean up ACP subprocesses
 
-- [ ] **`abe-froman status` / `dump-state`**
+- [ ] **`sqrlly status` / `dump-state`**
     - Pretty-print persisted state: completed/failed phases, retry counts, gate scores, token usage
     - Works against state file or a langgraph checkpointer if adopted
 
@@ -433,7 +433,7 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
 
 - [x] **Scope-aware settings resolution (prerequisite for everything below)** — _landed post-Stage-5b. `runtime/settings_merge.merge_settings` uses Pydantic v2 `model_fields_set` so child YAML's explicit fields win, parent's flow through. `NodeExecutor.execute` Protocol gained `settings_override: Settings | None`; threaded through `DispatchExecutor` (every read site of `self._settings`), `ForemanExecutor` (per-model semaphore selection), and `PromptExecutor` (`apply_preamble`, `execute_rendered.model_downgrade_chain`). Compile layer: `build_workflow_graph(effective_settings=)`, `_make_execution_node`, `_make_evaluation_node`, `run_evaluation_and_outcome`, fan-out factories all take and propagate. `make_subgraph_node` and `make_fan_out_subgraph_invoker` accept `parent_settings` and call `compile_fn(..., effective_settings=merge_settings(parent, sub))`. Tested by 10 unit tests + 6 e2e (incl. real-subprocess `default_timeout` proof: subgraph override lets `sleep 1.5` pass under parent's 1s; reverse polarity kills `sleep 2`). Critical bug caught en route — the inner `compile_fn` closure was forwarding the OUTER scope's settings into recursive build calls instead of the inner scope's; the artifact-driven sleep test pinned it._
 
-- [x] **Default executor should be real, not stub** — _landed post-Stage-5b. `auto_detect_executor()` in `factory.py` walks `ANTHROPIC_API_KEY` (placeholder) → DeepSeek key (env or `~/.pi/agent/auth.json`) → `npx` on PATH → `stub` with a `UserWarning` naming concrete remediation. `Settings.executor: str | None = None` (was `"stub"`); the CLI does `executor or settings.executor or auto_detect_executor()`. Explicit `-e stub` or `executor: stub` in YAML never triggers the fallback warning — stub stays usable for offline testing, just no longer the default. Manual artifact gate: `abe-froman run examples/jokes/workflow.yaml` (no `-e` flag) now auto-picks DeepSeek (since the key is on disk) and produces real output (not `[prompt-stub]`)._
+- [x] **Default executor should be real, not stub** — _landed post-Stage-5b. `auto_detect_executor()` in `factory.py` walks `ANTHROPIC_API_KEY` (placeholder) → DeepSeek key (env or `~/.pi/agent/auth.json`) → `npx` on PATH → `stub` with a `UserWarning` naming concrete remediation. `Settings.executor: str | None = None` (was `"stub"`); the CLI does `executor or settings.executor or auto_detect_executor()`. Explicit `-e stub` or `executor: stub` in YAML never triggers the fallback warning — stub stays usable for offline testing, just no longer the default. Manual artifact gate: `sqrlly run examples/jokes/workflow.yaml` (no `-e` flag) now auto-picks DeepSeek (since the key is on disk) and produces real output (not `[prompt-stub]`)._
 
 - [ ] **Three orthogonal axes for LLM execution, configurable in YAML**
     - Depends on scope-aware settings resolution above — without it, a subgraph's `settings.llm:` block would silently lose to the parent's, which is exactly the footgun the resolution-order fix exists to close.
@@ -489,7 +489,7 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
 
 - [ ] **`add_messages` reducer for in-phase refinement loops** — multi-turn draft → critique → revise within a single phase using LangGraph's native message-list reducer. Phase-local `messages` channel; no ACP round-trip per turn for pure model revision.
 
-- [ ] **Time-travel replay in CLI** — `abe-froman replay <thread-id> --from <checkpoint>`. Checkpointer already persists every super-step; we just don't expose it. Enables A/B of executor changes against the same past state, bisecting regressions, reproducing flakes.
+- [ ] **Time-travel replay in CLI** — `sqrlly replay <thread-id> --from <checkpoint>`. Checkpointer already persists every super-step; we just don't expose it. Enables A/B of executor changes against the same past state, bisecting regressions, reproducing flakes.
 
 - [ ] **Static breakpoints** — `compile(interrupt_before=[...], interrupt_after=[...])`. Pairs with `--break-before <node>` / `--break-after <node>` CLI flags for step-through debugging of production workflows.
 

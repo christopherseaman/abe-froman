@@ -4,11 +4,11 @@ from pathlib import Path
 
 import yaml
 
-from abe_froman.compile.graph import build_workflow_graph
-from abe_froman.runtime.executor.backends.factory import create_prompt_backend
-from abe_froman.runtime.executor.dispatch import DispatchExecutor
-from abe_froman.runtime.state import make_initial_state
-from abe_froman.schema.models import Graph
+from sqrlly.compile.graph import build_workflow_graph
+from sqrlly.runtime.executor.backends.factory import create_prompt_backend
+from sqrlly.runtime.executor.dispatch import DispatchExecutor
+from sqrlly.runtime.state import make_initial_state
+from sqrlly.schema.models import Graph
 
 
 async def main():

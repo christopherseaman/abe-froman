@@ -30,9 +30,9 @@ from typing import Any
 
 import psutil
 
-from abe_froman.runtime.executor.prompt import resolve_model
-from abe_froman.runtime.result import ExecutionResult, NodeExecutor, PromptBackend
-from abe_froman.schema.models import Node, Settings
+from sqrlly.runtime.executor.prompt import resolve_model
+from sqrlly.runtime.result import ExecutionResult, NodeExecutor, PromptBackend
+from sqrlly.schema.models import Node, Settings
 
 logger = logging.getLogger(__name__)
 
@@ -148,9 +148,9 @@ class ForemanExecutor:
             return path
 
     async def _create_worktree(self, node_id: str) -> str:
-        """Create a git worktree at base/.abe-foreman/wt-<id>-<uuid>."""
+        """Create a git worktree at base/.sqrlly/wt-<id>-<uuid>."""
         safe_id = node_id.replace("::", "__").replace("/", "_")
-        dest_dir = Path(self._base) / ".abe-foreman"
+        dest_dir = Path(self._base) / ".sqrlly"
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest = dest_dir / f"wt-{safe_id}-{uuid.uuid4().hex[:8]}"
 

@@ -1,4 +1,4 @@
-"""Tests for `abe-froman migrate` — pre-Stage-4 → post-cutover YAML.
+"""Tests for `sqrlly migrate` — pre-Stage-4 → post-cutover YAML.
 
 Synthetic pre-cutover fixtures (no real pre-Stage-4 files exist in-repo
 since the hard cutover already happened). Every test asserts a concrete
@@ -13,8 +13,8 @@ import pytest
 from click.testing import CliRunner
 from ruamel.yaml import YAML
 
-from abe_froman.cli.main import cli
-from abe_froman.cli.migrate import migrate_yaml
+from sqrlly.cli.main import cli
+from sqrlly.cli.migrate import migrate_yaml
 
 
 def _parse(text: str) -> dict:
@@ -282,7 +282,7 @@ class TestStage5bTransforms:
             "    execution:\n      type: command\n"
             "      command: definitely-not-a-real-binary-xyz\n"
         )
-        from abe_froman.cli.migrate import MigrateError
+        from sqrlly.cli.migrate import MigrateError
 
         with pytest.raises(MigrateError) as ei:
             migrate_yaml(before)

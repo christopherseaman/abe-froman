@@ -9,7 +9,7 @@ from typing import Any
 from acp import spawn_agent_process, text_block
 from acp.interfaces import Client
 
-from abe_froman.runtime.result import ExecutionResult, OverloadError
+from sqrlly.runtime.result import ExecutionResult, OverloadError
 
 logger = logging.getLogger(__name__)
 

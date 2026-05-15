@@ -28,10 +28,10 @@ from pathlib import Path
 
 import pytest
 
-from abe_froman.compile.graph import build_workflow_graph
-from abe_froman.runtime.executor.dispatch import DispatchExecutor
-from abe_froman.runtime.state import make_initial_state
-from abe_froman.schema.models import (
+from sqrlly.compile.graph import build_workflow_graph
+from sqrlly.runtime.executor.dispatch import DispatchExecutor
+from sqrlly.runtime.state import make_initial_state
+from sqrlly.schema.models import (
     DimensionCheck,
     Evaluation,
     Execute,

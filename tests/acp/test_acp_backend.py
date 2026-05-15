@@ -16,7 +16,7 @@ import re
 
 import pytest
 
-from abe_froman.runtime.result import ExecutionResult
+from sqrlly.runtime.result import ExecutionResult
 
 ACP_TIMEOUT = 120
 
@@ -51,14 +51,14 @@ def _assert_non_refusal_contains(output: str, target_pattern: str) -> None:
 
 class TestACPCallbacks:
     def test_collects_chunks(self):
-        from abe_froman.runtime.executor.backends.acp import _ACPCallbacks
+        from sqrlly.runtime.executor.backends.acp import _ACPCallbacks
 
         cb = _ACPCallbacks()
         cb.chunks.extend(["Hello ", "world"])
         assert cb.text() == "Hello world"
 
     def test_reset_clears_state(self):
-        from abe_froman.runtime.executor.backends.acp import _ACPCallbacks
+        from sqrlly.runtime.executor.backends.acp import _ACPCallbacks
 
         cb = _ACPCallbacks()
         cb.chunks.append("data")
@@ -73,14 +73,14 @@ class TestACPCallbacks:
 
 class TestFactory:
     def test_acp_backend_created(self):
-        from abe_froman.runtime.executor.backends.factory import create_prompt_backend
-        from abe_froman.runtime.executor.backends.acp import ACPBackend
+        from sqrlly.runtime.executor.backends.factory import create_prompt_backend
+        from sqrlly.runtime.executor.backends.acp import ACPBackend
 
         backend = create_prompt_backend("acp")
         assert isinstance(backend, ACPBackend)
 
     def test_unknown_type_raises(self):
-        from abe_froman.runtime.executor.backends.factory import create_prompt_backend
+        from sqrlly.runtime.executor.backends.factory import create_prompt_backend
 
         with pytest.raises(ValueError, match="Unknown executor type"):
             create_prompt_backend("nonexistent")
@@ -96,7 +96,7 @@ class TestACPIntegration:
     @pytest.mark.asyncio
     async def test_send_prompt_returns_text(self):
         """Send a real prompt via ACP and verify we get a non-empty response."""
-        from abe_froman.runtime.executor.backends.acp import ACPBackend
+        from sqrlly.runtime.executor.backends.acp import ACPBackend
 
         backend = ACPBackend()
         try:
@@ -114,7 +114,7 @@ class TestACPIntegration:
     @pytest.mark.asyncio
     async def test_two_prompts_succeed_on_same_backend(self):
         """Behavioral: two prompts on one backend both return correct outputs."""
-        from abe_froman.runtime.executor.backends.acp import ACPBackend
+        from sqrlly.runtime.executor.backends.acp import ACPBackend
 
         backend = ACPBackend()
         try:
@@ -137,7 +137,7 @@ class TestACPIntegration:
     @pytest.mark.asyncio
     async def test_close_is_idempotent(self):
         """Behavioral: calling close() twice doesn't raise."""
-        from abe_froman.runtime.executor.backends.acp import ACPBackend
+        from sqrlly.runtime.executor.backends.acp import ACPBackend
 
         backend = ACPBackend()
         try:
@@ -150,9 +150,9 @@ class TestACPIntegration:
     @pytest.mark.asyncio
     async def test_full_pipeline_via_dispatch(self, tmp_path):
         """End-to-end: DispatchExecutor → PromptExecutor → ACPBackend."""
-        from abe_froman.runtime.executor.backends.acp import ACPBackend
-        from abe_froman.runtime.executor.dispatch import DispatchExecutor
-        from abe_froman.schema.models import Execute, Node, Settings
+        from sqrlly.runtime.executor.backends.acp import ACPBackend
+        from sqrlly.runtime.executor.dispatch import DispatchExecutor
+        from sqrlly.schema.models import Execute, Node, Settings
 
         prompt_file = tmp_path / "test.md"
         prompt_file.write_text(

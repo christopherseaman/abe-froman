@@ -38,20 +38,20 @@ version: "0.1.0"
 # backend key and the e2e test stays stable.
 #
 # WHY A NON-GIT WORKDIR. Wave-pattern workflows need shared mutable
-# state across waves (state.json here). When abe-froman runs in a
+# state across waves (state.json here). When sqrlly runs in a
 # git workdir, ForemanExecutor isolates each node in its own git
 # worktree — sibling worktrees can't see each other's state.json.
 # This example explicitly opts out by running with a non-git workdir
 # (foreman disabled; all scripts share one filesystem). Real
 # workflows that combine the wave pattern with worktree isolation
-# should thread state through abe-froman's `node_outputs` (each node
+# should thread state through sqrlly's `node_outputs` (each node
 # emits state JSON on stdout) instead of a shared file.
 #
 # Setup + run:
 #   mkdir -p /tmp/wave-demo
 #   ln -s "$(pwd)/examples/wave_planner/scripts" /tmp/wave-demo/scripts
-#   uv run abe-froman validate examples/wave_planner/workflow.yaml
-#   uv run abe-froman run examples/wave_planner/workflow.yaml \
+#   uv run sqrlly validate examples/wave_planner/workflow.yaml
+#   uv run sqrlly run examples/wave_planner/workflow.yaml \
 #     --workdir /tmp/wave-demo
 
 nodes:

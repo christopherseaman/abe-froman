@@ -17,7 +17,7 @@ class TestACPConcurrency:
     @pytest.mark.asyncio
     async def test_concurrent_sends_do_not_cross_contaminate(self):
         """Two send_prompt calls on one backend return distinct, correct outputs."""
-        from abe_froman.runtime.executor.backends.acp import ACPBackend
+        from sqrlly.runtime.executor.backends.acp import ACPBackend
 
         backend = ACPBackend()
         try:

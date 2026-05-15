@@ -9,9 +9,9 @@ import shutil
 
 import pytest
 
-from abe_froman.compile.graph import build_workflow_graph
-from abe_froman.runtime.state import make_initial_state
-from abe_froman.runtime.executor.dispatch import DispatchExecutor
+from sqrlly.compile.graph import build_workflow_graph
+from sqrlly.runtime.state import make_initial_state
+from sqrlly.runtime.executor.dispatch import DispatchExecutor
 
 from helpers import cmd_phase, make_config
 
@@ -143,7 +143,7 @@ class TestFinalNodes:
         returns no-op until all manifest items appear in completed_nodes.
         """
         from mock_executor import MockExecutor
-        from abe_froman.runtime.result import ExecutionResult
+        from sqrlly.runtime.result import ExecutionResult
 
         manifest = [{"id": "a"}, {"id": "b"}, {"id": "c"}]
         mock = MockExecutor(results={
@@ -193,9 +193,9 @@ class TestFinalNodes:
         barrier reads empty items, falls through to inner, and the final
         runs against an empty `{{parent_subphases}}` template var.
         """
-        from abe_froman.compile.dynamic import _make_final_fan_out_node
-        from abe_froman.runtime.state import make_initial_state
-        from abe_froman.schema.models import Execute, Node, FanOut
+        from sqrlly.compile.dynamic import _make_final_fan_out_node
+        from sqrlly.runtime.state import make_initial_state
+        from sqrlly.schema.models import Execute, Node, FanOut
 
         parent = Node(
             id="p", name="P",
@@ -522,7 +522,7 @@ class TestManifestFieldPropagation:
     async def test_custom_fields_reach_subphase_context(self, tmp_path):
         """Manifest item fields beyond 'id' are passed into child context."""
         from mock_executor import MockExecutor
-        from abe_froman.runtime.result import ExecutionResult
+        from sqrlly.runtime.result import ExecutionResult
 
         manifest = [
             {"id": "x", "custom_field": "v123", "priority": "high"},
@@ -557,7 +557,7 @@ class TestManifestFieldPropagation:
         non-final downstream nodes see the same aggregate.
         """
         from mock_executor import MockExecutor
-        from abe_froman.runtime.result import ExecutionResult
+        from sqrlly.runtime.result import ExecutionResult
 
         manifest = [{"id": "a"}, {"id": "b"}]
         mock = MockExecutor(results={
@@ -601,7 +601,7 @@ class TestManifestFieldPropagation:
         template that referenced a grandparent dep would render empty.
         """
         from mock_executor import MockExecutor
-        from abe_froman.runtime.result import ExecutionResult
+        from sqrlly.runtime.result import ExecutionResult
 
         manifest = [{"id": "item1"}]
         mock = MockExecutor(results={

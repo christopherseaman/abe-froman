@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to abe-froman are documented here. Format follows
+All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased] — Stage 5d: split Evaluation from Decision + gate dep-outputs
@@ -57,7 +57,7 @@ All notable changes to abe-froman are documented here. Format follows
 
 ### Added
 
-- **`abe-froman view <yaml> [--log <jsonl>]`** — self-contained HTML
+- **`sqrlly view <yaml> [--log <jsonl>]`** — self-contained HTML
   viewer for workflows. Authoring mode (no log): topology + per-node
   config inspector. Debug mode (with log): adds status overlay
   (passed/failed/retried/untouched), per-node `fired N×` chip for
@@ -68,7 +68,7 @@ All notable changes to abe-froman are documented here. Format follows
   loaded via CDN with raw-source fallback if blocked. Layout uses an
   invisible-spine subgraph block for predictable direction;
   `--direction TB|LR|BT|RL` flag (default TB). Output defaults to
-  `<workdir>/abe-froman-view.html`.
+  `<workdir>/sqrlly-view.html`.
 
 ### Fixed
 
@@ -361,7 +361,7 @@ dispatch.
 YAML raise a clear ValidationError naming the offending key, instead of
 silently dropping it.
 
-The migrate tool (`abe-froman migrate`) now chains Stage 3 → 4 → 5b
+The migrate tool (`sqrlly migrate`) now chains Stage 3 → 4 → 5b
 transforms automatically. Idempotent on already-migrated YAML; round-
 trip preserves comments, anchors, and `{{templated}}` strings.
 
@@ -466,7 +466,7 @@ trip preserves comments, anchors, and `{{templated}}` strings.
   former-final-phase depends on the fan-out parent; subsequent ones
   chain depends on the previous.
 
-A migration tool ships with this release: `abe-froman migrate <file>
+A migration tool ships with this release: `sqrlly migrate <file>
 [--dry-run | --in-place]` rewrites pre-Stage-4 YAML to the new shape
 using `ruamel.yaml` (preserves comments, anchors, references, and
 `{{templated}}` strings).
@@ -516,7 +516,7 @@ using `ruamel.yaml` (preserves comments, anchors, references, and
   path/to/sub.yaml`. The subgraph compiles recursively via
   `add_node(name, compiled_subgraph)`. Graphs and subgraphs are
   definitionally identical — the same YAML is invokable both
-  standalone (via `abe-froman run`) and as a subgraph reference.
+  standalone (via `sqrlly run`) and as a subgraph reference.
 - `inputs:` projects parent state into the subgraph's `node_inputs`
   channel; subgraph nodes see them as plain template variables alongside
   their own dep outputs. Subgraph never sees parent's full state.
@@ -533,7 +533,7 @@ using `ruamel.yaml` (preserves comments, anchors, references, and
   standalone-runnable subgraph; the parent workflow's `paper` node
   references it via `config:` + `inputs:`.
 
-#### `abe-froman migrate` CLI
+#### `sqrlly migrate` CLI
 - Rewrites pre-Stage-4 YAML to the new shape losslessly. Round-trip
   YAML mode preserves comments, anchors, and `{{templated}}` strings.
 - `--dry-run` prints the rewrite to stdout without modifying the file;

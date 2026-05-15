@@ -17,10 +17,10 @@ version: "0.1.0"
 # raises if none are configured. Override per-run with `--executor`.
 #
 # Usage:
-#   uv run abe-froman run examples/run_all_examples.yaml             # auto-detect
-#   uv run abe-froman run examples/run_all_examples.yaml -e acp      # force ACP
-#   uv run abe-froman run examples/run_all_examples.yaml -e anthropic
-#   uv run abe-froman run examples/run_all_examples.yaml --dry-run   # topology only
+#   uv run sqrlly run examples/run_all_examples.yaml             # auto-detect
+#   uv run sqrlly run examples/run_all_examples.yaml -e acp      # force ACP
+#   uv run sqrlly run examples/run_all_examples.yaml -e anthropic
+#   uv run sqrlly run examples/run_all_examples.yaml --dry-run   # topology only
 
 nodes:
   - id: smoke

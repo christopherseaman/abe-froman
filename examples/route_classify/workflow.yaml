@@ -13,7 +13,7 @@ version: "0.1.0"
 # matches, control falls through to `else:` → standard_queue.
 #
 # Run a single category via the input override:
-#   uv run abe-froman run examples/route_classify/workflow.yaml
+#   uv run sqrlly run examples/route_classify/workflow.yaml
 # Override the input by editing the triage args below.
 
 nodes:

@@ -7,7 +7,7 @@ labels in MVP; arbitrary node ids post-3b), first-match-wins.
 
 import pytest
 
-from abe_froman.compile.evaluation import (
+from sqrlly.compile.evaluation import (
     Criterion,
     EvaluationRecord,
     Route,
@@ -18,7 +18,7 @@ from abe_froman.compile.evaluation import (
     evaluation_to_routes,
     walk_routes,
 )
-from abe_froman.schema.models import DimensionCheck, Evaluation
+from sqrlly.schema.models import DimensionCheck, Evaluation
 
 
 class TestCriterionMatches:

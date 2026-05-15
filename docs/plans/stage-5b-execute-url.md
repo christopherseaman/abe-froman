@@ -202,10 +202,10 @@ reverted) **falls out for free** under this shape.
 
 ## Implementation surface
 
-### Schema (`src/abe_froman/schema/models.py`) — ~80 LOC delta
+### Schema (`src/sqrlly/schema/models.py`) — ~80 LOC delta
 
 - Define `Execute(BaseModel)` with `url: str | None = None`, `type: Literal["join"] | None = None`, and `params: PromptParams | SubgraphParams | ScriptParams | ExecParams = {}` (discriminated by resolved URL extension/scheme; see `schema/params.py`). Validator: exactly one of `url` or `type` set.
-- New `src/abe_froman/schema/params.py` (~60 LOC): per-mode Pydantic models (`PromptParams`, `SubgraphParams`, `ScriptParams`, `ExecParams`) plus a resolver that picks the right shape from a resolved URL.
+- New `src/sqrlly/schema/params.py` (~60 LOC): per-mode Pydantic models (`PromptParams`, `SubgraphParams`, `ScriptParams`, `ExecParams`) plus a resolver that picks the right shape from a resolved URL.
 - Replace `Node.execution: Execution | None`, `Node.config: str | None`,
   `Node.inputs: dict`, `Node.outputs: dict`, `Node.prompt_file: str | None`
   with a single `Node.execute: Execute | None`.
@@ -221,7 +221,7 @@ reverted) **falls out for free** under this shape.
   allowed_url_hosts: list[str] = []
   url_headers: dict[str, dict[str, str]] = {}
   ```
-- Add a new module `src/abe_froman/runtime/url.py` (~80 LOC) with:
+- Add a new module `src/sqrlly/runtime/url.py` (~80 LOC) with:
   - `resolve_url(url, base_url, workdir) -> str` (per the resolution
     rules above)
   - `fetch_url(resolved_url, settings) -> bytes` (validates against
@@ -231,7 +231,7 @@ reverted) **falls out for free** under this shape.
   - `_RemoteFetchCache` (per-compile dict, threaded through compile)
 - `FanOutFinalNode` simplifies the same way.
 
-### Dispatch (`src/abe_froman/runtime/executor/dispatch.py`) — ~100 LOC
+### Dispatch (`src/sqrlly/runtime/executor/dispatch.py`) — ~100 LOC
 
 - Add a `_DISPATCH_TABLE: list[tuple[Pattern, Handler]]` keyed by URL
   pattern.
@@ -252,7 +252,7 @@ reverted) **falls out for free** under this shape.
   dispatches via the same handler table. The retry-loop wrapper is
   unchanged; only the per-Send "what runs" lookup changes.
 
-### Migrate tool (`src/abe_froman/cli/migrate.py`) — ~80 LOC delta
+### Migrate tool (`src/sqrlly/cli/migrate.py`) — ~80 LOC delta
 
 The Stage 4 migrate tool already rewrites `phases:` → `nodes:`,
 `quality_gate:` → `evaluation:`, etc. Stage 5b extends it with
@@ -279,7 +279,7 @@ the migrate tool against itself:
 
 ```bash
 for f in examples/**/*.yaml; do
-  uv run abe-froman migrate "$f" --from-stage=4 --in-place
+  uv run sqrlly migrate "$f" --from-stage=4 --in-place
 done
 ```
 
@@ -389,7 +389,7 @@ The following were open going into Stage 5b and are now locked:
 - Doesn't change state channels (`node_outputs`, `child_outputs`,
   `evaluations` etc.) — those stay as Stage 4 left them.
 - Doesn't change checkpointer behavior.
-- Doesn't change CLI surface (`abe-froman run`, `validate`, etc.) —
+- Doesn't change CLI surface (`sqrlly run`, `validate`, etc.) —
   except `migrate` gains the `--from-stage=4` transform.
 
 ## Exit criteria

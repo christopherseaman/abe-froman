@@ -16,12 +16,12 @@ import importlib.util
 
 import pytest
 
-from abe_froman.runtime.executor.backends.factory import (
+from sqrlly.runtime.executor.backends.factory import (
     DEEPSEEK_BASE_URL,
     _resolve_deepseek_key,
 )
-from abe_froman.runtime.executor.backends.openai import OpenAIBackend
-from abe_froman.runtime.result import OverloadError
+from sqrlly.runtime.executor.backends.openai import OpenAIBackend
+from sqrlly.runtime.result import OverloadError
 
 
 # ---------------------------------------------------------------------
@@ -214,14 +214,14 @@ class TestKeyResolution:
     exercise the env path."""
 
     def test_env_var_returns_value(self, monkeypatch):
-        from abe_froman.runtime.secrets import _reset_dotenv_cache
+        from sqrlly.runtime.secrets import _reset_dotenv_cache
 
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-from-env")
         _reset_dotenv_cache()
         assert _resolve_deepseek_key() == "sk-from-env"
 
     def test_unset_returns_none(self, monkeypatch, tmp_path):
-        from abe_froman.runtime.secrets import _reset_dotenv_cache
+        from sqrlly.runtime.secrets import _reset_dotenv_cache
 
         monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
         # CWD with no .env so the file fallback misses too.

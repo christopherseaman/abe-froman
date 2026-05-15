@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Absurd Academic Paper — abe-froman view</title>
+<title>Absurd Academic Paper — sqrlly view</title>
 <style>
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -284,7 +284,7 @@
   </div>
 </main>
 
-<script id="abe-payload" type="application/json">
+<script id="sqrlly-payload" type="application/json">
 {
   "workflow": {
     "name": "Absurd Academic Paper",
@@ -295,7 +295,7 @@
       "id": "seed_inspiration",
       "name": "Gather Topic Inspirations",
       "execute": {
-        "url": "/home/christopher/projects/abe-froman/.venv/bin/python3",
+        "url": "/home/christopher/projects/sqrlly/.venv/bin/python3",
         "params": {
           "args": [
             "examples/absurd-paper/scripts/pick_topic.py"
@@ -575,7 +575,7 @@
         onerror="document.getElementById('mermaid-host').style.display='none';
                  document.getElementById('mermaid-fallback').style.display='block';"></script>
 <script>
-  const payload = JSON.parse(document.getElementById("abe-payload").textContent);
+  const payload = JSON.parse(document.getElementById("sqrlly-payload").textContent);
 
   if (window.mermaid) {
     mermaid.initialize({

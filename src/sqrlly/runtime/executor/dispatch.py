@@ -6,15 +6,15 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from abe_froman.runtime.executor.prompt import (
+from sqrlly.runtime.executor.prompt import (
     PromptExecutor,
     prepend_eval_preamble,
     render_template,
 )
-from abe_froman.runtime.result import ExecutionResult, PromptBackend
-from abe_froman.runtime.url import _RemoteFetchCache, fetch_url, resolve_url
-from abe_froman.schema.models import Execute, Node, Settings
-from abe_froman.schema.params import coerce_params
+from sqrlly.runtime.result import ExecutionResult, PromptBackend
+from sqrlly.runtime.url import _RemoteFetchCache, fetch_url, resolve_url
+from sqrlly.schema.models import Execute, Node, Settings
+from sqrlly.schema.params import coerce_params
 
 # Script extension → interpreter prefix. URL → subprocess args via map +
 # resolved local path. Stays small; new languages add one row.

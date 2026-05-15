@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Wave-driven research planner — abe-froman view</title>
+<title>Wave-driven research planner — sqrlly view</title>
 <style>
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -218,7 +218,7 @@
   </div>
 </main>
 
-<script id="abe-payload" type="application/json">
+<script id="sqrlly-payload" type="application/json">
 {
   "workflow": {
     "name": "Wave-driven research planner",
@@ -284,7 +284,7 @@
       "last_error": null,
       "events": [
         {
-          "ts": "2026-05-08T21:07:12.519309+00:00",
+          "ts": "2026-05-15T02:54:54.701103+00:00",
           "event": "node_completed",
           "node": "planner"
         }
@@ -297,12 +297,12 @@
       "last_error": null,
       "events": [
         {
-          "ts": "2026-05-08T21:07:12.551179+00:00",
+          "ts": "2026-05-15T02:54:54.734149+00:00",
           "event": "node_completed",
           "node": "dispatcher"
         },
         {
-          "ts": "2026-05-08T21:07:12.669908+00:00",
+          "ts": "2026-05-15T02:54:54.840346+00:00",
           "event": "node_completed",
           "node": "dispatcher"
         }
@@ -315,12 +315,12 @@
       "last_error": null,
       "events": [
         {
-          "ts": "2026-05-08T21:07:12.634197+00:00",
+          "ts": "2026-05-15T02:54:54.807059+00:00",
           "event": "node_completed",
           "node": "reconcile"
         },
         {
-          "ts": "2026-05-08T21:07:12.736529+00:00",
+          "ts": "2026-05-15T02:54:54.904868+00:00",
           "event": "node_completed",
           "node": "reconcile"
         }
@@ -340,7 +340,7 @@
       "last_error": null,
       "events": [
         {
-          "ts": "2026-05-08T21:07:12.586646+00:00",
+          "ts": "2026-05-15T02:54:54.769169+00:00",
           "event": "node_completed",
           "node": "dispatcher::q_market_size"
         }
@@ -353,7 +353,7 @@
       "last_error": null,
       "events": [
         {
-          "ts": "2026-05-08T21:07:12.599246+00:00",
+          "ts": "2026-05-15T02:54:54.773857+00:00",
           "event": "node_completed",
           "node": "dispatcher::q_growth_rate"
         }
@@ -366,7 +366,7 @@
       "last_error": null,
       "events": [
         {
-          "ts": "2026-05-08T21:07:12.703926+00:00",
+          "ts": "2026-05-15T02:54:54.873023+00:00",
           "event": "node_completed",
           "node": "dispatcher::q_competitor_share"
         }
@@ -381,7 +381,7 @@
         onerror="document.getElementById('mermaid-host').style.display='none';
                  document.getElementById('mermaid-fallback').style.display='block';"></script>
 <script>
-  const payload = JSON.parse(document.getElementById("abe-payload").textContent);
+  const payload = JSON.parse(document.getElementById("sqrlly-payload").textContent);
 
   if (window.mermaid) {
     mermaid.initialize({

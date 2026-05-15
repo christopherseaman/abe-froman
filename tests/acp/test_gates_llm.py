@@ -24,9 +24,9 @@ class TestEvaluateGateLLMPositivePath:
         coverage of run_evaluation_llm is via the joke-workflow E2E, which
         exercises it implicitly as one piece of a larger flow.
         """
-        from abe_froman.runtime.executor.backends.acp import ACPBackend
-        from abe_froman.runtime.gates import run_evaluation_llm
-        from abe_froman.schema.models import Evaluation
+        from sqrlly.runtime.executor.backends.acp import ACPBackend
+        from sqrlly.runtime.gates import run_evaluation_llm
+        from sqrlly.schema.models import Evaluation
 
         gate_file = tmp_path / "llm_gate.md"
         gate_file.write_text(

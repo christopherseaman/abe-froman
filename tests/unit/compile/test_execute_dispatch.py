@@ -17,14 +17,14 @@ import shutil
 
 import pytest
 
-from abe_froman.compile.graph import (
+from sqrlly.compile.graph import (
     _is_route,
     build_workflow_graph,
 )
-from abe_froman.compile.subgraph import SubgraphCycleError, node_subgraph_path
-from abe_froman.runtime.executor.dispatch import DispatchExecutor
-from abe_froman.runtime.state import make_initial_state
-from abe_froman.schema.models import (
+from sqrlly.compile.subgraph import SubgraphCycleError, node_subgraph_path
+from sqrlly.runtime.executor.dispatch import DispatchExecutor
+from sqrlly.runtime.state import make_initial_state
+from sqrlly.schema.models import (
     Execute,
     Graph,
     Node,

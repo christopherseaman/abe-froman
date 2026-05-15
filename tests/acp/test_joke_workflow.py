@@ -11,10 +11,10 @@ import json
 
 import pytest
 
-from abe_froman.compile.graph import build_workflow_graph
-from abe_froman.runtime.executor.backends.acp import ACPBackend
-from abe_froman.runtime.executor.dispatch import DispatchExecutor
-from abe_froman.runtime.state import make_initial_state
+from sqrlly.compile.graph import build_workflow_graph
+from sqrlly.runtime.executor.backends.acp import ACPBackend
+from sqrlly.runtime.executor.dispatch import DispatchExecutor
+from sqrlly.runtime.state import make_initial_state
 
 from helpers import make_config
 

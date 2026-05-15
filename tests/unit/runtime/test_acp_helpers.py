@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from abe_froman.runtime.executor.backends.acp import (
+from sqrlly.runtime.executor.backends.acp import (
     _ACPCallbacks,
     _is_overload_error,
 )

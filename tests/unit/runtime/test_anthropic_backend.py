@@ -16,13 +16,13 @@ import importlib.util
 
 import pytest
 
-from abe_froman.runtime.executor.backends.anthropic import (
+from sqrlly.runtime.executor.backends.anthropic import (
     _MODEL_ALIASES,
     AnthropicBackend,
     _resolve_model,
 )
-from abe_froman.runtime.executor.backends.factory import _resolve_anthropic_key
-from abe_froman.runtime.result import OverloadError
+from sqrlly.runtime.executor.backends.factory import _resolve_anthropic_key
+from sqrlly.runtime.result import OverloadError
 
 
 # ---------------------------------------------------------------------

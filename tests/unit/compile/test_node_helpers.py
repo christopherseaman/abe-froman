@@ -8,7 +8,7 @@ import asyncio
 
 import pytest
 
-from abe_froman.compile.nodes import (
+from sqrlly.compile.nodes import (
     _get_retry_delay,
     assemble_success_update,
     build_context,
@@ -20,9 +20,9 @@ from abe_froman.compile.nodes import (
     inject_retry_reason,
     make_failure_update,
 )
-from abe_froman.runtime.gates import EvaluationResult
-from abe_froman.runtime.result import ExecutionResult
-from abe_froman.schema.models import Node, Evaluation
+from sqrlly.runtime.gates import EvaluationResult
+from sqrlly.runtime.result import ExecutionResult
+from sqrlly.schema.models import Node, Evaluation
 
 
 def _phase(id="p1", depends_on=None, evaluation=None, **kw):
@@ -514,7 +514,7 @@ class TestBuildGateOutcomeUpdate:
 # Multi-dimension gate classification
 # ---------------------------------------------------------------------------
 
-from abe_froman.schema.models import DimensionCheck
+from sqrlly.schema.models import DimensionCheck
 
 
 class TestDimensionGateClassification:
@@ -577,8 +577,8 @@ class TestDimensionGateClassification:
 # run_evaluation_and_outcome — end-to-end gate+classifier+update integration
 # ---------------------------------------------------------------------------
 
-from abe_froman.compile.nodes import run_evaluation_and_outcome
-from abe_froman.schema.models import Settings, Graph
+from sqrlly.compile.nodes import run_evaluation_and_outcome
+from sqrlly.schema.models import Settings, Graph
 
 
 def _config_with_phase(node: Node, **settings_kwargs) -> Graph:

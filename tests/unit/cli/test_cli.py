@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from abe_froman.cli.main import (
+from sqrlly.cli.main import (
     CHECKPOINT_DB,
     _db_path,
     _is_git_repo,
@@ -207,7 +207,7 @@ class TestCliHelpers:
         assert _is_git_repo(str(tmp_path)) is False
 
     def test_thread_id_deterministic(self, tmp_path):
-        from abe_froman.schema.models import Graph
+        from sqrlly.schema.models import Graph
 
         config = Graph(
             name="test", version="1.0",
@@ -220,7 +220,7 @@ class TestCliHelpers:
         assert all(c in "0123456789abcdef" for c in id1)
 
     def test_thread_id_workdir_sensitive(self, tmp_path):
-        from abe_froman.schema.models import Graph
+        from sqrlly.schema.models import Graph
 
         config = Graph(
             name="test", version="1.0",

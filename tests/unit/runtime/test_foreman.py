@@ -14,9 +14,9 @@ from pathlib import Path
 
 import pytest
 
-from abe_froman.runtime.executor.dispatch import DispatchExecutor
-from abe_froman.runtime.foreman import ForemanExecutor
-from abe_froman.schema.models import Execute, Node, Settings
+from sqrlly.runtime.executor.dispatch import DispatchExecutor
+from sqrlly.runtime.foreman import ForemanExecutor
+from sqrlly.schema.models import Execute, Node, Settings
 
 _PWD = shutil.which("pwd") or "/bin/pwd"
 _SLEEP = shutil.which("sleep") or "/bin/sleep"
@@ -178,8 +178,8 @@ class TestRehydration:
     @pytest.mark.asyncio
     async def test_rehydrated_but_deleted_worktree_is_recreated(self, tmp_path):
         """If the rehydrated path no longer exists on disk (user `git worktree
-        remove`d it, or the .abe-foreman dir was wiped), --resume must not
-        crash — `_acquire_worktree` re-creates a fresh tree under .abe-foreman/."""
+        remove`d it, or the .sqrlly dir was wiped), --resume must not
+        crash — `_acquire_worktree` re-creates a fresh tree under .sqrlly/."""
         _init_git_repo(tmp_path)
         gone = tmp_path / "nonexistent-gone"
         assert not gone.exists()
@@ -196,8 +196,8 @@ class TestRehydration:
             new_path = foreman.get_worktree("resumed")
             assert new_path != str(gone)
             assert Path(new_path).is_dir()
-            # Newly-created worktrees live under .abe-foreman/.
-            assert ".abe-foreman" in new_path
+            # Newly-created worktrees live under .sqrlly/.
+            assert ".sqrlly" in new_path
             # And `pwd` ran inside the recreated tree, not the dead path.
             assert Path(result.output.strip()).resolve() == Path(new_path).resolve()
         finally:
@@ -279,7 +279,7 @@ class TestPerModelBackpressure:
             self, prompt: str, model: str, workdir: str,
             timeout: float | None = None,
         ):
-            from abe_froman.runtime.result import ExecutionResult
+            from sqrlly.runtime.result import ExecutionResult
             async with self._lock:
                 self._inflight += 1
                 self.inflight_max = max(self.inflight_max, self._inflight)
@@ -306,7 +306,7 @@ class TestPerModelBackpressure:
                 self._lock = asyncio.Lock()
 
             async def send_prompt(self, prompt, model, workdir, timeout=None):
-                from abe_froman.runtime.result import ExecutionResult
+                from sqrlly.runtime.result import ExecutionResult
                 async with self._lock:
                     self._inflight[model] = self._inflight.get(model, 0) + 1
                     self.max_inflight[model] = max(

@@ -12,7 +12,7 @@ Layers, highest precedence first:
      in the parent shell, by ``uv run --env-file <path>``, by a
      systemd unit, etc.
   3. Project-local ``.env`` file — walked up from CWD; first match
-     wins. Loaded once per process and cached. abe-froman does not
+     wins. Loaded once per process and cached. sqrlly does not
      read keys from any path outside the project tree.
 
 Returns ``None`` if no layer has the value. Callers decide whether

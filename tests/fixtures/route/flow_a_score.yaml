@@ -16,7 +16,7 @@ nodes:
       type: gate_only
     evaluation:
       # Absolute path so this YAML works with any --workdir.
-      validator: "/home/christopher/projects/abe-froman/tests/fixtures/route/score_high.py"
+      validator: "/home/christopher/projects/sqrlly/tests/fixtures/route/score_high.py"
       threshold: 0.5
       blocking: false
       max_retries: 0

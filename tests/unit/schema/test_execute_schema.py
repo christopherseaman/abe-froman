@@ -16,7 +16,7 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-from abe_froman.schema.models import (
+from sqrlly.schema.models import (
     Execute,
     Node,
     Settings,

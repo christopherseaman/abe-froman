@@ -1,4 +1,4 @@
-# Abe Froman — Operator Notes for Claude
+# sqrlly — Operator Notes for Claude
 
 Workflow orchestrator using LangGraph for graph topology and Claude /
 DeepSeek / scripts for execution.
@@ -51,27 +51,27 @@ uv run pytest tests/acp -v                   # ACP tests, ~2 min, requires npm p
 uv run pytest -m live                        # live-backend tests (skipped per-key when absent)
 uv run pytest tests/architecture/test_layers.py  # layer rule enforcement
 
-uv run abe-froman validate config.yaml
-uv run abe-froman run config.yaml             # auto-detect backend
-uv run abe-froman run config.yaml -e acp      # force ACP (choices: acp | anthropic | custom | deepseek | openai)
-uv run abe-froman run config.yaml --resume    # resume from checkpoint
-uv run abe-froman run config.yaml --log out.jsonl
-uv run abe-froman graph config.yaml           # Mermaid topology
-uv run abe-froman migrate old.yaml --in-place # pre-Stage-4 → 5b transforms
+uv run sqrlly validate config.yaml
+uv run sqrlly run config.yaml             # auto-detect backend
+uv run sqrlly run config.yaml -e acp      # force ACP (choices: acp | anthropic | custom | deepseek | openai)
+uv run sqrlly run config.yaml --resume    # resume from checkpoint
+uv run sqrlly run config.yaml --log out.jsonl
+uv run sqrlly graph config.yaml           # Mermaid topology
+uv run sqrlly migrate old.yaml --in-place # pre-Stage-4 → 5b transforms
 ```
 
 ## Project Layout
 
 Three-layer split (enforced by `tests/architecture/test_layers.py`):
 
-**`src/abe_froman/schema/`** — Pydantic models (no langgraph imports).
+**`src/sqrlly/schema/`** — Pydantic models (no langgraph imports).
 - `models.py` — `Graph`, `Node`, `Settings`, `Execute`, `Evaluation`,
   `RouteCase`, `RouteElse`, `Route`, `OutputContract`, `FanOut`,
   `FanOutTemplate`, `FanOutFinalNode`.
 - `params.py` — `PromptParams`, `SubgraphParams`,
   `SubprocessParams` + `coerce_params()` resolver.
 
-**`src/abe_froman/compile/`** — YAML → LangGraph (no cli imports).
+**`src/sqrlly/compile/`** — YAML → LangGraph (no cli imports).
 - `graph.py` — `build_workflow_graph()`, edge wiring, evaluation
   router insertion. Carries `_make_inline_route_node` for Stage 5c
   inline routes; synthetic `_route_<id>` dispatchers are registered
@@ -87,7 +87,7 @@ Three-layer split (enforced by `tests/architecture/test_layers.py`):
 - `evaluation.py` — `evaluation_to_routes()`, `walk_routes()` —
   desugars Evaluation → first-match route ladder.
 
-**`src/abe_froman/runtime/`** — executors, backends, gates, foreman
+**`src/sqrlly/runtime/`** — executors, backends, gates, foreman
 (no compile/langgraph imports, except `url.py` which is also
 langgraph-free).
 - `state.py` — `WorkflowState` TypedDict + `REDUCERS`.
@@ -117,7 +117,7 @@ langgraph-free).
   frozensets. Both backends map transient SDK errors to
   `OverloadError` through this.
 
-**`src/abe_froman/cli/`** — entry points.
+**`src/sqrlly/cli/`** — entry points.
 - `main.py` — Click CLI; wires `AsyncSqliteSaver`, `ForemanExecutor`,
   `thread_id`, `JsonlLogger`, auto-detect.
 - `migrate.py` — pre-Stage-4 → 4 → 5b YAML transforms (idempotent;
@@ -185,9 +185,9 @@ mapping (we're testing our wrapping code, not the SDK).
   under downgrade.
 - **No automatic worktree cleanup** — Foreman never removes
   worktrees. Authors write reconciliation nodes; stray trees
-  accumulate under `<workdir>/.abe-foreman/`. Clean up manually with
+  accumulate under `<workdir>/.sqrlly/`. Clean up manually with
   `git worktree remove <path>`.
-- **Checkpointer migration** — Pre-refactor `.abe-froman-state.json`
+- **Checkpointer migration** — Pre-refactor `.sqrlly-state.json`
   format is ignored on `--resume`; re-run from scratch.
 - **ACP soak under load** — process-tree cleanup is fixed for the
   test scenario, but a multi-hour run with `max_parallel_jobs > 1`
@@ -216,7 +216,7 @@ mapping (we're testing our wrapping code, not the SDK).
 - **API key resolution** — generic resolver at
   `runtime/secrets.py::resolve_secret(name, *, settings, settings_attr)`.
   Layers: workflow YAML setting → `os.environ[name]` → project-local
-  `.env` file (auto-discovered by walking up from CWD). abe-froman
+  `.env` file (auto-discovered by walking up from CWD). sqrlly
   never reads from machine-global keystores. Both `_resolve_deepseek_key`
   and `_resolve_anthropic_key` are thin wrappers over this resolver.
 - **`pyproject.toml`** marker for ACP tests: `acp` (used in
@@ -226,17 +226,17 @@ mapping (we're testing our wrapping code, not the SDK).
 
 | Task | Where to look |
 |---|---|
-| New schema field | `src/abe_froman/schema/models.py` (mind layer rules) |
-| New backend | `src/abe_froman/runtime/executor/backends/` + factory case |
-| New CLI flag | `src/abe_froman/cli/main.py` `@click.option` decorators |
-| New node type | `src/abe_froman/compile/graph.py` (registration) + `src/abe_froman/compile/nodes.py` (factory) |
-| New gate validator shape | `src/abe_froman/runtime/gates.py::_parse_script_output` |
-| New WorkflowState field | `src/abe_froman/runtime/state.py` (TypedDict + REDUCERS) — beware of parity invariant in `compile/dynamic.py::_merge_updates` |
-| Inline routing (route block, sender bindings, include_eval preamble) | `src/abe_froman/schema/models.py::Route`, `src/abe_froman/compile/graph.py::_make_inline_route_node`, `src/abe_froman/runtime/gates.py::build_eval_preamble` |
+| New schema field | `src/sqrlly/schema/models.py` (mind layer rules) |
+| New backend | `src/sqrlly/runtime/executor/backends/` + factory case |
+| New CLI flag | `src/sqrlly/cli/main.py` `@click.option` decorators |
+| New node type | `src/sqrlly/compile/graph.py` (registration) + `src/sqrlly/compile/nodes.py` (factory) |
+| New gate validator shape | `src/sqrlly/runtime/gates.py::_parse_script_output` |
+| New WorkflowState field | `src/sqrlly/runtime/state.py` (TypedDict + REDUCERS) — beware of parity invariant in `compile/dynamic.py::_merge_updates` |
+| Inline routing (route block, sender bindings, include_eval preamble) | `src/sqrlly/schema/models.py::Route`, `src/sqrlly/compile/graph.py::_make_inline_route_node`, `src/sqrlly/runtime/gates.py::build_eval_preamble` |
 | Layer rule violation | `tests/architecture/test_layers.py` errors point to the offending file |
 | Live-backend regression test | `tests/e2e/test_live_backend_roundtrip.py` (parametrized over 4 backends; `pytest.mark.live`, skipif per-key) |
-| Backend lazy-init + close | `src/abe_froman/runtime/executor/backends/_lazy_client.py::LazyClientMixin` — subclass + implement `_create_client()` |
-| Transient-error → `OverloadError` mapping | `src/abe_froman/runtime/executor/backends/_overload.py::maybe_raise_overload` (status-code set + per-provider class-name frozensets) |
+| Backend lazy-init + close | `src/sqrlly/runtime/executor/backends/_lazy_client.py::LazyClientMixin` — subclass + implement `_create_client()` |
+| Transient-error → `OverloadError` mapping | `src/sqrlly/runtime/executor/backends/_overload.py::maybe_raise_overload` (status-code set + per-provider class-name frozensets) |
 
 When in doubt, read `TECHNICAL.md` Section 11 ("Key non-obvious
 invariants") before changing compile or runtime layer code — five of

@@ -5,8 +5,8 @@ from typing import Any
 
 from jinja2 import Template
 
-from abe_froman.runtime.result import ExecutionResult, OverloadError, PromptBackend
-from abe_froman.schema.models import Node, Settings
+from sqrlly.runtime.result import ExecutionResult, OverloadError, PromptBackend
+from sqrlly.schema.models import Node, Settings
 
 
 def resolve_model(node: Node, settings: Settings) -> str:

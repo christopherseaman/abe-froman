@@ -10,7 +10,7 @@ version: "0.1.0"
 # value is simply "all upstream branches reached this point").
 #
 # Run:
-#   uv run abe-froman run examples/explicit_join.yaml
+#   uv run sqrlly run examples/explicit_join.yaml
 
 nodes:
   - id: branch_a

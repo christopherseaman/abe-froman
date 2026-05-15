@@ -13,8 +13,8 @@ where merge_settings is supposed to be called.
 """
 from __future__ import annotations
 
-from abe_froman.runtime.settings_merge import merge_settings
-from abe_froman.schema.models import Settings
+from sqrlly.runtime.settings_merge import merge_settings
+from sqrlly.schema.models import Settings
 
 
 class TestSingleFieldOverride:

@@ -62,7 +62,7 @@ Severity legend: 🔴 block shipping, 🟠 fix soon, 🟡 nice-to-have.
 
 ### C. ACP backend fixes (Phase 5, src changes)
 
-All in `src/abe_froman/runtime/executor/backends/acp.py`:
+All in `src/sqrlly/runtime/executor/backends/acp.py`:
 
 | ID | Severity | File:line | Finding | Fix |
 |---|---|---|---|---|

@@ -16,20 +16,20 @@ flow (node → prompt file fetch → render → backend) lives behind
 
 import pytest
 
-from abe_froman.runtime.executor.dispatch import DispatchExecutor
-from abe_froman.runtime.executor.prompt import (
+from sqrlly.runtime.executor.dispatch import DispatchExecutor
+from sqrlly.runtime.executor.prompt import (
     PromptExecutor,
     downgrade_model,
     prepend_eval_preamble,
     render_template,
     resolve_model,
 )
-from abe_froman.runtime.result import (
+from sqrlly.runtime.result import (
     ExecutionResult,
     OverloadError,
     PromptBackend,
 )
-from abe_froman.schema.models import Execute, Node, Settings
+from sqrlly.schema.models import Execute, Node, Settings
 
 
 # ---------------------------------------------------------------------------

@@ -13,7 +13,7 @@ and avoids importing the SDKs at module load time.
 """
 from __future__ import annotations
 
-from abe_froman.runtime.result import OverloadError
+from sqrlly.runtime.result import OverloadError
 
 # 429 = rate limit; 502/503/504/529 = upstream overload / gateway timeout.
 _OVERLOAD_STATUSES = frozenset({429, 502, 503, 504, 529})

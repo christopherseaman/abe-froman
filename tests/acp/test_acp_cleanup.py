@@ -25,7 +25,7 @@ from pathlib import Path
 
 import pytest
 
-from abe_froman.runtime.executor.backends.acp import ACPBackend
+from sqrlly.runtime.executor.backends.acp import ACPBackend
 
 
 def _read_children(pid: int) -> list[int]:

@@ -25,19 +25,19 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
-from abe_froman.compile.nodes import (
+from sqrlly.compile.nodes import (
     all_deps_completed,
     build_context,
     check_dep_failed,
 )
-from abe_froman.runtime.executor.prompt import render_template
-from abe_froman.runtime.result import ExecutionResult
-from abe_froman.runtime.settings_merge import merge_settings
-from abe_froman.runtime.state import WorkflowState, make_initial_state
-from abe_froman.schema.models import Graph, Node, Settings
+from sqrlly.runtime.executor.prompt import render_template
+from sqrlly.runtime.result import ExecutionResult
+from sqrlly.runtime.settings_merge import merge_settings
+from sqrlly.runtime.state import WorkflowState, make_initial_state
+from sqrlly.schema.models import Graph, Node, Settings
 
 if TYPE_CHECKING:
-    from abe_froman.runtime.result import NodeExecutor
+    from sqrlly.runtime.result import NodeExecutor
 
 
 class SubgraphCycleError(ValueError):
@@ -146,7 +146,7 @@ def make_subgraph_node(
         sub_state["node_inputs"] = rendered_inputs
 
         if logger is not None:
-            from abe_froman.runtime.logging import SubgraphLogger
+            from sqrlly.runtime.logging import SubgraphLogger
             sub_logger = SubgraphLogger(logger, prefix=parent_id)
             sub_result = sub_state
             async for chunk_type, payload in sub_graph.astream(
@@ -250,7 +250,7 @@ def make_fan_out_subgraph_invoker(
 
         try:
             if logger is not None and prefix is not None:
-                from abe_froman.runtime.logging import SubgraphLogger
+                from sqrlly.runtime.logging import SubgraphLogger
                 sub_logger = SubgraphLogger(logger, prefix=prefix)
                 sub_result = sub_state
                 async for chunk_type, payload in sub_compiled.astream(

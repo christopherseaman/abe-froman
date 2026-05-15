@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
-from abe_froman.schema.models import Node, Settings
+from sqrlly.schema.models import Node, Settings
 
 
 @dataclass

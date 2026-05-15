@@ -9,7 +9,7 @@ version: "1.0.0"
 #
 # Demonstrates Stage 4c recursive subgraph composition:
 #  - Multi-step subgraph (reconcile → persist → submission_check).
-#  - Standalone-runnable: `abe-froman run subgraphs/compose_and_validate.yaml`
+#  - Standalone-runnable: `sqrlly run subgraphs/compose_and_validate.yaml`
 #    works if you provide the five inputs as state overrides.
 #  - Inputs declared via parent's `inputs:` projection.
 

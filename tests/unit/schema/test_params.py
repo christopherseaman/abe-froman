@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from abe_froman.schema.params import (
+from sqrlly.schema.params import (
     PromptParams,
     SubgraphParams,
     SubprocessParams,

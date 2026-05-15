@@ -9,17 +9,17 @@ from typing import TYPE_CHECKING, Any, Callable
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, Send
 
-from abe_froman.compile._manifest import _read_manifest
-from abe_froman.compile.dynamic import _make_final_fan_out_node, _make_fan_out_node
-from abe_froman.compile.nodes import _make_evaluation_node, _make_execution_node
-from abe_froman.compile.route import build_route_namespace, evaluate_case
-from abe_froman.compile.subgraph import node_subgraph_path
-from abe_froman.runtime.gates import build_eval_preamble
-from abe_froman.runtime.state import WorkflowState
-from abe_froman.schema.models import Graph, Node, Settings
+from sqrlly.compile._manifest import _read_manifest
+from sqrlly.compile.dynamic import _make_final_fan_out_node, _make_fan_out_node
+from sqrlly.compile.nodes import _make_evaluation_node, _make_execution_node
+from sqrlly.compile.route import build_route_namespace, evaluate_case
+from sqrlly.compile.subgraph import node_subgraph_path
+from sqrlly.runtime.gates import build_eval_preamble
+from sqrlly.runtime.state import WorkflowState
+from sqrlly.schema.models import Graph, Node, Settings
 
 if TYPE_CHECKING:
-    from abe_froman.runtime.result import NodeExecutor
+    from sqrlly.runtime.result import NodeExecutor
 
 
 def _find_terminal_nodes(config: Graph) -> set[str]:
@@ -113,7 +113,7 @@ def _make_inline_route_node(node: Node):
     sender_id = node.id
 
     async def node_fn(state: WorkflowState) -> Command:
-        from abe_froman.compile.route import build_safe_funcs
+        from sqrlly.compile.route import build_safe_funcs
         ns = build_route_namespace(state, node.depends_on)
         funcs = build_safe_funcs(state)
 
@@ -209,7 +209,7 @@ def _register_evaluation_node(
     separate Decision node downstream classifies + routes via
     ``Command(update=..., goto=...)``.
     """
-    from abe_froman.compile.nodes import _make_combined_eval_decide_node
+    from sqrlly.compile.nodes import _make_combined_eval_decide_node
 
     factory = (
         _make_combined_eval_decide_node if combined
@@ -243,7 +243,7 @@ def _wire_evaluation_pair(
     evaluation_router`` pattern; topology is equivalent at the goto
     level (retry → exec_id, fail → END, pass → pass_targets).
     """
-    from abe_froman.compile.nodes import _make_decision_node
+    from sqrlly.compile.nodes import _make_decision_node
 
     eval_id = f"_eval_{exec_id}"
     decide_id = f"_decide_{exec_id}"
@@ -331,7 +331,7 @@ def build_workflow_graph(
     """
     # Deferred import to break the compile/subgraph ↔ compile/graph
     # circularity (subgraph imports build_workflow_graph via compile_fn).
-    from abe_froman.compile.subgraph import (
+    from sqrlly.compile.subgraph import (
         SubgraphDepthError,
         detect_config_cycle,
         load_graph,

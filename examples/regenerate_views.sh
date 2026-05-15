@@ -28,7 +28,7 @@ cd "$(dirname "$0")/.."
 
 for ex in jokes route_classify pipeline_style wave_planner absurd-paper; do
     echo "=== authoring view: $ex ==="
-    uv run abe-froman view \
+    uv run sqrlly view \
         "examples/$ex/workflow.yaml" \
         --out "examples/$ex/view.html"
 done
@@ -44,10 +44,10 @@ done
 # scripts/triage.py), so workdir must be the repo root.
 echo "=== debug run: route_classify ==="
 rm -f examples/route_classify/reference-run.jsonl
-uv run abe-froman run \
+uv run sqrlly run \
     examples/route_classify/workflow.yaml \
     --log examples/route_classify/reference-run.jsonl
-uv run abe-froman view \
+uv run sqrlly view \
     examples/route_classify/workflow.yaml \
     --log examples/route_classify/reference-run.jsonl \
     --direction LR \
@@ -57,10 +57,10 @@ uv run abe-froman view \
 # irrelevant to URL resolution.
 echo "=== debug run: pipeline_style ==="
 rm -f examples/pipeline_style/reference-run.jsonl
-uv run abe-froman run \
+uv run sqrlly run \
     examples/pipeline_style/workflow.yaml \
     --log examples/pipeline_style/reference-run.jsonl
-uv run abe-froman view \
+uv run sqrlly view \
     examples/pipeline_style/workflow.yaml \
     --log examples/pipeline_style/reference-run.jsonl \
     --direction LR \
@@ -72,11 +72,11 @@ echo "=== debug run: wave_planner ==="
 rm -f examples/wave_planner/reference-run.jsonl
 WAVE_DIR="$(mktemp -d -t wave-view-XXXXXX)"
 ln -sf "$(pwd)/examples/wave_planner/scripts" "$WAVE_DIR/scripts"
-uv run abe-froman run \
+uv run sqrlly run \
     examples/wave_planner/workflow.yaml \
     --workdir "$WAVE_DIR" \
     --log examples/wave_planner/reference-run.jsonl
-uv run abe-froman view \
+uv run sqrlly view \
     examples/wave_planner/workflow.yaml \
     --log examples/wave_planner/reference-run.jsonl \
     --out examples/wave_planner/view-debug.html

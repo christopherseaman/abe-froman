@@ -11,12 +11,12 @@ import textwrap
 import pytest
 import yaml
 
-from abe_froman.compile.subgraph import (
+from sqrlly.compile.subgraph import (
     SubgraphCycleError,
     detect_config_cycle,
     load_graph,
 )
-from abe_froman.schema.models import Graph
+from sqrlly.schema.models import Graph
 
 
 def _write_yaml(tmp_path, name: str, body: dict) -> str:

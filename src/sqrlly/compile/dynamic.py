@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any
 
-from abe_froman.compile.nodes import (
+from sqrlly.compile.nodes import (
     _get_retry_delay,
     _make_execution_node,
     build_context,
@@ -14,12 +14,12 @@ from abe_froman.compile.nodes import (
     inject_retry_reason,
     make_failure_update,
 )
-from abe_froman.runtime.result import ExecutionResult
-from abe_froman.runtime.state import REDUCERS, WorkflowState
-from abe_froman.schema.models import Node, Graph, Settings
+from sqrlly.runtime.result import ExecutionResult
+from sqrlly.runtime.state import REDUCERS, WorkflowState
+from sqrlly.schema.models import Node, Graph, Settings
 
 if TYPE_CHECKING:
-    from abe_froman.runtime.result import NodeExecutor
+    from sqrlly.runtime.result import NodeExecutor
 
 
 def _merge_updates(base: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
@@ -76,7 +76,7 @@ def _make_fan_out_node(
 
     # Per-Send-branch subgraph invoker — set when the template references
     # a `.yaml`/`.yml` URL, else the fan-out body uses the executor path.
-    from abe_froman.compile.subgraph import (
+    from sqrlly.compile.subgraph import (
         execute_subgraph_path,
         make_fan_out_subgraph_invoker,
     )
@@ -316,7 +316,7 @@ def _make_final_fan_out_node(
     # First-final barrier: wait until every manifest item's child has
     # landed in completed_nodes (or failed_nodes — failures count as
     # "settled" so we don't wait forever on a hung child).
-    from abe_froman.compile._manifest import _read_manifest
+    from sqrlly.compile._manifest import _read_manifest
 
     parent_id = parent_node.id
 

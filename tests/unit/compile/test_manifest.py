@@ -4,9 +4,9 @@ import json
 
 import pytest
 
-from abe_froman.compile._manifest import _read_manifest
-from abe_froman.runtime.state import make_initial_state
-from abe_froman.schema.models import Execute, FanOut, Node, FanOutTemplate
+from sqrlly.compile._manifest import _read_manifest
+from sqrlly.runtime.state import make_initial_state
+from sqrlly.schema.models import Execute, FanOut, Node, FanOutTemplate
 
 
 def _phase_with_dynamic(manifest_path=None) -> Node:

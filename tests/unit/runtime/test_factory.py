@@ -16,7 +16,7 @@ import warnings
 
 import pytest
 
-from abe_froman.runtime.executor.backends.factory import (
+from sqrlly.runtime.executor.backends.factory import (
     auto_detect_executor,
     create_prompt_backend,
 )
@@ -32,7 +32,7 @@ def clean_env(monkeypatch, tmp_path):
     `.env` walk-up can't reach a real one, and reset the dotenv
     cache so any prior call doesn't leak across tests.
     """
-    from abe_froman.runtime.secrets import _reset_dotenv_cache
+    from sqrlly.runtime.secrets import _reset_dotenv_cache
 
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
@@ -59,7 +59,7 @@ class TestCreatePromptBackend:
         assert "deepseek" in str(ei.value)
 
     def test_anthropic_with_key_returns_anthropic_backend(self):
-        from abe_froman.runtime.executor.backends.anthropic import (
+        from sqrlly.runtime.executor.backends.anthropic import (
             AnthropicBackend,
         )
 
@@ -73,7 +73,7 @@ class TestCreatePromptBackend:
         assert "ANTHROPIC_API_KEY" in str(ei.value)
 
     def test_deepseek_with_key_returns_openai_backend(self):
-        from abe_froman.runtime.executor.backends.openai import OpenAIBackend
+        from sqrlly.runtime.executor.backends.openai import OpenAIBackend
 
         backend = create_prompt_backend("deepseek", api_key="sk-fake")
         assert isinstance(backend, OpenAIBackend)
@@ -91,7 +91,7 @@ class TestCreatePromptBackend:
         assert "OPENAI_API_KEY" in str(ei.value)
 
     def test_openai_with_key_and_base_url(self):
-        from abe_froman.runtime.executor.backends.openai import OpenAIBackend
+        from sqrlly.runtime.executor.backends.openai import OpenAIBackend
 
         backend = create_prompt_backend(
             "openai", api_key="sk-fake", base_url="https://custom/",
@@ -103,7 +103,7 @@ class TestCreatePromptBackend:
         """``OPENAI_BASE_URL`` env var lets OpenRouter / Ollama /
         LM Studio / LiteLLM / etc. work via the openai backend without
         passing kwargs at construction time."""
-        from abe_froman.runtime.executor.backends.openai import OpenAIBackend
+        from sqrlly.runtime.executor.backends.openai import OpenAIBackend
 
         monkeypatch.setenv("OPENAI_API_KEY", "sk-or-v1-fake")
         monkeypatch.setenv(
@@ -127,8 +127,8 @@ class TestCreatePromptBackend:
         OpenAI-compatible third parties — separate from `openai`,
         which is reserved for real openai.com. Both ``CUSTOM_API_KEY``
         and ``CUSTOM_API_BASE_URL`` are required."""
-        from abe_froman.runtime.executor.backends.openai import OpenAIBackend
-        from abe_froman.runtime.secrets import _reset_dotenv_cache
+        from sqrlly.runtime.executor.backends.openai import OpenAIBackend
+        from sqrlly.runtime.secrets import _reset_dotenv_cache
 
         monkeypatch.setenv("CUSTOM_API_KEY", "sk-or-v1-fake")
         monkeypatch.setenv(
@@ -149,7 +149,7 @@ class TestCreatePromptBackend:
         otherwise the request would silently hit OpenAI's default
         endpoint with the wrong key."""
         monkeypatch.setenv("CUSTOM_API_KEY", "sk-or-v1-fake")
-        from abe_froman.runtime.secrets import _reset_dotenv_cache
+        from sqrlly.runtime.secrets import _reset_dotenv_cache
         _reset_dotenv_cache()
         with pytest.raises(ValueError) as ei:
             create_prompt_backend("custom")
@@ -191,7 +191,7 @@ class TestAutoDetect:
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-anthropic")
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek")
         monkeypatch.setattr(
-            "abe_froman.runtime.executor.backends.factory.shutil.which",
+            "sqrlly.runtime.executor.backends.factory.shutil.which",
             lambda name: "/usr/bin/npx" if name == "npx" else None,
         )
 
@@ -203,7 +203,7 @@ class TestAutoDetect:
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek")
         # npx may or may not be present; deepseek still wins over acp.
         monkeypatch.setattr(
-            "abe_froman.runtime.executor.backends.factory.shutil.which",
+            "sqrlly.runtime.executor.backends.factory.shutil.which",
             lambda name: "/usr/bin/npx" if name == "npx" else None,
         )
         with warnings.catch_warnings():
@@ -212,7 +212,7 @@ class TestAutoDetect:
 
     def test_acp_when_only_npx(self, clean_env, monkeypatch):
         monkeypatch.setattr(
-            "abe_froman.runtime.executor.backends.factory.shutil.which",
+            "sqrlly.runtime.executor.backends.factory.shutil.which",
             lambda name: "/usr/bin/npx" if name == "npx" else None,
         )
         with warnings.catch_warnings():
@@ -252,7 +252,7 @@ class TestAutoDetect:
         when StubBackend was deleted; production must never emit fake
         output."""
         monkeypatch.setattr(
-            "abe_froman.runtime.executor.backends.factory.shutil.which",
+            "sqrlly.runtime.executor.backends.factory.shutil.which",
             lambda name: None,
         )
         with pytest.raises(RuntimeError) as ei:
@@ -280,7 +280,7 @@ class TestExecutorResolution:
     ):
         # Force auto-detect to error if reached
         monkeypatch.setattr(
-            "abe_froman.runtime.executor.backends.factory.auto_detect_executor",
+            "sqrlly.runtime.executor.backends.factory.auto_detect_executor",
             lambda: pytest.fail("auto_detect must not be called"),
         )
         executor = "anthropic"  # explicit CLI flag
@@ -314,20 +314,20 @@ class TestResolveAnthropicKey:
     provider-name binding and the env-var path."""
 
     def test_env_var_returns_value(self, monkeypatch):
-        from abe_froman.runtime.executor.backends.factory import (
+        from sqrlly.runtime.executor.backends.factory import (
             _resolve_anthropic_key,
         )
-        from abe_froman.runtime.secrets import _reset_dotenv_cache
+        from sqrlly.runtime.secrets import _reset_dotenv_cache
 
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-from-env")
         _reset_dotenv_cache()
         assert _resolve_anthropic_key() == "sk-from-env"
 
     def test_unset_returns_none(self, monkeypatch, tmp_path):
-        from abe_froman.runtime.executor.backends.factory import (
+        from sqrlly.runtime.executor.backends.factory import (
             _resolve_anthropic_key,
         )
-        from abe_froman.runtime.secrets import _reset_dotenv_cache
+        from sqrlly.runtime.secrets import _reset_dotenv_cache
 
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         # CWD with no .env so the file fallback misses too.

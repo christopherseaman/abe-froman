@@ -1,4 +1,4 @@
-# Abe Froman — Technical Architecture
+# sqrlly — Technical Architecture
 
 How the orchestrator is structured. Reading guide for contributors and
 LLMs that want to understand the internals beyond the README.
@@ -6,7 +6,7 @@ LLMs that want to understand the internals beyond the README.
 ## 1. Three-layer architecture
 
 The codebase splits into three sibling packages under
-`src/abe_froman/`. Each layer has a hard import rule, enforced by AST
+`src/sqrlly/`. Each layer has a hard import rule, enforced by AST
 walking in `tests/architecture/test_layers.py`:
 
 - **`schema/`** — Pydantic models. No langgraph, no compile, no
@@ -468,7 +468,7 @@ and adds: global semaphore (`Semaphore(max_parallel_jobs)`, default
 pressure gates (`settings.memory_threshold_pct` reads
 `psutil.virtual_memory().percent`; `settings.memory_min_available_bytes`
 reads `.available`, accepts suffixed strings like `"4GB"`); per-
-`node.id` git worktree at `<workdir>/.abe-foreman/wt-<safe_id>-<uuid8>/`.
+`node.id` git worktree at `<workdir>/.sqrlly/wt-<safe_id>-<uuid8>/`.
 Worktrees are allocated on first `execute()` and retained across
 retries (subphases use composite keys `parent_id::item_id`).
 
@@ -657,12 +657,12 @@ guard re-attempts of hard-failed nodes — semantically distinct).
 ## 12. Where to start reading
 
 1. `tests/architecture/test_layers.py` — layer rules in AST walking.
-2. `src/abe_froman/runtime/state.py` — `WorkflowState` + `REDUCERS`.
-3. `src/abe_froman/compile/graph.py` — `build_workflow_graph`.
-4. `src/abe_froman/compile/nodes.py` — `_make_execution_node` and
+2. `src/sqrlly/runtime/state.py` — `WorkflowState` + `REDUCERS`.
+3. `src/sqrlly/compile/graph.py` — `build_workflow_graph`.
+4. `src/sqrlly/compile/nodes.py` — `_make_execution_node` and
    `_make_evaluation_node`.
-5. `src/abe_froman/runtime/runner.py` — `astream` loop + logger
+5. `src/sqrlly/runtime/runner.py` — `astream` loop + logger
    integration; the only file that owns workflow lifecycle.
-6. `src/abe_froman/runtime/executor/dispatch.py` — URL extension →
+6. `src/sqrlly/runtime/executor/dispatch.py` — URL extension →
    handler dispatch table. URL resolution and remote-fetch gates
    live in `runtime/url.py`.

@@ -1,4 +1,4 @@
-"""Tests for the `abe-froman view` command + renderer.
+"""Tests for the `sqrlly view` command + renderer.
 
 Three layers:
   - Mermaid emitter (pure function on Graph).
@@ -13,15 +13,15 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from abe_froman.cli.main import cli
-from abe_froman.cli.view import (
+from sqrlly.cli.main import cli
+from sqrlly.cli.view import (
     compute_node_status,
     extract_node_config,
     read_jsonl_log,
     render_mermaid,
     render_view,
 )
-from abe_froman.schema.models import Graph
+from sqrlly.schema.models import Graph
 
 from helpers import make_config
 
@@ -405,7 +405,7 @@ class TestViewCommand:
         )
         assert result.exit_code == 0, result.output
 
-        out = tmp_path / "abe-froman-view.html"
+        out = tmp_path / "sqrlly-view.html"
         assert out.exists()
         text = out.read_text()
         assert "<title>Test" in text
@@ -434,7 +434,7 @@ class TestViewCommand:
         )
         assert result.exit_code == 0, result.output
 
-        out_html = (tmp_path / "abe-froman-view.html").read_text()
+        out_html = (tmp_path / "sqrlly-view.html").read_text()
         assert "debug mode" in out_html
 
     def test_view_explicit_out_path(self, tmp_path):

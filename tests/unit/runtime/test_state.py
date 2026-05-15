@@ -1,6 +1,6 @@
 """Unit tests for _merge_dicts and make_initial_state in engine/state.py."""
 
-from abe_froman.runtime.state import (
+from sqrlly.runtime.state import (
     _merge_dicts,
     _merge_evaluations,
     make_initial_state,

@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from abe_froman.runtime.url import (
+from sqrlly.runtime.url import (
     RemoteURLBlockedError,
     RemoteURLFetchError,
     _RemoteFetchCache,
@@ -24,7 +24,7 @@ from abe_froman.runtime.url import (
     fetch_url,
     resolve_url,
 )
-from abe_froman.schema.models import Settings
+from sqrlly.schema.models import Settings
 
 
 # ----- resolve_url: pin each row of the examples table -----

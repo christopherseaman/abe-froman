@@ -23,7 +23,7 @@ import it, so it must respect the runtime layer rule.
 """
 from __future__ import annotations
 
-from abe_froman.schema.models import Settings
+from sqrlly.schema.models import Settings
 
 
 def merge_settings(parent: Settings, child: Settings) -> Settings:

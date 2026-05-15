@@ -13,12 +13,12 @@ import pytest
 from langgraph.graph import END
 from langgraph.types import Command
 
-from abe_froman.compile.graph import _make_inline_route_node, _resolve_goto
-from abe_froman.compile.route import (
+from sqrlly.compile.graph import _make_inline_route_node, _resolve_goto
+from sqrlly.compile.route import (
     build_route_namespace,
     evaluate_case,
 )
-from abe_froman.schema.models import Node, Route, RouteCase, RouteElse
+from sqrlly.schema.models import Node, Route, RouteCase, RouteElse
 
 
 def _state(**overrides) -> dict:

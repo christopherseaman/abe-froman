@@ -1,8 +1,8 @@
 """Tests for output directory scaffolding."""
 
-from abe_froman.compile.graph import build_workflow_graph
-from abe_froman.runtime.gates import scaffold_output_directory
-from abe_froman.schema.models import OutputContract
+from sqrlly.compile.graph import build_workflow_graph
+from sqrlly.runtime.gates import scaffold_output_directory
+from sqrlly.schema.models import OutputContract
 from helpers import cmd_phase, make_config
 from mock_executor import MockExecutor
 
@@ -107,7 +107,7 @@ class TestScaffoldingIntegration:
         }
         config = make_config([node])
 
-        from abe_froman.runtime.executor.dispatch import DispatchExecutor
+        from sqrlly.runtime.executor.dispatch import DispatchExecutor
 
         graph = build_workflow_graph(
             config,

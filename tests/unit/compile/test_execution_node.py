@@ -11,10 +11,10 @@ import time
 
 import pytest
 
-from abe_froman.compile.nodes import _make_execution_node
-from abe_froman.runtime.result import ExecutionResult
-from abe_froman.runtime.state import make_initial_state
-from abe_froman.schema.models import (
+from sqrlly.compile.nodes import _make_execution_node
+from sqrlly.runtime.result import ExecutionResult
+from sqrlly.runtime.state import make_initial_state
+from sqrlly.schema.models import (
     Execute,
     OutputContract,
     Node,

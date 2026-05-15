@@ -17,7 +17,7 @@ planner ─→ dispatcher (fan_out) ─→ workers (Send×N)
 
 - **planner** seeds initial tasks into `state.json`.
 - **dispatcher** reads `state.json`, emits a JSON manifest of
-  pending items; abe-froman's fan_out machinery dispatches one
+  pending items; sqrlly's fan_out machinery dispatches one
   worker child per item via LangGraph `Send`.
 - **workers** run in parallel, each marking its own task `done`
   in `state.json`.
@@ -42,7 +42,7 @@ work-items as it goes — typical use cases:
 - Iterative refinement loops where an evaluator decides whether
   another pass is needed.
 
-Two abe-froman primitives make it work:
+Two sqrlly primitives make it work:
 
 1. `dispatcher` has BOTH `depends_on: [planner]` AND is the
    `goto:` target of the gate. The compile layer wires both
@@ -57,7 +57,7 @@ Two abe-froman primitives make it work:
 ## Running
 
 This example shares state across waves via a single `state.json`
-file in the workdir. abe-froman normally isolates each node in
+file in the workdir. sqrlly normally isolates each node in
 its own git worktree (the Foreman) when the workdir is a git
 repo — sibling worktrees can't see each other's state mutations,
 which would break the wave pattern.
@@ -67,8 +67,8 @@ So run with a non-git workdir:
 ```bash
 mkdir -p /tmp/wave-demo
 ln -s "$(pwd)/examples/wave_planner/scripts" /tmp/wave-demo/scripts
-uv run abe-froman validate examples/wave_planner/workflow.yaml
-uv run abe-froman run examples/wave_planner/workflow.yaml --workdir /tmp/wave-demo
+uv run sqrlly validate examples/wave_planner/workflow.yaml
+uv run sqrlly run examples/wave_planner/workflow.yaml --workdir /tmp/wave-demo
 ```
 
 You'll see two waves run:
@@ -101,10 +101,10 @@ stable. Real workflows replace them with LLM-driven nodes:
   and decides whether to enqueue follow-ups.
 
 When combining the wave pattern with worktree isolation in a
-real workflow, thread state through abe-froman's `node_outputs`
+real workflow, thread state through sqrlly's `node_outputs`
 mechanism (each node emits state JSON on stdout, downstream
 nodes template-read `{{upstream_id}}`) instead of a shared
-file. abe-froman's state is automatically visible across
+file. sqrlly's state is automatically visible across
 worktrees because it's tracked in the LangGraph WorkflowState,
 not on disk.
 
