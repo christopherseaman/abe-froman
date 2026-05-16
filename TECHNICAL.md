@@ -470,7 +470,7 @@ pressure gates (`settings.memory_threshold_pct` reads
 reads `.available`, accepts suffixed strings like `"4GB"`); per-
 `node.id` git worktree at `<workdir>/.sqrlly/wt-<safe_id>-<uuid8>/`.
 Worktrees are allocated on first `execute()` and retained across
-retries (subphases use composite keys `parent_id::item_id`).
+retries (fan-out branches use composite keys `parent_id::item_id`).
 
 The memory gates run *outside* the semaphores so a gated acquisition
 doesn't sit holding a slot waiting for memory to drop. Both gates
@@ -645,7 +645,7 @@ every reach; idempotence is the procedure's responsibility.
 
 Three guards (in `compile/nodes.py::_make_execution_node`,
 `compile/nodes.py::_make_evaluation_node`, and
-`compile/dynamic.py::_make_subphase_node`) used to short-circuit
+`compile/dynamic.py::_make_fan_out_node`) used to short-circuit
 re-entry — leftovers from a pre-LangGraph-checkpointer resume
 mechanism that rehydrated `completed_phases` and re-ran the graph.
 Once `AsyncSqliteSaver` replaced that path (resume picks up at

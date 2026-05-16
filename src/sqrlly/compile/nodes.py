@@ -120,15 +120,15 @@ def build_context(node: Node, state: WorkflowState) -> dict[str, Any]:
                 suffix = k[len(dotted_prefix):]
                 context[f"{dep}_{suffix}"] = v
         # Synthesize fan-out aggregates from state. Any node depending on
-        # a dynamic parent sees `{{dep_subphases}}` (JSON id→output map) and
-        # `{{dep_subphase_worktrees}}` (JSON list of worktree paths) — not
+        # a dynamic parent sees `{{dep_branches}}` (JSON id→output map) and
+        # `{{dep_branch_worktrees}}` (JSON list of worktree paths) — not
         # just the final-node wrapper.
         prefix = f"{dep}::"
         dep_subs = {k: v for k, v in sub_outputs.items() if k.startswith(prefix)}
         if dep_subs:
-            context[f"{dep}_subphases"] = _json.dumps(dep_subs)
+            context[f"{dep}_branches"] = _json.dumps(dep_subs)
             dep_wts = [v for k, v in worktrees.items() if k.startswith(prefix)]
-            context[f"{dep}_subphase_worktrees"] = _json.dumps(dep_wts)
+            context[f"{dep}_branch_worktrees"] = _json.dumps(dep_wts)
 
     # When a node has multiple deps, provide aggregate collections so
     # templates can iterate inputs generically without hardcoding names.
@@ -393,11 +393,11 @@ def build_evaluation_outcome_update(
     *,
     node_id: str | None = None,
 ) -> dict[str, Any]:
-    """Combined record + outcome state — used by the subphase inline
-    retry loop in ``compile/dynamic.py::_make_fan_out_node``.
+    """Combined record + outcome state — used by the fan-out branch
+    inline retry loop in ``compile/dynamic.py::_make_fan_out_node``.
 
     Top-level gated nodes split this into separate Eval and Decision
-    steps; subphase children loop inline within a single Send-
+    steps; fan-out branches loop inline within a single Send-
     dispatched body and want both writes from one helper call.
     """
     update = build_record_only_update(node, result, retries, node_id=node_id)

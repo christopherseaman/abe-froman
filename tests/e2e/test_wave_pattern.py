@@ -19,7 +19,7 @@ Python scripts written into a tmp_path. Two assertions matter:
      fire per wave; the goto-driven re-fire MUST execute the body).
   2. The dynamically-discovered child (``q_competitor_share``, added
      by reconcile during wave 1) lands in ``completed_nodes`` as a
-     fan-out subphase of dispatcher's second wave.
+     fan-out branch of dispatcher's second wave.
 
 Both assertions would fail if the resume-mode "skip already-completed
 nodes" guards were re-added to ``compile/nodes.py`` and
@@ -194,7 +194,7 @@ class TestWavePattern:
         # q_gamma worker runs, reconcile clears.
         assert "dispatcher::q_gamma" in completed, (
             "Dynamically-discovered child (added by reconcile during wave 1) "
-            "must run as a fan-out subphase of wave 2's dispatcher. If this "
+            "must run as a fan-out branch of wave 2's dispatcher. If this "
             "assertion fails, the goto-driven re-fire of dispatcher is being "
             "suppressed — likely a resume-mode guard regression."
         )

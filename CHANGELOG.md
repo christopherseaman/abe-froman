@@ -3,6 +3,36 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased] — terminology cleanup: subphase → branch
+
+### Changed (breaking — template vars)
+
+- **User-facing fan-out aggregate template vars renamed**:
+  - `{{<dep>}}_subphases` → `{{<dep>}}_branches`
+  - `{{<dep>}}_subphase_worktrees` → `{{<dep>}}_branch_worktrees`
+
+  Workflows referencing these in prompt templates must update by hand
+  (no shim — sqrlly is pre-1.0 and the user base is internal).
+  Completes the rename pass that previously retained these vars for
+  compatibility.
+
+### Changed (internal)
+
+- LangGraph node display name for fan-out branch bodies:
+  `subphase_<parent>` → `branch_<parent>`. Visible only in graph
+  debug output, not API.
+- Test names, comments, and example prompts updated to use "branch" /
+  "fan-out branch" instead of "subphase". The `cli/migrate.py` legacy
+  YAML migrator continues to handle the historical `dynamic_subphases:`
+  key — that's deliberately frozen vocabulary.
+
+### Removed
+
+- `compile/graph.py::_subphase_id_resolver` — dead helper with zero
+  callers. The pattern actually used is the `node_id_resolver`
+  parameter on `_make_evaluation_node` / `_make_decision_node`, set
+  via inline lambdas at the call sites.
+
 ## [Unreleased] — Stage 5d: split Evaluation from Decision + gate dep-outputs
 
 ### Added
@@ -497,10 +527,9 @@ using `ruamel.yaml` (preserves comments, anchors, references, and
 - Many internal-only renames in `compile/graph.py` and `runtime/gates.py`
   (`phase_map`, `gated_phase_ids`, `dynamic_phase_ids`, `phase_output`
   parameter, etc.). User-facing template variables — `{{dep_subphases}}`,
-  `{{<parent>_subphases}}`, `{{<parent>_subphase_worktrees}}` — are
-  intentionally retained: subphase IDs follow the documented
-  `{parent_id}::{item_id}` form, which is the term for fan-out
-  children.
+  `{{<parent>_subphases}}`, `{{<parent>_subphase_worktrees}}` — were
+  retained at the time of this cutover; later renamed to `_branches` /
+  `_branch_worktrees` (see top of Unreleased: terminology cleanup).
 
 ### Added
 

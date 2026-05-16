@@ -100,7 +100,7 @@ class TestWorktreePool:
             await foreman.close()
 
     @pytest.mark.asyncio
-    async def test_subphase_composite_id_gets_own_worktree(self, tmp_path):
+    async def test_branch_composite_id_gets_own_worktree(self, tmp_path):
         """Dynamic child ids (parent::item) each get their own tree."""
         _init_git_repo(tmp_path)
         inner = DispatchExecutor(workdir=str(tmp_path))

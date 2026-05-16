@@ -46,7 +46,7 @@ Three low-priority findings from the parallel framework / DRY-KISS-YAGNI / test-
 
 - [x] **(28) Subgraph wrapper duplicates dep-join logic** — _delivered._ `make_subgraph_node` in `compile/subgraph.py` had a hand-rolled dep-join (manual `completed`/`failed` set construction + inline error-update shape). Replaced with the shared `check_dep_failed` + `all_deps_completed` helpers from `compile/nodes.py`. **Bonus bug fix**: the wrapper still carried the `if parent_id in completed_nodes: return {}` re-entry guard that was removed from `_make_execution_node` / `_make_evaluation_node` / `_make_subphase_node` in audit fix #19 — same bug, fourth location the audit missed. With the wave pattern, a `Command(goto=parent_subgraph_node)` would have silently no-op'd instead of re-invoking. Now consistent with execution-node behavior; `failed_nodes` guard kept (short-circuits hard-failed nodes, semantically distinct).
 
-- [ ] **(29) `_make_combined_eval_decide_node` is residual debt from the eval/decision split** (`compile/nodes.py`) — top-level gated nodes use the clean Eval + Decision pair, but **dynamic gated parents** stayed on the combined factory because their downstream `_make_dynamic_router` needs `completed_nodes`/`failed_nodes` already in state when it issues `Send(...)` for fan-out. Folding subphase eval into the new pattern would let us delete the combined factory entirely, but requires either (a) graph-level loops over Send branches (LangGraph doesn't support) or (b) a parallel inline-Decision loop that duplicates the new node-factory logic. Defer until subphase authoring patterns surface real pain.
+- [ ] **(29) `_make_combined_eval_decide_node` is residual debt from the eval/decision split** (`compile/nodes.py`) — top-level gated nodes use the clean Eval + Decision pair, but **dynamic gated parents** stayed on the combined factory because their downstream `_make_dynamic_router` needs `completed_nodes`/`failed_nodes` already in state when it issues `Send(...)` for fan-out. Folding fan-out branch eval into the new pattern would let us delete the combined factory entirely, but requires either (a) graph-level loops over Send branches (LangGraph doesn't support) or (b) a parallel inline-Decision loop that duplicates the new node-factory logic. Defer until fan-out branch authoring patterns surface real pain.
 
 ## Post-Phase-B audit findings (2026-05-08, framework alignment + test doctrine sweep)
 
@@ -172,7 +172,7 @@ than fixes to existing code.
 
 - [ ] **Collapse `runtime/executor/backends/` → `runtime/backends/`** — 4-level nesting (`runtime/executor/backends/acp.py`) for 4 small files. Semantic loss: current nesting signals that only `PromptExecutor` uses backends. If we land the anthropic/openai backends (below), the signal still holds but less strongly — multiple executor types might route through one backends/ module. Low value, low risk; defer until a second executor family justifies the flattening.
 
-- [ ] **Fold `compile/dynamic.py` into `compile/nodes.py`** — 182 LOC would bring `nodes.py` to ~530 LOC. The split is defensive today: `_make_subphase_node` has legitimately divergent semantics (no dep check, no output contract, no retry routing). **Worth revisiting after** the gate-eval unification above — if the gate block is gone and the final remaining divergence is "Send-triggered vs. normal-invocation," the split stops earning its keep.
+- [ ] **Fold `compile/dynamic.py` into `compile/nodes.py`** — 182 LOC would bring `nodes.py` to ~530 LOC. The split is defensive today: `_make_fan_out_node` has legitimately divergent semantics (no dep check, no output contract, no retry routing). **Worth revisiting after** the gate-eval unification above — if the gate block is gone and the final remaining divergence is "Send-triggered vs. normal-invocation," the split stops earning its keep.
 
 - [ ] **Move `_detect_cycles` + `_find_terminal_phases` → `schema/models.py`** — topology validation belongs with the config model. Blockers: `schema/` is currently langgraph-free Pydantic-only; moving these functions in would require no imports from `langgraph`, which they already don't have. Clean move. Low priority — they're stable and small.
 
@@ -189,12 +189,9 @@ than fixes to existing code.
 
 ## Top priority after simplification refactor
 
-- [ ] **Reconsider dependency/ordering model.** Possibly no more phases, just nodes and edges with next-node selection informed by node completion criteria. QualityGate becomes a node type and retry-with-context is the route chosen within a "failure context." Unclear this is actually simpler, but having retry / escalated / super-escalated tiers is definitely NOT the correct path forward.
+- [x] **Reconsider dependency/ordering model** — _delivered, post-Stage-5d._ Every sub-bullet has landed: (a) phases as a YAML construct are gone — schema is `nodes:` + `fan_out:` (Stage 4); `cli/migrate.py` carries the one-time legacy YAML migrator. (b) QualityGate-as-special is gone — `evaluation:` is a sub-config on any Node, and Stage 5d split it into separate `_eval_<id>` + `_decide_<id>` nodes in the compiled graph. (c) retry-with-context is the route chosen by the Decision node via `Command(goto=exec_id)` with retry context surfaced through `_route_eval_preamble` and `inject_retry_reason`. (d) escalation tiers do not exist — single `retries:` budget; `rg "escalated|super_escalated|retry_tier" src/` returns zero hits. Naming cleanup pass (2026-05-15) renamed remaining internal `subphase` tokens to `branch` and dropped the dead `_subphase_id_resolver`.
 
-- [ ] **ACP test flakiness**
-    - `tests/acp/` tests fail or pass sporadically
-    - Investigate: session lifecycle races, stdio buffering, stale `_session_id` on multi-prompt flows, Python 3.14 async-generator `aclose()` warning
-    - Decide: fix root cause, or gate ACP tests behind a stricter pre-flight
+- [x] **ACP test flakiness** — _closed for now, 2026-05-15._ Likely-root-cause fix landed in `5de1166` (Python 3.14 ACP `aclose()` warning handled via `/proc`-walk descendant reaping in `ACPBackend.close()`). Two consecutive `tests/acp/` runs on 2026-05-15: 14/14 each, 150s and 160s — close enough timings to rule out race-amplified hangs in this environment. Reopen if symptoms return; the parent item below (soak-test under load with `max_parallel_jobs > 1`) is the formal validation gate.
 
 - [x] **ACP process-tree leaks / zombie subprocesses under long runs** — _initial fix landed in post-Stage-5b. `ACPBackend.close()` now captures descendants from `/proc/<pid>/task/<pid>/children` BEFORE `__aexit__` (so re-parented orphans stay tracked), runs graceful shutdown under a 5s `wait_for`, then SIGTERM→0.5s→SIGKILLs each captured PID. Teardown assertion `tests/acp/test_acp_cleanup.py::test_close_reaps_descendant_tree` watches a 15-PID descendant tree disappear within 3s of close. **Open: soak-test under load** — needs a multi-hour run with `max_parallel_jobs > 1` against the absurd-paper workflow before this can be fully ticked off._
 
@@ -253,11 +250,11 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
 
 - [ ] **Composite / weighted score expressions** — today dimensions are compared independently via per-field `min`. Next: support `{overall: weighted_sum(dims, weights)}` or a tiny expression language for cross-dim predicates (AND/OR, arithmetic). Low urgency — per-field mins cover the current demo needs.
 
-- [ ] **Multi-tier retry escalation for fan-out + synthesis** — _infrastructure landed, Stages 3 + 3b._ Routes now accept any destination + params and can use `{field: "invocation", op: ">=", value: N}` clauses, so tiered escalation is just a longer route list (no new enum, no new retry-counter channel). Stage 3b confirmed that graph-level retry routing works for top-level gated phases; subphase retries go through inline loops within the Send-dispatched node body. Still needed: (1) expose an `evaluation:` YAML block that lets authors write custom routes directly; (2) let route destinations name ancestor nodes (cross-node re-entry via graph edges for top-level, via nested inline-loops for subphases). Trunk/merge branch for synthesis merges (`settings.trunk_ref: main`) remains unbuilt.
+- [ ] **Multi-tier retry escalation for fan-out + synthesis** — _infrastructure landed, Stages 3 + 3b._ Routes now accept any destination + params and can use `{field: "invocation", op: ">=", value: N}` clauses, so tiered escalation is just a longer route list (no new enum, no new retry-counter channel). Stage 3b confirmed that graph-level retry routing works for top-level gated nodes; fan-out branch retries go through inline loops within the Send-dispatched node body. Still needed: (1) expose an `evaluation:` YAML block that lets authors write custom routes directly; (2) let route destinations name ancestor nodes (cross-node re-entry via graph edges for top-level, via nested inline-loops for fan-out branches). Trunk/merge branch for synthesis merges (`settings.trunk_ref: main`) remains unbuilt.
 
 - [ ] **Synthesis as first-class concept**
-    - Today: `final_phases` is the implicit synthesis site for dynamic subphases; regular phases chain worktrees via `{{dep_worktree}}` context
-    - Make synthesis explicit: a `synthesis_phase:` block with `merges_from: [...]` listing subphase ids, blocking gate, pre-merge worktree
+    - Today: `final_nodes:` is the implicit synthesis site for fan-out branches; regular nodes chain worktrees via `{{dep_worktree}}` context
+    - Make synthesis explicit: a `synthesis_node:` block with `merges_from: [...]` listing branch ids, blocking gate, pre-merge worktree
     - Enables: synthesis-gate blocking merge (if gate fails, changes never fold back); reset semantics for the escalation tiers above
 
 ## Forward-looking — surfaced during 2026-04-18 architecture plan
@@ -383,10 +380,10 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
 
 - [ ] **Tournament pattern — divergent fan-out + synthesizing merge**
     - Pattern: spawn N candidate solutions in parallel, each potentially with **different params/modes** (different model tier, different temperature, different persona/prompt, different provider), then synthesize: a judge picks one as the winning baseline, and a merger incorporates the strongest parts of the losing candidates into that baseline before returning the final result.
-    - Today's fan-out almost gets there: a `fan_out:` block already gives N parallel branches with shared template, and `final_nodes:` already sees the aggregate `{{parent_subphases}}` map. What's missing is **per-candidate execution config** — each branch needs to be able to override its own model, temperature, prompt, agent vs prompt mode, etc., not just receive different per-item context. Today the manifest can rename the persona via `{{style}}` template substitution but can't make candidate A run on opus while candidate B runs on haiku, because `fan_out.template.execute` is a single shape applied to every branch.
+    - Today's fan-out almost gets there: a `fan_out:` block already gives N parallel branches with shared template, and `final_nodes:` already sees the aggregate `{{parent_branches}}` map. What's missing is **per-candidate execution config** — each branch needs to be able to override its own model, temperature, prompt, agent vs prompt mode, etc., not just receive different per-item context. Today the manifest can rename the persona via `{{style}}` template substitution but can't make candidate A run on opus while candidate B runs on haiku, because `fan_out.template.execute` is a single shape applied to every branch.
     - **Schema gap to close**: let `fan_out.template.execute.params` reference manifest fields, e.g. `params.llm.model: "{{model}}"` so the manifest can supply per-candidate execution config alongside per-candidate context. Pairs with the three-axis llm config above — once `params.llm` is a recognized shape with extra="forbid", per-candidate llm config slots in cleanly.
     - **Synthesis step shape** — two final_nodes:
-      1. **judge**: prompt that reads all `{{parent_subphases}}`, picks a winner, and emits structured output `{winner: "candidate_b", reasoning: "...", strengths_in_losers: [{candidate_a: "the conclusion is sharper"}, ...]}`.
+      1. **judge**: prompt that reads all `{{parent_branches}}`, picks a winner, and emits structured output `{winner: "candidate_b", reasoning: "...", strengths_in_losers: [{candidate_a: "the conclusion is sharper"}, ...]}`.
       2. **merger**: prompt that reads the winner output + the strengths_in_losers list and produces the merged final output. This is the chosen winner.
     - **Why "tournament" is the right name**: the pattern fundamentally treats the divergent attempts as competing entries that get judged, not as items in a fixed manifest to process uniformly. A tournament implies a winner; fan-out is symmetric.
     - **Iteration**: optional second round where the merged output competes against the original winner — refines until score plateaus. Wraps neatly with the existing route node pattern (`when: "history['judge'][-1]['score'] >= 0.9 → __end__; else: tournament"`).
@@ -423,9 +420,9 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
     - Document "executor owns retry policy, backend owns transport"
 
 - [ ] **State shape cleanup**
-    - Group phase data into `phases: dict[str, PhaseRunData]` with one merge reducer
-    - Document `_subphase_item` as an explicit transient channel
-    - Split `PhaseState` (phase-visible) from `WorkflowState` (runner-level)
+    - Group node data into `nodes: dict[str, NodeRunData]` with one merge reducer
+    - Document `_fan_out_item` as an explicit transient channel
+    - Split `NodeState` (node-visible) from `WorkflowState` (runner-level)
 
 ## Execution engines
 
@@ -472,6 +469,8 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
 
 - [ ] **Wire `OverloadError` through `ACPBackend`**
     - Translate ACP 429 / 529 / overload codes so the existing downgrade path fires with ACP too
+
+- [ ] **`claude -p` (Claude Code CLI print-mode) backend** — a third option alongside `ACPBackend` (JSON-RPC over stdio) and `AnthropicBackend` (HTTP SDK). `claude -p "prompt"` is Claude Code's non-interactive surface: single-shot completion, but runs through the **locally-configured Claude Code session** (its MCP servers, allowed tools, project-local settings.json). That's the differentiator vs. `AnthropicBackend` — the prompt has the user's existing tool/MCP environment available without our needing to re-plumb any of it. Fits the deferred three-axes model as `protocol: claude-cli + mode: prompt + provider: anthropic`. Implementation sketch: ~80 LOC `ClaudeCliBackend` that shells out to `claude -p`, captures stdout, maps non-zero exit + known stderr patterns to `OverloadError`. Auto-detect chain entry: `claude` on PATH (sibling to today's `npx @zed-industries/claude-code-acp` check). Open design question: how to thread per-call model selection — `claude -p --model sonnet "..."` exists but isn't always honored if the session is pre-bound; needs probing against the installed version.
 
 - [ ] **Streaming on `PromptBackend`**
     - Optional `async stream_prompt(...) -> AsyncIterator[str]`
@@ -603,7 +602,7 @@ unless flagged otherwise.
 Audit of where we shadow LangGraph functionality. Most of our code is genuinely complementary (timeouts, semantic retries, concurrency caps, custom reducers) — these two items are not.
 
 - [x] **Stop diffing state in `runtime/logging.py`** — _delivered._ Snapshot-compare path deleted. Events key directly on the `node_name → update` pairs the stream emits. Removed `_PrefixingProxy` along with `log_snapshot`; the new `log_update(node_name, update)` is shared by `JsonlLogger` and `SubgraphLogger` via a free helper.
-- [ ] **Stop hand-writing router closures** — pairs with `Command` objects above. Delete `_make_evaluation_router`, `_subphase_id_resolver`, the dynamic-router closure, and the conditional-edge scaffolding they feed in `compile/graph.py`. Decision nodes return `Command(goto=...)` directly.
+- [~] **Stop hand-writing router closures** — partial. `_make_evaluation_router` deleted (Stage 5d Eval/Decision split — Decision nodes emit `Command(goto=...)` directly). `_subphase_id_resolver` deleted (2026-05-15, was dead code). Still open: the dynamic-router closure and conditional-edge scaffolding it feeds in `compile/graph.py` for dynamic gated parents (blocked on item #29).
 
 **Not reimplementation** (clarified during audit, kept for reference):
 

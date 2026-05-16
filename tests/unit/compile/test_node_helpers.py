@@ -181,8 +181,8 @@ class TestBuildContext:
         # No silent first-dep-wins binding for bare `summary`.
         assert "summary" not in ctx
 
-    def test_projects_subphase_aggregations(self):
-        """Downstream context synthesizes `{dep}_subphases` + worktrees from state.
+    def test_projects_branch_aggregations(self):
+        """Downstream context synthesizes `{dep}_branches` + worktrees from state.
 
         Stage 2b moved aggregation out of the final-node wrapper; any
         node depending on a dynamic parent now sees the same aggregate
@@ -199,16 +199,16 @@ class TestBuildContext:
         }
         ctx = build_context(node, state)
         import json as _json
-        assert _json.loads(ctx["parent_subphases"]) == {
+        assert _json.loads(ctx["parent_branches"]) == {
             "parent::a": "x",
             "parent::b": "y",
         }
-        assert sorted(_json.loads(ctx["parent_subphase_worktrees"])) == [
+        assert sorted(_json.loads(ctx["parent_branch_worktrees"])) == [
             "/tmp/wt-a",
             "/tmp/wt-b",
         ]
 
-    def test_no_subphase_aggregations_when_absent(self):
+    def test_no_branch_aggregations_when_absent(self):
         """Nodes with no fan-out parent in deps get no aggregate keys."""
         node = _phase(depends_on=["normal"])
         state = {
@@ -217,8 +217,8 @@ class TestBuildContext:
             "node_worktrees": {},
         }
         ctx = build_context(node, state)
-        assert "normal_subphases" not in ctx
-        assert "normal_subphase_worktrees" not in ctx
+        assert "normal_branches" not in ctx
+        assert "normal_branch_worktrees" not in ctx
 
     # -- aggregate _deps / _dep_worktrees ---------------------------------
 

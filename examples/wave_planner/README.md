@@ -82,7 +82,7 @@ Completed: 8 nodes
 
 The `dispatcher` entry appears twice (one fire per wave), and
 the dynamically-added `q_competitor_share` shows up as a
-fan-out subphase only on the second wave — the manifest from
+fan-out branch only on the second wave — the manifest from
 wave 2 included it because reconcile added it after wave 1.
 
 `/tmp/wave-demo/state.json` has the final state with all three

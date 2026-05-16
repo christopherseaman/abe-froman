@@ -98,7 +98,7 @@ class TestReadManifestFromDisk:
 
 
 class TestReadManifestEdgeCases:
-    def test_no_dynamic_subphases(self):
+    def test_no_fan_out(self):
         node = Node(id="p1", name="P1", execute=Execute(url="t.md"))
         state = make_initial_state()
         result = _read_manifest(state, node)

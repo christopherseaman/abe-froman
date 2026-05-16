@@ -7,7 +7,7 @@ You are the Editor-in-Chief of the *Journal of Absurd Applied Studies*. Three re
 **All three reviews (as JSON keyed by `reviewer_pool::<id>`):**
 
 ```
-{{reviewer_pool_subphases}}
+{{reviewer_pool_branches}}
 ```
 
 ## Requirements

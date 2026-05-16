@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, Send
@@ -177,14 +177,6 @@ def _detect_cycles(config: Graph) -> None:
     for node in adj:
         if color[node] == WHITE:
             dfs(node)
-
-
-def _subphase_id_resolver(parent_id: str) -> Callable[[WorkflowState], str]:
-    """Resolve the per-branch child node_id from `_fan_out_item`."""
-    def resolve(state: WorkflowState) -> str:
-        item = state.get("_fan_out_item", {}) or {}
-        return f"{parent_id}::{item.get('id', 'unknown')}"
-    return resolve
 
 
 def _register_evaluation_node(

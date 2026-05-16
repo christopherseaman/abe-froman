@@ -249,7 +249,7 @@ def _make_fan_out_node(
                 return update
             retries_local = bumped
 
-    node_fn.__name__ = f"subphase_{parent_node.id}"
+    node_fn.__name__ = f"branch_{parent_node.id}"
     return node_fn
 
 
@@ -277,7 +277,7 @@ def _make_final_fan_out_node(
 ):
     """Create a node function for a final node in a dynamic child group.
 
-    Subphase aggregates reach the final node through `build_context`'s
+    Branch aggregates reach the final node through `build_context`'s
     suffix synthesis (same mechanism any non-final downstream uses).
 
     The FIRST final node in the chain has an incoming static edge from
@@ -285,7 +285,7 @@ def _make_final_fan_out_node(
     fires once per Send branch — i.e. once per fan-out child. Without a
     barrier, the first final would dispatch on the FIRST child's
     completion, before sibling children land in `child_outputs`, so its
-    `{{<parent>_subphases}}` template var would render against an
+    `{{<parent>_branches}}` template var would render against an
     incomplete state. The wrapper below short-circuits with `{}` until
     all expected manifest items have completed.
 

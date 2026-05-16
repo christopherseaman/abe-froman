@@ -195,9 +195,9 @@ class SelectiveSlowExecutor:
         )
 
 
-class TestSubphaseTimeout:
+class TestBranchTimeout:
     @pytest.mark.asyncio
-    async def test_subphase_inherits_parent_timeout(self, tmp_path):
+    async def test_branch_inherits_parent_timeout(self, tmp_path):
         import json
 
         manifest = tmp_path / "manifest.json"

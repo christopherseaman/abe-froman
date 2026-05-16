@@ -79,8 +79,8 @@ class TestDynamicFanOut:
         assert "parent::c" in result["completed_nodes"]
 
     @pytest.mark.asyncio
-    async def test_subphase_outputs_recorded(self, tmp_path):
-        """Subphase outputs stored in both node_outputs and child_outputs."""
+    async def test_branch_outputs_recorded(self, tmp_path):
+        """Branch outputs stored in both node_outputs and child_outputs."""
         (tmp_path / "template.md").write_text("Process {{id}}")
 
         items = [{"id": "x"}, {"id": "y"}]
@@ -113,7 +113,7 @@ class TestDynamicFanOut:
 
 class TestFinalNodes:
     @pytest.mark.asyncio
-    async def test_final_node_runs_after_subphases(self, tmp_path):
+    async def test_final_node_runs_after_branches(self, tmp_path):
         """Final node executes after all children complete."""
         (tmp_path / "template.md").write_text("Sub {{id}}")
 
@@ -131,12 +131,12 @@ class TestFinalNodes:
         assert "_final_p_summary" in result["completed_nodes"]
 
     @pytest.mark.asyncio
-    async def test_final_node_sees_all_subphase_outputs(self, tmp_path):
+    async def test_final_node_sees_all_branch_outputs(self, tmp_path):
         """Regression: final node must see ALL children's outputs in
-        `{parent_subphases}`, not fire prematurely on first Send branch.
+        `{parent_branches}`, not fire prematurely on first Send branch.
 
         Bug: with 3 manifest items and a final whose prompt references
-        `{{parent_subphases}}`, the final was being dispatched as soon as
+        `{{parent_branches}}`, the final was being dispatched as soon as
         the first Send branch completed (because the static edge
         `_sub_parent → _final_first` fires per-branch). The fix adds a
         barrier in `_make_final_fan_out_node(..., is_first=True)` that
@@ -157,7 +157,7 @@ class TestFinalNodes:
         })
 
         (tmp_path / "template.md").write_text("sub {{id}}")
-        (tmp_path / "summary.md").write_text("aggregate {{parent_subphases}}")
+        (tmp_path / "summary.md").write_text("aggregate {{parent_branches}}")
 
         finals = [{"id": "summary", "name": "Summary", "execute": {"url": "summary.md"}}]
         config = make_config([dynamic_parent("parent", manifest, final_nodes=finals)])
@@ -174,8 +174,8 @@ class TestFinalNodes:
 
         # Final node's context must include ALL three children's outputs.
         ctx = mock.received_contexts["_final_parent_summary"]
-        assert "parent_subphases" in ctx
-        aggregate = json.loads(ctx["parent_subphases"])
+        assert "parent_branches" in ctx
+        aggregate = json.loads(ctx["parent_branches"])
         assert aggregate == {
             "parent::a": "out-a",
             "parent::b": "out-b",
@@ -191,7 +191,7 @@ class TestFinalNodes:
         Bug observed in absurd-paper: `_final_*` fires before parent's
         prompt produces a manifest. Without the parent-settled check,
         barrier reads empty items, falls through to inner, and the final
-        runs against an empty `{{parent_subphases}}` template var.
+        runs against an empty `{{parent_branches}}` template var.
         """
         from sqrlly.compile.dynamic import _make_final_fan_out_node
         from sqrlly.runtime.state import make_initial_state
@@ -373,8 +373,8 @@ class TestDynamicGates:
         assert len(result["evaluations"]["p::y"]) >= 1
 
     @pytest.mark.asyncio
-    async def test_subphase_gate_triggers_retry(self, tmp_path):
-        """Subphase template gate with max_retries=2: validator fails
+    async def test_branch_gate_triggers_retry(self, tmp_path):
+        """Branch template gate with max_retries=2: validator fails
         first call, passes on retry. Proves each child branch keeps
         its own invocation counter via `_fan_out_item`-keyed state.
         """
@@ -453,7 +453,7 @@ class TestDynamicEdgeCases:
         assert sub_keys == []
 
     @pytest.mark.asyncio
-    async def test_dry_run_traces_subphases(self, tmp_path):
+    async def test_dry_run_traces_branches(self, tmp_path):
         """Dry run traces parent but doesn't fan out (no manifest to read)."""
         (tmp_path / "template.md").write_text("Sub {{id}}")
 
@@ -519,7 +519,7 @@ class TestDynamicEdgeCases:
 
 class TestManifestFieldPropagation:
     @pytest.mark.asyncio
-    async def test_custom_fields_reach_subphase_context(self, tmp_path):
+    async def test_custom_fields_reach_branch_context(self, tmp_path):
         """Manifest item fields beyond 'id' are passed into child context."""
         from mock_executor import MockExecutor
         from sqrlly.runtime.result import ExecutionResult
@@ -547,10 +547,10 @@ class TestManifestFieldPropagation:
         assert ctx["priority"] == "high"
 
     @pytest.mark.asyncio
-    async def test_downstream_sees_subphase_aggregate(self, tmp_path):
+    async def test_downstream_sees_branch_aggregate(self, tmp_path):
         """Any downstream node depending on a dynamic parent sees aggregates.
 
-        Before Stage 2b, `{parent}_subphases` was synthesized only inside
+        Before Stage 2b, `{parent}_branches` was synthesized only inside
         `_make_final_fan_out_node`'s local enriched dict — unreachable from
         a non-final downstream node. Stage 2b moves the synthesis into
         `build_context`, which reads state directly, so both final and
@@ -584,15 +584,15 @@ class TestManifestFieldPropagation:
 
         assert "downstream" in result["completed_nodes"]
         ctx = mock.received_contexts["downstream"]
-        assert "parent_subphases" in ctx, (
-            f"downstream should see `parent_subphases`; got keys {list(ctx)}"
+        assert "parent_branches" in ctx, (
+            f"downstream should see `parent_branches`; got keys {list(ctx)}"
         )
-        aggregate = json.loads(ctx["parent_subphases"])
+        aggregate = json.loads(ctx["parent_branches"])
         assert aggregate == {"parent::a": "out-a", "parent::b": "out-b"}
 
     @pytest.mark.asyncio
-    async def test_subphase_context_inherits_parent_deps(self, tmp_path):
-        """Subphase template sees its parent's upstream deps, not just parent output.
+    async def test_branch_context_inherits_parent_deps(self, tmp_path):
+        """Branch template sees its parent's upstream deps, not just parent output.
 
         Topology: upstream -> parent (dynamic fan-out) -> child
         The child template should be able to interpolate {{upstream}}

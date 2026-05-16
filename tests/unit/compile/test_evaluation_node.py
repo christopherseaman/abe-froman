@@ -280,10 +280,10 @@ class TestEvaluationNodeSkips:
         assert "p1" in result.get("evaluations", {})
 
 
-class TestEvaluationNodeSubphaseResolver:
+class TestEvaluationNodeBranchResolver:
     @pytest.mark.asyncio
-    async def test_resolver_keys_off_subphase_item(self, tmp_path):
-        """Subphase-style resolver derives node_id from _fan_out_item,
+    async def test_resolver_keys_off_fan_out_item(self, tmp_path):
+        """Branch-style resolver derives node_id from _fan_out_item,
         so per-branch evaluation writes to distinct keys."""
         node = Node(
             id="_eval_sub_p", name="sub gate", execute=_exec(),
