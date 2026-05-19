@@ -273,9 +273,9 @@ def _make_dynamic_router(node: Node, config: Graph):
         no_items_target = None
 
     def router(state: WorkflowState):
-        if node.id in state.get("failed_nodes", []):
+        if node.id in state.get("failed_nodes", set()):
             return "fail"
-        if node.evaluation and node.id not in state.get("completed_nodes", []):
+        if node.evaluation and node.id not in state.get("completed_nodes", set()):
             return "retry"
 
         items = _read_manifest(state, node)

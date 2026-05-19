@@ -199,19 +199,15 @@ class TestWavePattern:
             "suppressed — likely a resume-mode guard regression."
         )
 
-        # Dispatcher must appear EXACTLY twice (once per wave). The
-        # reducer is operator.add on lists, so duplicates accumulate.
-        # If a "skip already-completed" guard re-emerges, dispatcher
-        # would appear only once and q_gamma would never dispatch.
-        dispatcher_fires = sum(1 for n in completed if n == "dispatcher")
-        assert dispatcher_fires == 2, (
-            f"dispatcher fired {dispatcher_fires} times; expected exactly 2 "
-            f"(one per wave). completed_nodes={completed}"
-        )
-
-        # Reconcile fires twice (one decision per wave).
-        reconcile_fires = sum(1 for n in completed if n == "reconcile")
-        assert reconcile_fires == 2
+        # Direct "fired N times" is no longer expressible in state — the
+        # set-union reducer dedupes the writes. The q_gamma assertion
+        # above is the load-bearing regression check: q_gamma is only
+        # in wave 2's manifest, so its presence in completed_nodes IS
+        # proof that dispatcher re-fired. If a "skip already-completed"
+        # guard re-emerges, q_gamma never dispatches and the assertion
+        # above fails. To pin exact fire counts, run with `--log` and
+        # count `node_completed` events (events fire per super-step,
+        # not deduped).
 
         # Final state on disk: all three questions answered.
         final = json.loads((tmp_path / "state.json").read_text())

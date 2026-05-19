@@ -60,7 +60,7 @@ class TestLogUpdate:
     def test_detects_completed(self):
         buf = StringIO()
         logger = JsonlLogger(buf)
-        logger.log_update({"completed_nodes": ["research"]})
+        logger.log_update({"completed_nodes": {"research"}})
         events = [json.loads(l) for l in buf.getvalue().strip().split("\n")]
         assert len(events) == 1
         assert events[0]["event"] == "node_completed"
@@ -70,7 +70,7 @@ class TestLogUpdate:
         buf = StringIO()
         logger = JsonlLogger(buf)
         logger.log_update({
-            "failed_nodes": ["build"],
+            "failed_nodes": {"build"},
             "errors": [{"node": "build", "error": "exit code 1"}],
         })
         events = [json.loads(l) for l in buf.getvalue().strip().split("\n")]
@@ -154,7 +154,7 @@ class TestLogUpdate:
         logger = JsonlLogger(buf)
         logger.log_update({
             "evaluations": {"p": [{"invocation": 0, "result": {"score": 0.9}}]},
-            "completed_nodes": ["p"],
+            "completed_nodes": {"p"},
         })
         events = [json.loads(l) for l in buf.getvalue().strip().split("\n")]
         types = [e["event"] for e in events]
@@ -330,7 +330,7 @@ class TestSubgraphLogger:
         buf = StringIO()
         base = JsonlLogger(buf)
         sub = SubgraphLogger(base, prefix="paper")
-        sub.log_update({"completed_nodes": ["step1", "step2"]})
+        sub.log_update({"completed_nodes": {"step1", "step2"}})
         records = [json.loads(l) for l in buf.getvalue().strip().split("\n")]
         nodes = sorted(r["node"] for r in records)
         assert nodes == ["paper::step1", "paper::step2"]

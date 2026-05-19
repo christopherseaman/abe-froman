@@ -57,11 +57,11 @@ class TestExecutionNodeClosure:
         """
         node = Node(id="p1", name="P1", execute=Execute(url="t.md"))
         node = _make_execution_node(node, _config_with(node), MockExecutor())
-        state = make_initial_state(completed_nodes=["p1"])
+        state = make_initial_state(completed_nodes={"p1"})
         update = await node(state)
         # Body ran: emits a new node_outputs entry and re-marks complete.
         assert "node_outputs" in update
-        assert update["completed_nodes"] == ["p1"]
+        assert update["completed_nodes"] == {"p1"}
 
     @pytest.mark.asyncio
     async def test_none_executor_returns_no_executor_update(self):
@@ -69,7 +69,7 @@ class TestExecutionNodeClosure:
         node = Node(id="p1", name="P1", execute=Execute(url="t.md"))
         node = _make_execution_node(node, _config_with(node), executor=None)
         update = await node(make_initial_state())
-        assert update["completed_nodes"] == ["p1"]
+        assert update["completed_nodes"] == {"p1"}
         assert "[no-executor]" in update["node_outputs"]["p1"]
 
     @pytest.mark.asyncio
@@ -119,7 +119,7 @@ class TestExecutionNodeClosure:
         )
         node = _make_execution_node(node, _config_with(node), executor)
         update = await node(make_initial_state())
-        assert update["failed_nodes"] == ["p1"]
+        assert update["failed_nodes"] == {"p1"}
         assert update["errors"][0]["error"] == "boom"
 
     @pytest.mark.asyncio
@@ -128,7 +128,7 @@ class TestExecutionNodeClosure:
         node = Node(id="p1", name="P1", execute=Execute(url="t.md"), timeout=0.01)
         node = _make_execution_node(node, _config_with(node), _SlowExecutor())
         update = await node(make_initial_state())
-        assert update["failed_nodes"] == ["p1"]
+        assert update["failed_nodes"] == {"p1"}
         assert "timed out" in update["errors"][0]["error"]
 
     @pytest.mark.asyncio
@@ -143,7 +143,7 @@ class TestExecutionNodeClosure:
         node = _make_execution_node(node, _config_with(node), MockExecutor())
         state = make_initial_state(workdir=str(tmp_path))
         update = await node(state)
-        assert update["failed_nodes"] == ["p1"]
+        assert update["failed_nodes"] == {"p1"}
         assert "missing files" in update["errors"][0]["error"]
         assert "expected.md" in update["errors"][0]["error"]
 
@@ -161,7 +161,7 @@ class TestExecutionNodeClosure:
         node = _make_execution_node(node, _config_with(node), MockExecutor())
         state = make_initial_state(workdir=str(tmp_path))
         update = await node(state)
-        assert update["completed_nodes"] == ["p1"]
+        assert update["completed_nodes"] == {"p1"}
 
     @pytest.mark.asyncio
     async def test_success_no_gate_writes_completed(self):
@@ -169,7 +169,7 @@ class TestExecutionNodeClosure:
         node = Node(id="p1", name="P1", execute=Execute(url="t.md"))
         node = _make_execution_node(node, _config_with(node), MockExecutor())
         update = await node(make_initial_state())
-        assert update["completed_nodes"] == ["p1"]
+        assert update["completed_nodes"] == {"p1"}
         assert update["node_outputs"]["p1"] == "[mock] p1 completed"
 
     @pytest.mark.asyncio

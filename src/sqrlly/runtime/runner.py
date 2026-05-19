@@ -75,7 +75,7 @@ async def run_workflow(
         if owns_logger:
             logger.emit({
                 "event": "workflow_end",
-                "completed": len(last_state.get("completed_nodes", [])),
-                "failed": len(last_state.get("failed_nodes", [])),
+                "completed": len(last_state.get("completed_nodes", set())),
+                "failed": len(last_state.get("failed_nodes", set())),
             })
             logger.close()

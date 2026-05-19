@@ -230,8 +230,8 @@ async def _run_async(
             # error surfaces via Click already.
             logger.emit({
                 "event": "workflow_end",
-                "completed": len(result.get("completed_nodes", [])),
-                "failed": len(result.get("failed_nodes", [])),
+                "completed": len(result.get("completed_nodes", set())),
+                "failed": len(result.get("failed_nodes", set())),
             })
             logger.close()
 
@@ -275,14 +275,14 @@ async def _execute_workflow(
             old = dict(prev.checkpoint.get("channel_values", {}))
             state = {
                 **old,
-                "failed_nodes": [],
+                "failed_nodes": set(),
                 "retries": {},
                 "errors": [],
                 "workdir": workdir,
                 "dry_run": False,
             }
             click.echo(
-                f"Resuming: {len(state.get('completed_nodes', []))} "
+                f"Resuming: {len(state.get('completed_nodes', set()))} "
                 f"nodes already completed"
             )
             # Wipe the thread so reducers don't merge with stale state
@@ -373,8 +373,8 @@ def run(
         _run_async(config, workdir, dry_run, executor_type, resume, log_file)
     )
 
-    completed = result.get("completed_nodes", [])
-    failed = result.get("failed_nodes", [])
+    completed = result.get("completed_nodes", set())
+    failed = result.get("failed_nodes", set())
     errors = result.get("errors", [])
 
     if dry_run:
@@ -383,10 +383,10 @@ def run(
         click.echo(f"Completed: {len(completed)} nodes")
 
     if completed:
-        click.echo(f"  Nodes: {', '.join(completed)}")
+        click.echo(f"  Nodes: {', '.join(sorted(completed))}")
 
     if failed:
-        click.echo(f"  Failed: {', '.join(failed)}")
+        click.echo(f"  Failed: {', '.join(sorted(failed))}")
 
     if errors:
         for err in errors:

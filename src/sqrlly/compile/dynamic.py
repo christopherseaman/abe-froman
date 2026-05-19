@@ -99,14 +99,14 @@ def _make_fan_out_node(
         item_id = item.get("id", "unknown")
         child_id = f"{parent_node.id}::{item_id}"
 
-        if child_id in state.get("failed_nodes", []):
+        if child_id in state.get("failed_nodes", set()):
             return {}
 
         if state.get("dry_run", False):
             return {
                 "node_outputs": {child_id: f"[dry-run] child {item_id}"},
                 "child_outputs": {child_id: f"[dry-run] child {item_id}"},
-                "completed_nodes": [child_id],
+                "completed_nodes": {child_id},
             }
 
         if executor is None:
@@ -117,7 +117,7 @@ def _make_fan_out_node(
                 "child_outputs": {
                     child_id: f"[no-executor] child {item_id}"
                 },
-                "completed_nodes": [child_id],
+                "completed_nodes": {child_id},
             }
 
         synthetic_node = Node(
@@ -211,7 +211,7 @@ def _make_fan_out_node(
             update = _merge_updates(update, exec_update)
 
             if not template.evaluation:
-                update.setdefault("completed_nodes", []).append(child_id)
+                update.setdefault("completed_nodes", set()).add(child_id)
                 return update
 
             backend = (
@@ -237,9 +237,9 @@ def _make_fan_out_node(
             new_record = eval_update.get("evaluations", {}).get(child_id, [])
             history = history + list(new_record)
 
-            if child_id in eval_update.get("completed_nodes", []):
+            if child_id in eval_update.get("completed_nodes", set()):
                 return update
-            if child_id in eval_update.get("failed_nodes", []):
+            if child_id in eval_update.get("failed_nodes", set()):
                 return update
 
             # Retry outcome — increment and loop.
@@ -331,8 +331,8 @@ def _make_final_fan_out_node(
         #      completes), routing 'no_items' here before the parent's
         #      prompt produces a manifest. Empty items here means "unknown",
         #      not "zero children".
-        completed = state.get("completed_nodes", [])
-        failed = state.get("failed_nodes", [])
+        completed = state.get("completed_nodes", set())
+        failed = state.get("failed_nodes", set())
         items = _read_manifest(state, parent_node)
         settled = set(completed) | set(failed)
         children_pending = items and any(

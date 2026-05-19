@@ -48,11 +48,11 @@ def _get_retry_delay(retry_count: int, backoff: list[float]) -> float:
 
 
 def check_dep_failed(node: Node, state: WorkflowState) -> dict | None:
-    failed = state.get("failed_nodes", [])
+    failed = state.get("failed_nodes", set())
     for dep in node.depends_on:
         if dep in failed:
             return {
-                "failed_nodes": [node.id],
+                "failed_nodes": {node.id},
                 "errors": [
                     {
                         "node": node.id,
@@ -71,7 +71,7 @@ def all_deps_completed(node: Node, state: WorkflowState) -> bool:
     node body until all preds are done causes LangGraph to re-fire the
     node on each subsequent pred-trigger — a natural join barrier.
     """
-    completed = set(state.get("completed_nodes", []))
+    completed = state.get("completed_nodes", set())
     return all(dep in completed for dep in node.depends_on)
 
 
@@ -86,7 +86,7 @@ def check_dry_run(node: Node, state: WorkflowState) -> dict | None:
         "node_outputs": {node.id: f"[dry-run] {node.name}"},
     }
     if not node.evaluation:
-        update["completed_nodes"] = [node.id]
+        update["completed_nodes"] = {node.id}
     return update
 
 
@@ -240,7 +240,7 @@ async def execute_with_timeout(
 
 def make_failure_update(node_id: str, error_message: str) -> dict[str, Any]:
     return {
-        "failed_nodes": [node_id],
+        "failed_nodes": {node_id},
         "errors": [{"node": node_id, "error": error_message}],
     }
 
@@ -358,11 +358,11 @@ def build_outcome_only_update(
     summary = _evaluation_summary(node, result)
 
     if outcome == "pass":
-        update["completed_nodes"] = [key]
+        update["completed_nodes"] = {key}
     elif outcome == "retry":
         update["retries"] = {key: retries + 1}
     elif outcome == "fail_blocking":
-        update["failed_nodes"] = [key]
+        update["failed_nodes"] = {key}
         update["errors"] = [
             {
                 "node": key,
@@ -370,7 +370,7 @@ def build_outcome_only_update(
             }
         ]
     elif outcome == "warn_continue":
-        update["completed_nodes"] = [key]
+        update["completed_nodes"] = {key}
         update["errors"] = [
             {
                 "node": key,
@@ -572,7 +572,7 @@ def _make_execution_node(
                 "node_outputs": {node.id: f"[no-executor] {node.name}"},
             }
             if not node.evaluation:
-                update["completed_nodes"] = [node.id]
+                update["completed_nodes"] = {node.id}
             return update
 
         context = build_context(node, state)
@@ -605,7 +605,7 @@ def _make_execution_node(
             )
             if missing:
                 return {
-                    "failed_nodes": [node.id],
+                    "failed_nodes": {node.id},
                     "errors": [
                         {
                             "node": node.id,
@@ -624,7 +624,7 @@ def _make_execution_node(
             if wt:
                 update["node_worktrees"] = {node.id: wt}
         if not node.evaluation:
-            update["completed_nodes"] = [node.id]
+            update["completed_nodes"] = {node.id}
         # Gated nodes hand off to _eval_{node.id} via plain edge; the
         # Evaluation node writes completed_nodes / retries / failed_nodes.
 
@@ -665,7 +665,7 @@ def _make_evaluation_node(
     async def node_fn(state: WorkflowState) -> dict[str, Any]:
         node_id = resolve(state)
 
-        if node_id in state.get("failed_nodes", []):
+        if node_id in state.get("failed_nodes", set()):
             return {}
 
         if state.get("dry_run", False):
@@ -749,7 +749,7 @@ def _make_combined_eval_decide_node(
     async def node_fn(state: WorkflowState) -> dict[str, Any]:
         node_id = resolve(state)
 
-        if node_id in state.get("failed_nodes", []):
+        if node_id in state.get("failed_nodes", set()):
             return {}
 
         if state.get("dry_run", False):
@@ -762,7 +762,7 @@ def _make_combined_eval_decide_node(
             )
             return {
                 "evaluations": {node_id: [record.to_dict()]},
-                "completed_nodes": [node_id],
+                "completed_nodes": {node_id},
             }
 
         history = list(state.get("evaluations", {}).get(node_id, []))
@@ -840,17 +840,17 @@ def _make_decision_node(
     async def node_fn(state: WorkflowState):
         node_id = resolve(state)
 
-        if node_id in state.get("failed_nodes", []):
+        if node_id in state.get("failed_nodes", set()):
             return Command(goto=END)
 
-        if node_id in state.get("completed_nodes", []):
+        if node_id in state.get("completed_nodes", set()):
             target = pass_targets[0] if len(pass_targets) == 1 else pass_targets
             return Command(goto=target)
 
         if state.get("dry_run", False):
             target = pass_targets[0] if len(pass_targets) == 1 else pass_targets
             return Command(
-                update={"completed_nodes": [node_id]},
+                update={"completed_nodes": {node_id}},
                 goto=target,
             )
 

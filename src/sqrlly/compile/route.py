@@ -68,8 +68,8 @@ def build_safe_funcs(state: WorkflowState) -> dict[str, Any]:
     accepts `names` and `functions` as distinct parameters: bound
     *values* go in `names`, callables go in `functions`.
     """
-    completed = set(state.get("completed_nodes", []) or [])
-    failed = set(state.get("failed_nodes", []) or [])
+    completed = state.get("completed_nodes", set()) or set()
+    failed = state.get("failed_nodes", set()) or set()
     history = state.get("evaluations", {}) or {}
 
     def _last(node_id: str) -> dict[str, Any]:

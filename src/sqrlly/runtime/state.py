@@ -23,13 +23,24 @@ def _merge_evaluations(
     return merged
 
 
+def _merge_sets(left: set[str], right: set[str]) -> set[str]:
+    """Set-union reducer for `completed_nodes` / `failed_nodes`.
+
+    O(1) membership for the `in completed_nodes` guards scattered through
+    `compile/nodes.py` and `compile/dynamic.py`, and structurally prevents
+    duplicate accumulation when a goto-driven re-fire (or `--resume`-driven
+    replay) writes the same node id more than once.
+    """
+    return left | right
+
+
 # Reducer table — single source of truth for how state fields combine.
 # Mirrors WorkflowState's Annotated metadata; consumed by both LangGraph
 # (via the TypedDict annotations) and `dynamic._merge_updates` (when the
 # fan-out node accumulates state inline across its retry loop).
 REDUCERS: dict[str, Callable[[Any, Any], Any]] = {
-    "completed_nodes": operator.add,
-    "failed_nodes": operator.add,
+    "completed_nodes": _merge_sets,
+    "failed_nodes": _merge_sets,
     "errors": operator.add,
     "node_outputs": _merge_dicts,
     "node_structured_outputs": _merge_dicts,
@@ -42,8 +53,8 @@ REDUCERS: dict[str, Callable[[Any, Any], Any]] = {
 
 class WorkflowState(TypedDict):
     workflow_name: str
-    completed_nodes: Annotated[list[str], REDUCERS["completed_nodes"]]
-    failed_nodes: Annotated[list[str], REDUCERS["failed_nodes"]]
+    completed_nodes: Annotated[set[str], REDUCERS["completed_nodes"]]
+    failed_nodes: Annotated[set[str], REDUCERS["failed_nodes"]]
     node_outputs: Annotated[dict[str, Any], REDUCERS["node_outputs"]]
     node_structured_outputs: Annotated[dict[str, Any], REDUCERS["node_structured_outputs"]]
     evaluations: Annotated[dict[str, list[dict[str, Any]]], REDUCERS["evaluations"]]
@@ -87,8 +98,8 @@ def make_initial_state(
     """
     state: dict[str, Any] = {
         "workflow_name": workflow_name,
-        "completed_nodes": [],
-        "failed_nodes": [],
+        "completed_nodes": set(),
+        "failed_nodes": set(),
         "node_outputs": {},
         "node_structured_outputs": {},
         "evaluations": {},

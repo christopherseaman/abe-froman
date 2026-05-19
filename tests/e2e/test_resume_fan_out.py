@@ -15,13 +15,14 @@ property no existing resume test pins down.
 
 DOCUMENTED CURRENT BEHAVIOR: on ``--resume``, sqrlly re-executes
 already-completed nodes. ``a`` runs twice (once in phase 1, once again
-in phase 2); ``completed_nodes`` accumulates a duplicate entry via the
-``operator.add`` reducer. This is correct for goto-driven re-fires
-within a single run (audit fix #19 deliberately enabled it for the
-wave pattern) but wrong for the canonical cross-run resume use case
-(retry only the failed node). The semantics are underspecified; see
-WISHLIST item (26) for three candidate API shapes. This test pins
-actual behavior so unintended changes surface as failures.
+in phase 2). The ``_merge_sets`` reducer dedupes the resulting state
+write, but the body still re-executes — the runs-counter pins it.
+This is correct for goto-driven re-fires within a single run (audit
+fix #19 deliberately enabled it for the wave pattern) but wrong for
+the canonical cross-run resume use case (retry only the failed node).
+The semantics are underspecified; see WISHLIST item (26) for three
+candidate API shapes. This test pins actual behavior so unintended
+changes surface as failures.
 """
 from __future__ import annotations
 
@@ -120,7 +121,7 @@ async def _run_phase(
             old = dict(prev.checkpoint.get("channel_values", {}))
             state = {
                 **old,
-                "failed_nodes": [],
+                "failed_nodes": set(),
                 "retries": {},
                 "errors": [],
                 "workdir": str(workdir),
@@ -160,7 +161,7 @@ class TestResumeFromCheckpoint:
         result_1 = await _run_phase(
             tmp_path, config, db_path, thread_id, resume=False,
         )
-        assert result_1["completed_nodes"] == ["a"]
+        assert result_1["completed_nodes"] == {"a"}
         assert "b" in result_1["failed_nodes"]
         # ``c`` is marked failed because its dep failed; the body
         # never ran.
@@ -176,7 +177,7 @@ class TestResumeFromCheckpoint:
         )
         assert "b" in result_2["completed_nodes"]
         assert "c" in result_2["completed_nodes"]
-        assert result_2["failed_nodes"] == []
+        assert result_2["failed_nodes"] == set()
 
         # Current resume semantics re-execute already-completed nodes.
         # See WISHLIST (26) for the design discussion. When `--resume`
@@ -188,8 +189,9 @@ class TestResumeFromCheckpoint:
         # ``c`` ran for the first time in phase 2.
         assert _read_runs(tmp_path, "c") == 1
 
-        # State preservation: phase 1's completed ``a`` is still in
-        # completed_nodes after phase 2, alongside the duplicate from
-        # phase 2's re-execution (operator.add reducer accumulates).
-        assert result_2["completed_nodes"].count("a") == 2
+        # State preservation: phase 1's completed ``a`` is in
+        # completed_nodes after phase 2. The set-union reducer
+        # structurally dedupes the re-execution write — only the
+        # runs-counter still records the duplicate work.
+        assert result_2["completed_nodes"] == {"a", "b", "c"}
 

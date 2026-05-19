@@ -119,7 +119,7 @@ def make_subgraph_node(
             outputs_decl = dict(params["outputs"])
 
     async def wrapper(parent_state: WorkflowState) -> dict[str, Any]:
-        if parent_id in parent_state.get("failed_nodes", []):
+        if parent_id in parent_state.get("failed_nodes", set()):
             return {}
         # Dep-join: same semantics as a regular execution node. The
         # `completed_nodes` re-entry guard removed in audit fix #19
@@ -160,7 +160,7 @@ def make_subgraph_node(
         else:
             sub_result = await sub_graph.ainvoke(sub_state)
 
-        update: dict[str, Any] = {"completed_nodes": [parent_id]}
+        update: dict[str, Any] = {"completed_nodes": {parent_id}}
         sub_outputs = sub_result.get("node_outputs", {}) or {}
 
         if outputs_decl:
@@ -176,7 +176,7 @@ def make_subgraph_node(
             }
 
         if sub_result.get("failed_nodes"):
-            update["failed_nodes"] = [parent_id]
+            update["failed_nodes"] = {parent_id}
             update["errors"] = [{
                 "node": parent_id,
                 "error": (
@@ -184,7 +184,7 @@ def make_subgraph_node(
                     f"{sub_result['failed_nodes']}"
                 ),
             }]
-            update["completed_nodes"] = []
+            update["completed_nodes"] = set()
 
         return update
 

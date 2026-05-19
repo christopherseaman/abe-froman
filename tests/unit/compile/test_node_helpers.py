@@ -53,24 +53,24 @@ class TestGetRetryDelay:
 class TestCheckDepFailed:
     def test_dependency_failed(self):
         node = _phase(depends_on=["dep1"])
-        state = {"failed_nodes": ["dep1"]}
+        state = {"failed_nodes": {"dep1"}}
         result = check_dep_failed(node, state)
-        assert result["failed_nodes"] == ["p1"]
+        assert result["failed_nodes"] == {"p1"}
         assert "dependency 'dep1' failed" in result["errors"][0]["error"]
 
     def test_no_failed_deps(self):
         node = _phase(depends_on=["dep1"])
-        state = {"failed_nodes": []}
+        state = {"failed_nodes": set()}
         assert check_dep_failed(node, state) is None
 
     def test_no_deps(self):
         node = _phase(depends_on=[])
-        state = {"failed_nodes": ["something"]}
+        state = {"failed_nodes": {"something"}}
         assert check_dep_failed(node, state) is None
 
     def test_unrelated_failure(self):
         node = _phase(depends_on=["dep1"])
-        state = {"failed_nodes": ["dep2"]}
+        state = {"failed_nodes": {"dep2"}}
         assert check_dep_failed(node, state) is None
 
 
@@ -78,7 +78,7 @@ class TestCheckDryRun:
     def test_dry_run_without_gate(self):
         state = {"dry_run": True}
         result = check_dry_run(_phase(), state)
-        assert result["completed_nodes"] == ["p1"]
+        assert result["completed_nodes"] == {"p1"}
         assert "[dry-run]" in result["node_outputs"]["p1"]
         assert "gate_scores" not in result
 
@@ -400,7 +400,7 @@ class TestMakeFailureUpdate:
     def test_structure(self):
         result = make_failure_update("p1", "something broke")
         assert result == {
-            "failed_nodes": ["p1"],
+            "failed_nodes": {"p1"},
             "errors": [{"node": "p1", "error": "something broke"}],
         }
 
@@ -450,7 +450,7 @@ class TestBuildGateOutcomeUpdate:
         assert record["result"]["score"] == 0.9
         assert record["result"]["feedback"] is None
         assert record["result"]["scores"] == {}
-        assert update["completed_nodes"] == ["p1"]
+        assert update["completed_nodes"] == {"p1"}
         assert "failed_nodes" not in update
 
     def test_retry(self):
@@ -464,7 +464,7 @@ class TestBuildGateOutcomeUpdate:
         update = build_evaluation_outcome_update(
             node, EvaluationResult(score=0.3), "fail_blocking", 3, 3
         )
-        assert update["failed_nodes"] == ["p1"]
+        assert update["failed_nodes"] == {"p1"}
         assert "score=0.30" in update["errors"][0]["error"]
         assert "threshold=0.8" in update["errors"][0]["error"]
 
@@ -473,7 +473,7 @@ class TestBuildGateOutcomeUpdate:
         update = build_evaluation_outcome_update(
             node, EvaluationResult(score=0.3), "warn_continue", 3, 3
         )
-        assert update["completed_nodes"] == ["p1"]
+        assert update["completed_nodes"] == {"p1"}
         assert "non-blocking" in update["errors"][0]["error"]
 
     def test_feedback_populated_from_gate_result(self):
@@ -609,7 +609,7 @@ class TestEvaluateGateAndOutcome:
         update = await run_evaluation_and_outcome(
             node, config, state, "x", timeout=None,
         )
-        assert update["completed_nodes"] == ["p1"]
+        assert update["completed_nodes"] == {"p1"}
         assert update["evaluations"]["p1"][0]["result"]["score"] == 1.0
 
     @pytest.mark.asyncio
@@ -635,7 +635,7 @@ class TestEvaluateGateAndOutcome:
         update = await run_evaluation_and_outcome(
             node, config, state, "x", timeout=None,
         )
-        assert update["failed_nodes"] == ["p1"]
+        assert update["failed_nodes"] == {"p1"}
 
     @pytest.mark.asyncio
     async def test_warn_continue_path(self, tmp_path):
@@ -647,7 +647,7 @@ class TestEvaluateGateAndOutcome:
         update = await run_evaluation_and_outcome(
             node, config, state, "x", timeout=None,
         )
-        assert update["completed_nodes"] == ["p1"]
+        assert update["completed_nodes"] == {"p1"}
         assert "non-blocking" in update["errors"][0]["error"]
 
     @pytest.mark.asyncio
@@ -662,5 +662,5 @@ class TestEvaluateGateAndOutcome:
         update = await run_evaluation_and_outcome(
             node, config, state, "x", timeout=0.1,
         )
-        assert update["failed_nodes"] == ["p1"]
+        assert update["failed_nodes"] == {"p1"}
         assert "timed out" in update["errors"][0]["error"]

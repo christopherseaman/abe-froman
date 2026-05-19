@@ -63,7 +63,7 @@ class TestLinearExecution:
         executor = DispatchExecutor()
         graph = build_workflow_graph(config, executor)
         result = await graph.ainvoke(make_initial_state())
-        assert result["completed_nodes"] == ["a", "b"]
+        assert result["completed_nodes"] == {"a", "b"}
         assert result["node_outputs"]["a"] == "a-out"
         assert result["node_outputs"]["b"] == "b-out"
 

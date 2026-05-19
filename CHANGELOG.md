@@ -3,6 +3,58 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased] — set-union reducer for completed_nodes / failed_nodes
+
+### Changed (state shape — breaking for state-introspecting consumers)
+
+- **`WorkflowState.completed_nodes` and `WorkflowState.failed_nodes`
+  are now `set[str]`** (were `list[str]`), with `_merge_sets`
+  (set-union) replacing `operator.add` as their reducer.
+
+  Structural consequences:
+  - Duplicate accumulation is impossible. A goto-driven re-fire
+    (`Command(goto=X)` re-entering a node already in `completed_nodes`)
+    no longer produces `["X", "X"]`; the merged value stays `{"X"}`.
+  - O(1) `in` membership checks (vs. prior O(n) on lists). Affects
+    every guard in `compile/nodes.py`, `compile/dynamic.py`,
+    `compile/graph.py`, `compile/subgraph.py` — same code, faster.
+  - Iteration order is no longer deterministic. CLI summary lines
+    (`Nodes: <list>` / `Failed: <list>`) now sort the output for
+    stable display.
+
+  Resolves the structural cause of WISHLIST #32 (post-Phase-B audit).
+
+- **`make_initial_state` defaults**: `completed_nodes=set()`,
+  `failed_nodes=set()` (were `[]`).
+
+### Migration
+
+- Source code: 9 sites that emitted `{"completed_nodes": [node_id]}`
+  style list literals migrated to `{"completed_nodes": {node_id}}`
+  set literals. Inline retry loop in `compile/dynamic.py` uses
+  `update.setdefault("completed_nodes", set()).add(child_id)` instead
+  of `.append`.
+- Tests: ~30 assertions updated from `== ["p1"]` to `== {"p1"}`. The
+  resume regression test (`test_resume_fan_out.py`) lost its
+  `.count("a") == 2` assertion — duplicates can no longer exist in
+  state; the runs-counter side channel still pins the bug. The wave-
+  pattern test (`test_wave_pattern.py`) dropped its dispatcher-fired-
+  count assertion for the same reason; the `dispatcher::q_gamma`
+  presence assertion is now the load-bearing regression check.
+- JSONL event log: unchanged. Events fire per super-step, not per
+  state entry — `node_completed` events still emit per fire, so
+  consumers that care about exact fire counts can count log events.
+
+### Not addressed (deferred)
+
+- WISHLIST #31 (`--resume` discards checkpointer) remains open. The
+  set-union reducer masks the *visible symptom* of duplicate
+  accumulation on resume, but the resume logic still deletes the
+  thread and replays — body bodies still re-execute. The proper fix
+  requires picking one of three API shapes documented in WISHLIST
+  #26 (skip-completed-via-prior-run channel, `--resume-from <node>`,
+  or JSONL-driven skip).
+
 ## [Unreleased] — terminology cleanup: subphase → branch
 
 ### Changed (breaking — template vars)

@@ -26,7 +26,7 @@ def _state(**overrides) -> dict:
         "node_outputs": {},
         "node_structured_outputs": {},
         "evaluations": {},
-        "completed_nodes": [],
+        "completed_nodes": set(),
         "workdir": ".",
         "dry_run": False,
     }

@@ -81,7 +81,7 @@ class TestDecisionNodePass:
         cmd = await decide(_state_with_record(score=0.9))
         assert isinstance(cmd, Command)
         assert cmd.goto == "b"
-        assert cmd.update == {"completed_nodes": ["p1"]}
+        assert cmd.update == {"completed_nodes": {"p1"}}
 
     @pytest.mark.asyncio
     async def test_pass_multiple_targets_fans_out_via_list(self):
@@ -150,7 +150,7 @@ class TestDecisionNodeFail:
         )
         cmd = await decide(_state_with_record(score=0.3, retries=1))
         assert cmd.goto == END
-        assert cmd.update["failed_nodes"] == ["p1"]
+        assert cmd.update["failed_nodes"] == {"p1"}
         assert any(
             "Evaluation failed" in e["error"] for e in cmd.update["errors"]
         )
@@ -172,7 +172,7 @@ class TestDecisionNodeFail:
         )
         cmd = await decide(_state_with_record(score=0.3, retries=1))
         assert cmd.goto == "b"
-        assert cmd.update["completed_nodes"] == ["p1"]
+        assert cmd.update["completed_nodes"] == {"p1"}
         assert any(
             "non-blocking" in e["error"] for e in cmd.update["errors"]
         )
@@ -191,7 +191,7 @@ class TestDecisionNodeGuards:
             node, _config_with(node),
             exec_id="p1", pass_targets=["b"],
         )
-        state = make_initial_state(failed_nodes=["p1"])
+        state = make_initial_state(failed_nodes={"p1"})
         cmd = await decide(state)
         assert cmd.goto == END
 
@@ -204,7 +204,7 @@ class TestDecisionNodeGuards:
             node, _config_with(node),
             exec_id="p1", pass_targets=["b"],
         )
-        state = make_initial_state(completed_nodes=["p1"])
+        state = make_initial_state(completed_nodes={"p1"})
         cmd = await decide(state)
         assert cmd.goto == "b"
 
@@ -232,7 +232,7 @@ class TestDecisionNodeGuards:
         state = make_initial_state(dry_run=True)
         cmd = await decide(state)
         assert cmd.goto == "b"
-        assert cmd.update == {"completed_nodes": ["p1"]}
+        assert cmd.update == {"completed_nodes": {"p1"}}
 
 
 class TestDecisionNodeSubphaseResolver:
@@ -266,7 +266,7 @@ class TestDecisionNodeSubphaseResolver:
         }
         cmd = await decide(state)
         assert cmd.goto == "_final_parent_f0"
-        assert cmd.update == {"completed_nodes": ["parent::x"]}
+        assert cmd.update == {"completed_nodes": {"parent::x"}}
 
 
 class TestDecisionReadsLatestRecord:
@@ -304,4 +304,4 @@ class TestDecisionReadsLatestRecord:
         }
         cmd = await decide(state)
         assert cmd.goto == "b"
-        assert cmd.update == {"completed_nodes": ["p1"]}
+        assert cmd.update == {"completed_nodes": {"p1"}}

@@ -28,24 +28,24 @@ class TestMakeInitialState:
         }
         assert set(state.keys()) == expected_keys
         assert state["workflow_name"] == "Workflow"
-        assert state["completed_nodes"] == []
-        assert state["failed_nodes"] == []
+        assert state["completed_nodes"] == set()
+        assert state["failed_nodes"] == set()
         assert state["node_outputs"] == {}
         assert state["dry_run"] is False
 
     def test_mutable_default_isolation(self):
-        """Mutating a returned list must not affect subsequent calls.
+        """Mutating a returned set/list must not affect subsequent calls.
 
         Guards against shared mutable defaults — a real Python footgun
         that would silently corrupt LangGraph state across invocations.
         """
         first = make_initial_state()
         first["errors"].append({"node": "p1", "error": "boom"})
-        first["completed_nodes"].append("p1")
+        first["completed_nodes"].add("p1")
 
         second = make_initial_state()
         assert second["errors"] == []
-        assert second["completed_nodes"] == []
+        assert second["completed_nodes"] == set()
 
 
 class TestMergeEvaluations:
