@@ -235,20 +235,21 @@ class DispatchExecutor:
         rendered = render_template(applied, context)
         rendered = prepend_eval_preamble(rendered, context)
 
-        # Model resolution (explicit-None tests, not `or`, so authored
-        # zero/empty values win over the next-lower fallback):
-        #   PromptParams.model > Node.model > preset.model (when presets
-        #   declared) > Settings.default_model (legacy fallback).
-        params_model = getattr(params, "model", None)
-        if params_model is not None:
-            current_model = params_model
-        elif node.model is not None:
-            current_model = node.model
-        elif settings.presets:
+        # Model resolution. Two paths:
+        #   - Single-backend convenience (test fixtures + jokes/run.py):
+        #     no presets needed; pass a sensible default ("sonnet"). The
+        #     backend already knows its provider, so the model name is
+        #     just metadata threaded to send_prompt().
+        #   - Preset-driven (the CLI's normal path): resolved preset's
+        #     model. ``params.preset`` overrides the default preset.
+        if (
+            "_legacy" in self._prompt_executors
+            and len(self._prompt_executors) == 1
+        ):
+            current_model = "sonnet"
+        else:
             preset_name = resolve_preset_name(node, settings)
             current_model = settings.presets[preset_name].model
-        else:
-            current_model = settings.default_model
         params_timeout = getattr(params, "timeout", None)
         timeout = (
             params_timeout if params_timeout is not None

@@ -214,26 +214,6 @@ class TestOutputContract:
         assert contract.required_files == []
 
 
-class TestModelSelection:
-    def test_phase_model(self):
-        node = Node(
-            id="p1", name="P1", execute=Execute(url="t.md"), model="opus"
-        )
-        assert node.model == "opus"
-
-    def test_phase_model_default_none(self):
-        node = Node(id="p1", name="P1", execute=Execute(url="t.md"))
-        assert node.model is None
-
-    def test_settings_default_model(self):
-        settings = Settings(default_model="haiku")
-        assert settings.default_model == "haiku"
-
-    def test_settings_default_model_default_value(self):
-        settings = Settings()
-        assert settings.default_model == "sonnet"
-
-
 class TestSettingsMemoryGates:
     """Memory back-pressure: percent + absolute-bytes forms with
     suffix parsing for the bytes form."""
@@ -612,7 +592,10 @@ class TestFullExampleParse:
 
         assert config.name == "Absurd Academic Paper"
         assert len(config.nodes) > 0
-        assert config.settings.default_model == "sonnet"
+        # Migrated to presets; default preset's model is sonnet.
+        defaults = [p for p in config.settings.presets.values() if p.default]
+        assert len(defaults) == 1
+        assert defaults[0].model == "sonnet"
 
     def test_example_has_all_execution_types(self, kitchen_sink_workflow_path):
         """Kitchen-sink YAML exercises prompt, subgraph reference, and fan-out."""

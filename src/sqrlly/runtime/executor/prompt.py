@@ -9,27 +9,22 @@ from sqrlly.runtime.result import ExecutionResult, OverloadError, PromptBackend
 from sqrlly.schema.models import Node, Settings
 
 
-def resolve_model(node: Node, settings: Settings) -> str:
+def resolve_model(node: Node, settings: Settings) -> str | None:
     """Pick the declared model for a node — used by foreman for per-model
     semaphore selection.
 
-    Resolution: Node.model > preset.model (from params.preset or the
-    default preset, when ``settings.presets`` is non-empty) >
-    Settings.default_model (legacy path).
-
-    ``PromptParams.model`` is a runtime-only override (handled in
-    ``dispatch._dispatch_prompt``) and is intentionally NOT visible
-    here — foreman reserves the slot for the *declared* model, not
-    the per-call override.
+    Returns the model name from the resolved preset (``params.preset`` >
+    default preset). Returns ``None`` when ``settings.presets`` is
+    empty — the caller (foreman) treats that as "no per-model
+    semaphore." Pure-script workflows don't declare presets and
+    legitimately have no model.
     """
-    if node.model is not None:
-        return node.model
-    if settings.presets:
-        # Late import to avoid cycle: prompt.py → preset.py → models.py.
-        from sqrlly.runtime.executor.preset import resolve_preset_name
-        preset_name = resolve_preset_name(node, settings)
-        return settings.presets[preset_name].model
-    return settings.default_model
+    if not settings.presets:
+        return None
+    # Late import to avoid cycle: prompt.py → preset.py → models.py.
+    from sqrlly.runtime.executor.preset import resolve_preset_name
+    preset_name = resolve_preset_name(node, settings)
+    return settings.presets[preset_name].model
 
 
 def downgrade_model(current: str, chain: list[str]) -> str | None:

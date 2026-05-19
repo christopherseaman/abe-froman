@@ -125,18 +125,25 @@ class TestPrependEvalPreamble:
 
 
 class TestResolveModel:
-    def test_node_model_takes_priority(self):
-        node = Node(
-            id="p1", name="P1", model="opus",
-            execute=Execute(url="t.md"),
-        )
-        settings = Settings(default_model="sonnet")
-        assert resolve_model(node, settings) == "opus"
+    def _settings_with_default(self, model: str) -> Settings:
+        from sqrlly.schema.models import Preset
+        return Settings(presets={
+            "default": Preset(
+                transport="api", provider="anthropic",
+                model=model, default=True,
+            ),
+        })
 
-    def test_falls_back_to_settings_default(self):
+    def test_default_preset_model(self):
+        """No params.preset → default preset's model wins."""
         node = Node(id="p1", name="P1", execute=Execute(url="t.md"))
-        settings = Settings(default_model="sonnet")
-        assert resolve_model(node, settings) == "sonnet"
+        assert resolve_model(node, self._settings_with_default("sonnet")) == "sonnet"
+
+    def test_no_presets_returns_none(self):
+        """Pure-script workflows (no presets) → resolve_model returns None
+        so foreman skips per-model semaphore selection."""
+        node = Node(id="p1", name="P1", execute=Execute(url="t.md"))
+        assert resolve_model(node, Settings()) is None
 
 
 # ---------------------------------------------------------------------------
@@ -289,7 +296,7 @@ class TestExecuteRendered:
         backend = MemoryBackend()
         executor = PromptExecutor(
             backend=backend,
-            settings=Settings(default_model="sonnet"),
+            settings=Settings(),
             workdir=str(tmp_path),
         )
         result = await executor.execute_rendered(
@@ -306,7 +313,7 @@ class TestExecuteRendered:
         backend = MemoryBackend()
         executor = PromptExecutor(
             backend=backend,
-            settings=Settings(default_model="sonnet"),
+            settings=Settings(),
             workdir=str(tmp_path),
         )
         await executor.execute_rendered(
@@ -520,7 +527,7 @@ class TestDispatchPromptFlow:
         executor = DispatchExecutor(
             workdir=str(tmp_path),
             prompt_backend=backend,
-            settings=Settings(default_model="sonnet"),
+            settings=Settings(),
         )
         node = Node(
             id="p1", name="P1",
@@ -540,39 +547,37 @@ class TestDispatchPromptFlow:
         assert timeout is None
 
     @pytest.mark.asyncio
-    async def test_node_model_overrides_settings_default(self, tmp_path):
-        prompt = tmp_path / "t.md"
-        prompt.write_text("prompt")
-        backend = MemoryBackend()
-        executor = DispatchExecutor(
-            workdir=str(tmp_path),
-            prompt_backend=backend,
-            settings=Settings(default_model="sonnet"),
-        )
-        node = Node(
-            id="p1", name="P1", model="opus",
-            execute=Execute(url=f"file://{prompt}"),
-        )
-        await executor.execute(node, {}, workdir=str(tmp_path))
-        assert backend.calls[0][1] == "opus"
+    async def test_preset_drives_model_per_node(self, tmp_path):
+        """params.preset selects a non-default preset; the resolved
+        preset's model is what the backend sees."""
+        from sqrlly.schema.models import Preset
 
-    @pytest.mark.asyncio
-    async def test_params_model_overrides_node_model(self, tmp_path):
-        """PromptParams.model is the highest-priority model selector."""
         prompt = tmp_path / "t.md"
         prompt.write_text("prompt")
-        backend = MemoryBackend()
+        backend_smart = MemoryBackend()
+        backend_cheap = MemoryBackend()
+        settings = Settings(presets={
+            "cheap": Preset(
+                transport="api", provider="anthropic", model="haiku",
+            ),
+            "smart": Preset(
+                transport="api", provider="anthropic",
+                model="opus", default=True,
+            ),
+        })
         executor = DispatchExecutor(
             workdir=str(tmp_path),
-            prompt_backend=backend,
-            settings=Settings(default_model="sonnet"),
+            prompt_backends={"cheap": backend_cheap, "smart": backend_smart},
+            settings=settings,
         )
+        # Node referencing 'cheap' → backend_cheap is called with haiku.
         node = Node(
-            id="p1", name="P1", model="opus",
-            execute=Execute(url=f"file://{prompt}", params={"model": "haiku"}),
+            id="p1", name="P1",
+            execute=Execute(url=f"file://{prompt}", params={"preset": "cheap"}),
         )
         await executor.execute(node, {}, workdir=str(tmp_path))
-        assert backend.calls[0][1] == "haiku"
+        assert backend_cheap.calls[0][1] == "haiku"
+        assert backend_smart.calls == []
 
     @pytest.mark.asyncio
     async def test_node_timeout_threaded_to_backend(self, tmp_path):

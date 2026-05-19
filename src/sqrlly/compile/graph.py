@@ -475,8 +475,8 @@ def build_workflow_graph(
             if final_node.evaluation:
                 gated_final_ids.add(fid)
                 synthetic = Node(
-                    id=fid, name=final_node.name, evaluation=final_node.evaluation,
-                    model=node.model,
+                    id=fid, name=final_node.name,
+                    evaluation=final_node.evaluation,
                 )
                 final_synthetic_nodes[fid] = synthetic
                 _register_evaluation_node(

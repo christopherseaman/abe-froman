@@ -319,16 +319,6 @@ class TestInlineRouteShape:
         assert (START, "tgt") not in edges
 
 
-class TestModelConfig:
-    def test_model_passthrough_in_config(self):
-        config = make_config(
-            [{"id": "p1", "name": "P1", "execute": {"url": "t.md"}, "model": "opus"}],
-            default_model="haiku",
-        )
-        assert config.nodes[0].model == "opus"
-        assert config.settings.default_model == "haiku"
-
-
 class TestEvaluationNodeShape:
     def test_ungated_phase_no_eval_node(self):
         config = make_config(

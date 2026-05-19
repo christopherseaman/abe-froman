@@ -57,5 +57,4 @@ settings:
   # Concurrency cap of 6 lets all six subgraphs start in the same
   # super-step. Drop this if rate limits matter.
   max_parallel_jobs: 6
-  default_model: "sonnet"
   default_timeout: 600.0

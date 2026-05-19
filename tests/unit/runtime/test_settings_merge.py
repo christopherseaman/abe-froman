@@ -18,24 +18,24 @@ from sqrlly.schema.models import Settings
 
 
 class TestSingleFieldOverride:
-    def test_child_default_model_wins(self):
-        parent = Settings(default_model="sonnet")
-        child = Settings(default_model="opus")
+    def test_child_max_retries_wins(self):
+        parent = Settings(max_retries=3)
+        child = Settings(max_retries=5)
         merged = merge_settings(parent, child)
-        assert merged.default_model == "opus"
-
-    def test_unset_child_inherits_parent(self):
-        parent = Settings(default_model="sonnet", max_retries=5)
-        child = Settings()  # nothing authored
-        merged = merge_settings(parent, child)
-        assert merged.default_model == "sonnet"
         assert merged.max_retries == 5
 
-    def test_partial_child_keeps_parent_for_other_fields(self):
-        parent = Settings(default_model="sonnet", default_timeout=300.0)
-        child = Settings(default_model="haiku")
+    def test_unset_child_inherits_parent(self):
+        parent = Settings(max_retries=5, default_timeout=60.0)
+        child = Settings()  # nothing authored
         merged = merge_settings(parent, child)
-        assert merged.default_model == "haiku"
+        assert merged.max_retries == 5
+        assert merged.default_timeout == 60.0
+
+    def test_partial_child_keeps_parent_for_other_fields(self):
+        parent = Settings(max_retries=5, default_timeout=300.0)
+        child = Settings(max_retries=10)
+        merged = merge_settings(parent, child)
+        assert merged.max_retries == 10
         assert merged.default_timeout == 300.0
 
 
@@ -49,12 +49,6 @@ class TestExplicitDefaultStillWins:
         merged = merge_settings(parent, child)
         assert merged.max_retries == 3
 
-    def test_child_explicitly_overrides_executor(self):
-        parent = Settings(executor="acp")
-        child = Settings(executor="anthropic")
-        merged = merge_settings(parent, child)
-        assert merged.executor == "anthropic"
-
 
 class TestComposesNested:
     """Real workflows have parent → subgraph → sub-subgraph chains.
@@ -62,17 +56,17 @@ class TestComposesNested:
     set wins per-field."""
 
     def test_three_level_inheritance(self):
-        top = Settings(default_model="opus", max_retries=2, default_timeout=60.0)
-        mid = Settings(default_model="sonnet")
+        top = Settings(max_retries=2, default_timeout=60.0, output_directory="top")
+        mid = Settings(output_directory="mid")
         bot = Settings(max_retries=10)
 
         # Each layer merges with the result of the previous merge.
         l1 = merge_settings(top, mid)
         l2 = merge_settings(l1, bot)
 
-        assert l2.default_model == "sonnet"   # mid's win held through l2
-        assert l2.max_retries == 10           # bot wins
-        assert l2.default_timeout == 60.0     # top's flowed through
+        assert l2.output_directory == "mid"  # mid's win held through l2
+        assert l2.max_retries == 10          # bot wins
+        assert l2.default_timeout == 60.0    # top's flowed through
 
 
 class TestMultiFieldCarriage:
@@ -107,16 +101,16 @@ class TestRoundTripConstraint:
     refactors don't accidentally use a round-trip path."""
 
     def test_fields_set_preserved_through_kwargs(self):
-        s = Settings(default_model="opus")
-        assert "default_model" in s.model_fields_set
+        s = Settings(max_retries=7)
+        assert "max_retries" in s.model_fields_set
         # Reconstruction via kwargs preserves the set.
         s2 = Settings(**s.model_dump(exclude_unset=True))
-        assert "default_model" in s2.model_fields_set
+        assert "max_retries" in s2.model_fields_set
 
     def test_fields_set_lost_after_full_dump_round_trip(self):
         """Documents the gotcha — full dump round-trip loses authorship.
         merge_settings must NOT be passed a Settings created this way."""
-        s = Settings(default_model="opus")
+        s = Settings(max_retries=7)
         s_dumped = Settings(**s.model_dump())
         # All fields show up as "set" because we passed them all explicitly.
         # That's precisely the wrong shape for merge_settings — every

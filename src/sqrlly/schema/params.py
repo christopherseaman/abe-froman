@@ -26,7 +26,6 @@ class _StrictParams(BaseModel):
 
 class PromptParams(_StrictParams):
     """Params for prompt mode (`*.md`, `*.txt`, `*.prompt`)."""
-    model: str | None = None
     preset: str | None = None
     agent: str | None = None
     timeout: float | None = None

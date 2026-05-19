@@ -23,14 +23,14 @@ from sqrlly.schema.params import (
 
 class TestPromptParams:
     def test_parses_known_keys(self):
-        p = PromptParams(model="opus", agent="claude", timeout=30.0)
-        assert p.model == "opus"
+        p = PromptParams(preset="smart", agent="claude", timeout=30.0)
+        assert p.preset == "smart"
         assert p.agent == "claude"
         assert p.timeout == 30.0
 
     def test_defaults_to_none(self):
         p = PromptParams()
-        assert p.model is None
+        assert p.preset is None
         assert p.agent is None
         assert p.timeout is None
 
@@ -40,7 +40,14 @@ class TestPromptParams:
 
     def test_rejects_typo(self):
         with pytest.raises(ValidationError):
-            PromptParams(model_name="opus")  # should be `model`
+            PromptParams(preset_name="smart")  # should be `preset`
+
+    def test_rejects_removed_model_key(self):
+        """`model:` on PromptParams was removed in the preset rework;
+        the migrator rewrites it as `preset:` references. Test pins
+        the rejection so the key doesn't sneak back."""
+        with pytest.raises(ValidationError):
+            PromptParams(model="opus")
 
 
 class TestSubgraphParams:
@@ -108,10 +115,10 @@ class TestParamsForURL:
 
 
 class TestCoerceParams:
-    def test_coerce_prompt_url_with_model(self):
-        p = coerce_params("file:///x.md", {"model": "opus"})
+    def test_coerce_prompt_url_with_preset(self):
+        p = coerce_params("file:///x.md", {"preset": "smart"})
         assert isinstance(p, PromptParams)
-        assert p.model == "opus"
+        assert p.preset == "smart"
 
     def test_coerce_subgraph_url_with_inputs(self):
         p = coerce_params("file:///sub.yaml", {"inputs": {"x": "y"}})

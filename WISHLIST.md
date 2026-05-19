@@ -432,34 +432,7 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
 
 - [x] **Default executor should be real, not stub** — _landed post-Stage-5b. `auto_detect_executor()` in `factory.py` walks `ANTHROPIC_API_KEY` (placeholder) → DeepSeek key (env or `~/.pi/agent/auth.json`) → `npx` on PATH → `stub` with a `UserWarning` naming concrete remediation. `Settings.executor: str | None = None` (was `"stub"`); the CLI does `executor or settings.executor or auto_detect_executor()`. Explicit `-e stub` or `executor: stub` in YAML never triggers the fallback warning — stub stays usable for offline testing, just no longer the default. Manual artifact gate: `sqrlly run examples/jokes/workflow.yaml` (no `-e` flag) now auto-picks DeepSeek (since the key is on disk) and produces real output (not `[prompt-stub]`)._
 
-- [ ] **Three orthogonal axes for LLM execution, configurable in YAML**
-    - Depends on scope-aware settings resolution above — without it, a subgraph's `settings.llm:` block would silently lose to the parent's, which is exactly the footgun the resolution-order fix exists to close.
-    - Today's `settings.executor: "stub" | "acp"` collapses three independent decisions into one enum. Splitting them lets workflows declare their interaction model at authoring time and lets per-node overrides exist.
-    - **Axis 1 — Interaction mode**: `agent` (multi-turn, tool-using session like Claude Code via ACP) vs `prompt` (single-shot completion via API). Same `{{var}}` template; different runtime semantics — agents can read/write files, run tools, take multiple turns; prompts return one response and exit.
-    - **Axis 2 — Protocol/transport**: `acp` (subprocess + stdio JSON-RPC), `api` (HTTP via SDK), `stub` (no network). Today this is conflated with axis 1 because the only `agent` option ships over ACP and the only `api` option is hypothetical.
-    - **Axis 3 — Provider/model**: `anthropic+sonnet`, `anthropic+opus`, `openai+gpt-4`, `local+llama-3.3` via Ollama, etc. Today `settings.default_model` only picks Claude tiers and is implicitly tied to whatever `executor` decided.
-    - Schema sketch (workflow-level defaults + per-node override):
-      ```yaml
-      settings:
-        llm:
-          mode: agent            # default for prompt nodes
-          protocol: acp          # default transport
-          provider: anthropic
-          model: sonnet
-      nodes:
-        - id: research
-          execute:
-            url: prompts/research.md
-            params:
-              # Per-node override: this one wants the cheap fast prompt-and-response,
-              # not a full agent session
-              llm:
-                mode: prompt
-                provider: anthropic
-                model: haiku
-      ```
-    - Mode selection drives backend wiring: `mode=agent + protocol=acp` → ACPBackend; `mode=prompt + protocol=api + provider=anthropic` → AnthropicBackend; `mode=prompt + protocol=api + provider=openai` → OpenAIBackend.
-    - Per-node `params.llm` lives inside `PromptParams` (already extra="forbid" so typos surface loudly).
+- [x] **Named presets (was: three orthogonal axes for LLM execution)** — _delivered, 2026-05-19, three commits: ba85287 (schema foundation), 8f1a3d0 (runtime wiring), this rework's final commit (cutover)._ Honest re-scope: the matrix is mostly diagonal (acp implies agent; api implies prompt), so the "three axes" framing was retired in favor of **two axes** (transport + provider/model) bundled into named ``settings.presets``. Nodes reference one via ``params.preset:``; the preset marked ``default: true`` applies otherwise; ``--preset/-p`` CLI flag overrides. Hard cutover — ``Settings.executor``, ``Settings.default_model``, ``Node.model``, ``PromptParams.model``, ``--executor/--model`` CLI flags, and ``sqrlly migrate`` subcommand all removed. The ``migrate.py`` module remains as an internal utility; one-time migration walked all ``examples/`` workflows automatically. 914 tests passing. Subgraph preset inheritance via the existing scope-aware ``model_fields_set`` path (subgraph without ``presets:`` inherits parent's; subgraph with ``presets:`` replaces; key-wise additive merge deferred).
 
 ### Backends to add (lower priority once axes above land)
 

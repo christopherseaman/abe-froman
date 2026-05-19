@@ -54,7 +54,7 @@ class TestScopeCapture:
                 {"id": "p", "name": "Parent",
                  "execute": {"url": _ECHO, "params": {"args": ["-n", "x"]}}},
             ],
-            "settings": {"default_model": "opus", "max_retries": 7},
+            "settings": {"output_directory": "parent-out", "max_retries": 7},
         })
         config = Graph(**yaml.safe_load((tmp_path / "wf.yaml").read_text()))
         executor = MockExecutor()
@@ -66,19 +66,19 @@ class TestScopeCapture:
 
         seen = executor.received_settings["p"]
         assert seen is not None
-        assert seen.default_model == "opus"
+        assert seen.output_directory == "parent-out"
         assert seen.max_retries == 7
 
     async def test_subgraph_node_sees_merged_settings(self, tmp_path):
-        """Parent default_model=sonnet; subgraph default_model=haiku.
-        Parent node sees sonnet; subgraph node sees haiku."""
+        """Parent output_directory=parent-out; subgraph output_directory=sub-out.
+        Parent node sees parent's; subgraph node sees subgraph's."""
         _yaml(tmp_path / "sub.yaml", {
             "name": "sub", "version": "1.0",
             "nodes": [
                 {"id": "child", "name": "Child",
                  "execute": {"url": _ECHO, "params": {"args": ["-n", "y"]}}},
             ],
-            "settings": {"default_model": "haiku"},
+            "settings": {"output_directory": "sub-out"},
         })
         _yaml(tmp_path / "wf.yaml", {
             "name": "wf", "version": "1.0",
@@ -89,7 +89,7 @@ class TestScopeCapture:
                  "depends_on": ["top"],
                  "execute": {"url": "sub.yaml"}},
             ],
-            "settings": {"default_model": "sonnet", "max_retries": 4},
+            "settings": {"output_directory": "parent-out", "max_retries": 4},
         })
         config = Graph(**yaml.safe_load((tmp_path / "wf.yaml").read_text()))
         executor = MockExecutor()
@@ -102,8 +102,8 @@ class TestScopeCapture:
         top_seen = executor.received_settings["top"]
         child_seen = executor.received_settings["child"]
         assert top_seen is not None and child_seen is not None
-        assert top_seen.default_model == "sonnet"   # parent scope
-        assert child_seen.default_model == "haiku"  # subgraph scope (explicit win)
+        assert top_seen.output_directory == "parent-out"   # parent scope
+        assert child_seen.output_directory == "sub-out"    # subgraph wins
         # Subgraph inherited parent's max_retries (didn't author it).
         assert child_seen.max_retries == 4
 
@@ -123,7 +123,7 @@ class TestScopeCapture:
                 {"id": "sub_ref", "name": "SubRef",
                  "execute": {"url": "sub.yaml"}},
             ],
-            "settings": {"default_model": "opus", "preamble_file": "x.md"},
+            "settings": {"output_directory": "parent-out", "preamble_file": "x.md"},
         })
         config = Graph(**yaml.safe_load((tmp_path / "wf.yaml").read_text()))
         executor = MockExecutor()
@@ -134,7 +134,7 @@ class TestScopeCapture:
         ))
 
         child_seen = executor.received_settings["child"]
-        assert child_seen.default_model == "opus"
+        assert child_seen.output_directory == "parent-out"
         assert child_seen.preamble_file == "x.md"
 
     async def test_three_level_inheritance(self, tmp_path):
@@ -149,14 +149,14 @@ class TestScopeCapture:
             "name": "mid", "version": "1.0",
             "nodes": [{"id": "ref_bot", "name": "Mid",
                        "execute": {"url": "bot.yaml"}}],
-            "settings": {"default_model": "sonnet"},
+            "settings": {"output_directory": "mid-out"},
         })
         _yaml(tmp_path / "wf.yaml", {
             "name": "wf", "version": "1.0",
             "nodes": [{"id": "ref_mid", "name": "Top",
                        "execute": {"url": "mid.yaml"}}],
             "settings": {
-                "default_model": "opus", "max_retries": 2,
+                "output_directory": "top-out", "max_retries": 2,
                 "default_timeout": 60.0,
             },
         })
@@ -169,9 +169,9 @@ class TestScopeCapture:
         ))
 
         leaf = executor.received_settings["leaf"]
-        # top→mid won default_model=sonnet, mid→bot kept it; bot won max_retries=9.
+        # top→mid won output_directory=mid-out, mid→bot kept it; bot won max_retries=9.
         # default_timeout flowed top→mid→bot untouched.
-        assert leaf.default_model == "sonnet"
+        assert leaf.output_directory == "mid-out"
         assert leaf.max_retries == 9
         assert leaf.default_timeout == 60.0
 

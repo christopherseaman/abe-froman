@@ -79,7 +79,7 @@ class ForemanExecutor:
         # accounted under the subgraph's tier, not the parent's.
         s = settings_override or self._settings
         model = resolve_model(node, s)
-        model_sem = self._model_sems.get(model)
+        model_sem = self._model_sems.get(model) if model is not None else None
 
         # Memory back-pressure runs OUTSIDE the semaphores so that gated
         # acquisitions don't sit holding a slot while waiting for memory

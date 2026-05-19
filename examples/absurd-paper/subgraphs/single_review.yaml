@@ -27,3 +27,10 @@ nodes:
     depends_on: [draft]
     execute:
       url: "examples/absurd-paper/prompts/critique_review.md"
+settings:
+  presets:
+    default:
+      transport: api
+      provider: anthropic
+      model: sonnet
+      default: true

@@ -70,8 +70,4 @@ nodes:
       params:
         args: ["queued: {{triage}}"]
 
-settings:
-  default_model: "sonnet"
-  # No `executor:` here — script nodes (echo + .py) don't need a
-  # backend. Run via any executor; running as a subgraph from
-  # run_all_examples.yaml inherits the parent's `-e <backend>` flag.
+settings: {}

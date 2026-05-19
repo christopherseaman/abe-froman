@@ -3,6 +3,99 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased] — named-preset rework (executor: → settings.presets:)
+
+Three-commit migration replacing the collapsed ``executor:`` enum
+with named presets. Authors declare workflow-level bundles of
+``(transport, provider, model[, base_url])`` and nodes opt into a
+specific one via ``params.preset:``; otherwise the preset marked
+``default: true`` applies. CLI ``--preset/-p`` forces a specific
+preset at run time.
+
+### Added
+
+- **``Settings.presets: dict[str, Preset]``** — workflow-level named
+  execution bundles. Exactly one preset must be marked
+  ``default: true`` when the dict is non-empty (schema validator).
+- **``Preset``** Pydantic model (``transport`` ∈ {api, acp};
+  ``provider`` ∈ {anthropic, openai, deepseek, custom};
+  ``model``; ``base_url`` for ``api+custom``; ``default``).
+  Combination validators reject impossible shapes
+  (``transport=acp`` requires ``provider=anthropic``; ``base_url``
+  only meaningful for ``api+custom``).
+- **``PromptParams.preset: str | None``** — per-node preset
+  reference. The migrator rewrites legacy ``Node.model:`` and
+  ``params.model:`` into auto-named presets + this reference.
+- **``runtime/executor/preset.py``** — ``resolve_preset_name``,
+  ``auto_detect_default_preset``, ``build_preset_registry``.
+- **``factory.create_backend_from_preset(preset)``** — instantiates
+  the right ``PromptBackend`` from a ``Preset`` instance.
+- **``DispatchExecutor.__init__(prompt_backends=...)``** — new
+  preset-name → backend dict argument (mutually exclusive with the
+  legacy single-backend ``prompt_backend=``). Resolves per-node via
+  ``_resolve_prompt_executor``.
+- **CLI ``--preset/-p``** — forces a specific preset as the default
+  for this run. Errors if the named preset isn't declared.
+
+### Removed
+
+- **``Settings.executor``** and **``Settings.default_model``** —
+  replaced by ``Settings.presets``.
+- **``Node.model``** — per-node model override now goes through
+  ``params.preset`` referencing a preset.
+- **``PromptParams.model``** — same.
+- **``--executor/-e``** and **``--model/-m``** CLI flags on
+  ``sqrlly run`` — replaced by ``--preset/-p``.
+- **``sqrlly migrate`` CLI subcommand** — the ``migrate.py`` module
+  remains as an internal utility (used during this rework) but is
+  no longer exposed as a user-facing command.
+
+### Changed
+
+- ``runtime/executor/prompt.resolve_model`` — now consults the
+  resolved preset's model. Returns ``None`` when ``settings.presets``
+  is empty so the foreman's per-model semaphore selection cleanly
+  skips for pure-script workflows.
+- ``cli/main._execute_workflow`` — branches on
+  ``settings.presets`` (now always populated after
+  ``build_preset_registry`` synthesizes an auto-detect default when
+  YAML didn't declare any).
+- Subgraph settings inheritance: ``model_fields_set`` already
+  handles ``presets:`` correctly. Subgraph without ``presets:`` →
+  inherits parent's; subgraph with ``presets:`` → wholly replaces
+  (key-wise additive merge is a deferred refinement).
+- All ``examples/`` workflows migrated to the new shape via the
+  internal migrator. Author-visible diff: ``executor: acp +
+  default_model: sonnet`` → ``presets: {default: {transport: acp,
+  provider: anthropic, model: sonnet, default: true}}``.
+
+### Migration
+
+- One-time migration runs internally:
+  ```python
+  from sqrlly.cli.migrate import migrate_file
+  migrate_file(Path("workflow.yaml"), in_place=True)
+  ```
+- The migrator detects prompt-mode dispatch in nodes and
+  synthesizes ``settings.presets`` with the legacy executor
+  mapped to ``(transport, provider)``. For each unique model used
+  via ``default_model`` / ``Node.model`` / ``params.model``, a
+  preset is created (``default`` for ``default_model``;
+  ``_auto_<sanitized>`` for others). Node-level overrides are
+  rewritten as ``params.preset:`` references.
+- Pure-script workflows (no prompt-mode nodes) just have their
+  vestigial ``default_model``/``executor`` keys dropped — no
+  presets are added (auto-detect at runtime is enough).
+
+### Testing
+
+- 914 tests passing, 2 skipped. New tests in
+  ``tests/unit/runtime/test_preset.py`` (20) and
+  ``tests/unit/runtime/test_dispatch_presets.py`` (14).
+- The legacy ``sqrlly migrate`` subcommand tests in
+  ``test_migrate.py`` were dropped; the underlying ``migrate.py``
+  module tests stay.
+
 ## [Unreleased] — set-union reducer for completed_nodes / failed_nodes
 
 ### Changed (state shape — breaking for state-introspecting consumers)

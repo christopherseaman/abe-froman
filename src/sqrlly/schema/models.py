@@ -290,18 +290,6 @@ class Preset(BaseModel):
 class Settings(BaseModel):
     output_directory: str = "output"
     max_retries: int = 3
-    default_model: str = "sonnet"
-    # `None` triggers auto-detect at CLI dispatch (Anthropic key →
-    # DeepSeek key → ACP via npx; raises if none available). Explicit
-    # choices: "acp" / "anthropic" / "deepseek" / "openai" (real
-    # OpenAI) / "custom" (any OpenAI-compatible endpoint via
-    # CUSTOM_API_KEY + CUSTOM_API_BASE_URL — OpenRouter, Ollama,
-    # LM Studio, LiteLLM, Azure OpenAI, vLLM, ...). The CLI
-    # `--executor` flag overrides this field. Typo'd values fail at
-    # `validate` time rather than late at `run`.
-    executor: Literal[
-        "acp", "anthropic", "custom", "deepseek", "openai",
-    ] | None = None
     default_timeout: float | None = None
     preamble_file: str | None = None
     retry_backoff: list[float] = []
@@ -380,7 +368,6 @@ class Node(BaseModel):
     id: str
     name: str
     description: str | None = None
-    model: str | None = None
     execute: Execute | None = None
     depends_on: list[str] = []
     evaluation: Evaluation | None = None

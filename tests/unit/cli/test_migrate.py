@@ -44,9 +44,16 @@ class TestPhasesRename:
         assert data["nodes"][0]["id"] == "a"
 
     def test_post_5b_yaml_idempotent(self):
-        """Stage-5b shape (execute.url) is the new fixed-point."""
+        """Post-cutover shape (execute.url + settings.presets) is the new fixed-point."""
         before = (
             "name: T\nversion: '1.0'\n"
+            "settings:\n"
+            "  presets:\n"
+            "    default:\n"
+            "      transport: api\n"
+            "      provider: anthropic\n"
+            "      model: sonnet\n"
+            "      default: true\n"
             "nodes:\n"
             "  - id: a\n    name: A\n"
             "    execute:\n      url: t.md\n"
@@ -203,9 +210,16 @@ class TestPreservation:
         assert "*shared" in after
 
     def test_idempotent_on_post_cutover_yaml(self):
-        """Already-migrated Stage-5b YAML migrates to itself (no changes)."""
+        """Already-migrated post-cutover YAML migrates to itself (no changes)."""
         before = (
             "name: T\nversion: '1.0'\n"
+            "settings:\n"
+            "  presets:\n"
+            "    default:\n"
+            "      transport: api\n"
+            "      provider: anthropic\n"
+            "      model: sonnet\n"
+            "      default: true\n"
             "nodes:\n"
             "  - id: a\n    name: A\n"
             "    execute:\n      url: t.md\n"
@@ -375,12 +389,19 @@ class TestStage5bTransforms:
         assert template["execute"]["url"] == "rev.md"
 
     def test_idempotent_on_stage5c_yaml(self):
-        """Stage-5c shape (inline ``route:``) is the new fixed point."""
+        """Post-cutover shape (inline ``route:`` + presets) is the new fixed point."""
         before = (
             "name: T\nversion: '1.0'\n"
+            "settings:\n"
+            "  presets:\n"
+            "    default:\n"
+            "      transport: api\n"
+            "      provider: anthropic\n"
+            "      model: sonnet\n"
+            "      default: true\n"
             "nodes:\n"
             "  - id: a\n    name: A\n"
-            "    execute:\n      url: t.md\n      params:\n        model: opus\n"
+            "    execute:\n      url: t.md\n      params:\n        preset: default\n"
             "  - id: r\n    name: R\n    depends_on: [a]\n"
             "    route:\n"
             "      cases:\n        - when: 'True'\n          goto: a\n"
@@ -417,6 +438,13 @@ class TestStage5cInlineRoute:
     def test_inline_route_yaml_idempotent(self):
         before = (
             "name: T\nversion: '1.0'\n"
+            "settings:\n"
+            "  presets:\n"
+            "    default:\n"
+            "      transport: api\n"
+            "      provider: anthropic\n"
+            "      model: sonnet\n"
+            "      default: true\n"
             "nodes:\n"
             "  - id: a\n    name: A\n    execute:\n      url: t.md\n"
             "  - id: r\n    name: R\n    depends_on: [a]\n"
@@ -480,57 +508,6 @@ class TestRoundTripInRepoExamples:
 # ---------------------------------------------------------------------------
 
 
-class TestMigrateCLI:
-    def test_dry_run_does_not_modify_file(self, tmp_path):
-        f = tmp_path / "old.yaml"
-        f.write_text(
-            "name: T\nversion: '1.0'\n"
-            "phases:\n"
-            "  - id: a\n    name: A\n    prompt_file: t.md\n"
-        )
-        original = f.read_text()
-        runner = CliRunner()
-        result = runner.invoke(cli, ["migrate", str(f), "--dry-run"])
-        assert result.exit_code == 0
-        assert f.read_text() == original  # unchanged on disk
-
-    def test_in_place_writes_file(self, tmp_path):
-        f = tmp_path / "old.yaml"
-        f.write_text(
-            "name: T\nversion: '1.0'\n"
-            "phases:\n"
-            "  - id: a\n    name: A\n    prompt_file: t.md\n"
-        )
-        runner = CliRunner()
-        result = runner.invoke(cli, ["migrate", str(f), "--in-place"])
-        assert result.exit_code == 0
-        assert "nodes:" in f.read_text()
-        assert "phases:" not in f.read_text()
-
-    def test_default_prints_to_stdout(self, tmp_path):
-        f = tmp_path / "old.yaml"
-        f.write_text(
-            "name: T\nversion: '1.0'\n"
-            "phases:\n"
-            "  - id: a\n    name: A\n    prompt_file: t.md\n"
-        )
-        runner = CliRunner()
-        result = runner.invoke(cli, ["migrate", str(f)])
-        assert result.exit_code == 0
-        assert "nodes:" in result.output
-        # File on disk unchanged when --in-place not set
-        assert "phases:" in f.read_text()
-
-    def test_no_changes_message(self, tmp_path):
-        f = tmp_path / "new.yaml"
-        f.write_text(
-            "name: T\nversion: '1.0'\n"
-            "nodes:\n"
-            "  - id: a\n    name: A\n"
-            "    execute:\n      url: t.md\n"
-        )
-        runner = CliRunner()
-        result = runner.invoke(cli, ["migrate", str(f)])
-        assert result.exit_code == 0
-        # Status message goes to stderr; stdout has no rewritten YAML
-        assert "No changes needed" in result.output or "No changes needed" in (result.stderr or "")
+# TestMigrateCLI removed in the preset rework — the `sqrlly migrate`
+# subcommand was dropped from the CLI. The migrate.py module remains
+# as an internal utility (see migrate_file/migrate_yaml above).

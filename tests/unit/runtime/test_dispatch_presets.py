@@ -19,9 +19,9 @@ from sqrlly.runtime.executor.prompt import resolve_model
 from sqrlly.schema.models import Execute, Node, Preset, Settings
 
 
-def _node(id_="n1", model=None, params=None):
+def _node(id_="n1", params=None):
     return Node(
-        id=id_, name=id_, model=model,
+        id=id_, name=id_,
         execute=Execute(url="prompt.md", params=params or {}),
     )
 
@@ -101,35 +101,22 @@ class TestResolvePromptExecutor:
 
 
 class TestResolveModel:
-    def test_legacy_default_model(self):
-        """No presets, no node.model → settings.default_model."""
-        node = _node()
-        settings = Settings(default_model="opus")
-        assert resolve_model(node, settings) == "opus"
+    def test_no_presets_returns_none(self):
+        """Pure-script workflow has no presets → resolve_model returns None
+        so foreman skips per-model semaphore selection."""
+        assert resolve_model(_node(), Settings()) is None
 
-    def test_legacy_node_override(self):
-        """No presets, node.model set → node.model wins."""
-        node = _node(model="haiku")
-        settings = Settings(default_model="opus")
-        assert resolve_model(node, settings) == "haiku"
-
-    def test_preset_path_default_preset(self):
+    def test_default_preset_model(self):
         """Presets declared, node references nothing → default preset's model."""
         node = _node()
         settings = _settings_with_presets()  # default=smart, model=opus
         assert resolve_model(node, settings) == "opus"
 
-    def test_preset_path_params_preset(self):
+    def test_params_preset_selects_model(self):
         """params.preset selects a non-default preset."""
         node = _node(params={"preset": "cheap"})
         settings = _settings_with_presets()
         assert resolve_model(node, settings) == "haiku"
-
-    def test_node_model_overrides_preset(self):
-        """Node.model overrides preset.model — for foreman semaphore."""
-        node = _node(model="explicit-pin", params={"preset": "cheap"})
-        settings = _settings_with_presets()
-        assert resolve_model(node, settings) == "explicit-pin"
 
 
 class TestGetBackend:

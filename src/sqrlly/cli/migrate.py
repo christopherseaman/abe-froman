@@ -343,6 +343,269 @@ def _migrate_fan_out_template_to_execute(
                 _migrate_node_to_execute(fn, changes, f"{path}.final_nodes[{fn_id}]")
 
 
+_PROMPT_EXTS = (".md", ".txt", ".prompt")
+_EXECUTOR_TO_TRANSPORT_PROVIDER = {
+    "acp": ("acp", "anthropic"),
+    "anthropic": ("api", "anthropic"),
+    "openai": ("api", "openai"),
+    "deepseek": ("api", "deepseek"),
+    "custom": ("api", "custom"),
+}
+
+
+def _node_is_prompt_dispatch(node: CommentedMap) -> bool:
+    """Heuristic: does this node fire an LLM prompt?
+
+    True iff ``execute.url`` ends in a known prompt extension OR
+    ``execute.mode == "prompt"``. False for script/binary/join/None.
+    """
+    execute = node.get("execute")
+    if not isinstance(execute, CommentedMap):
+        return False
+    if execute.get("mode") == "prompt":
+        return True
+    url = execute.get("url")
+    if not isinstance(url, str):
+        return False
+    lowered = url.lower()
+    return any(lowered.endswith(ext) for ext in _PROMPT_EXTS)
+
+
+def _workflow_has_prompt_dispatch(root: CommentedMap) -> bool:
+    """True iff any node in the workflow does prompt-mode dispatch."""
+    nodes = root.get("nodes")
+    if not isinstance(nodes, CommentedSeq):
+        return False
+    for node in nodes:
+        if isinstance(node, CommentedMap) and _node_is_prompt_dispatch(node):
+            return True
+        # fan_out templates also dispatch
+        if isinstance(node, CommentedMap):
+            fan_out = node.get("fan_out")
+            if isinstance(fan_out, CommentedMap):
+                template = fan_out.get("template")
+                if isinstance(template, CommentedMap) and _node_is_prompt_dispatch(template):
+                    return True
+    return False
+
+
+def _sanitize_model_name(model: str) -> str:
+    """Make a model identifier safe for use as a preset name key."""
+    return "".join(c if c.isalnum() else "_" for c in model).strip("_")
+
+
+def _collect_models_in_use(root: CommentedMap, default_model: str) -> list[str]:
+    """Return models referenced by default_model + any Node.model +
+    any params.model, deduped and ordered (default_model first)."""
+    seen: list[str] = []
+    if default_model and default_model not in seen:
+        seen.append(default_model)
+    nodes = root.get("nodes")
+    if isinstance(nodes, CommentedSeq):
+        for node in nodes:
+            if not isinstance(node, CommentedMap):
+                continue
+            nm = node.get("model")
+            if isinstance(nm, str) and nm not in seen:
+                seen.append(nm)
+            exe = node.get("execute")
+            if isinstance(exe, CommentedMap):
+                params = exe.get("params")
+                if isinstance(params, CommentedMap):
+                    pm = params.get("model")
+                    if isinstance(pm, str) and pm not in seen:
+                        seen.append(pm)
+            fan_out = node.get("fan_out")
+            if isinstance(fan_out, CommentedMap):
+                template = fan_out.get("template")
+                if isinstance(template, CommentedMap):
+                    tnm = template.get("model")
+                    if isinstance(tnm, str) and tnm not in seen:
+                        seen.append(tnm)
+                    texe = template.get("execute")
+                    if isinstance(texe, CommentedMap):
+                        tparams = texe.get("params")
+                        if isinstance(tparams, CommentedMap):
+                            tpm = tparams.get("model")
+                            if isinstance(tpm, str) and tpm not in seen:
+                                seen.append(tpm)
+                finals = fan_out.get("final_nodes")
+                if isinstance(finals, CommentedSeq):
+                    for final in finals:
+                        if not isinstance(final, CommentedMap):
+                            continue
+                        fnm = final.get("model")
+                        if isinstance(fnm, str) and fnm not in seen:
+                            seen.append(fnm)
+                        fexe = final.get("execute")
+                        if isinstance(fexe, CommentedMap):
+                            fparams = fexe.get("params")
+                            if isinstance(fparams, CommentedMap):
+                                fpm = fparams.get("model")
+                                if isinstance(fpm, str) and fpm not in seen:
+                                    seen.append(fpm)
+    return seen
+
+
+def _rewrite_node_model_to_preset(
+    node: CommentedMap,
+    default_model: str,
+    model_to_preset: dict[str, str],
+    path: str,
+    changes: list[str],
+) -> None:
+    """Replace ``Node.model`` + ``params.model`` with ``params.preset:``
+    references. If the model matches default_model, drop the field entirely
+    (the default preset applies). Otherwise insert ``params.preset:``.
+    """
+    # Per-call resolution chain: params.model > node.model > default.
+    # We collapse that into a single params.preset per node, with the
+    # higher-precedence source winning.
+    chosen_model: str | None = None
+    exe = node.get("execute")
+    if isinstance(exe, CommentedMap):
+        params = exe.get("params")
+        if isinstance(params, CommentedMap) and "model" in params:
+            chosen_model = params.pop("model")
+    if chosen_model is None and "model" in node:
+        chosen_model = node.pop("model")
+    if chosen_model is None or chosen_model == default_model:
+        # No node-level override OR matches default — nothing to write.
+        # Still report removal if we popped something.
+        if "model" not in node and isinstance(exe, CommentedMap):
+            params = exe.get("params")
+            if not isinstance(params, CommentedMap) or "model" not in params:
+                return
+        return
+
+    preset_name = model_to_preset.get(chosen_model)
+    if preset_name is None:
+        # Shouldn't happen — every model in use should be in the map.
+        return
+
+    # Insert params.preset on the node's execute block.
+    if not isinstance(exe, CommentedMap):
+        return
+    params = exe.get("params")
+    if not isinstance(params, CommentedMap):
+        params = CommentedMap()
+        exe["params"] = params
+    params["preset"] = preset_name
+    changes.append(f"{path}: model={chosen_model!r} → params.preset={preset_name!r}")
+
+
+def _migrate_legacy_executor_to_presets(
+    root: CommentedMap, changes: list[str],
+) -> None:
+    """Rewrite legacy executor:/default_model:/Node.model: into a
+    settings.presets block + per-node params.preset references.
+
+    Idempotent: if ``settings.presets`` already exists, this is a no-op.
+    Pure-script workflows (no prompt dispatch) just lose the vestigial
+    default_model/executor fields without gaining presets.
+    """
+    settings = root.get("settings")
+    if not isinstance(settings, CommentedMap):
+        settings = None
+
+    # Already-migrated: skip.
+    if settings is not None and "presets" in settings:
+        return
+
+    has_prompt = _workflow_has_prompt_dispatch(root)
+    legacy_executor = settings.get("executor") if settings else None
+    legacy_default_model = settings.get("default_model") if settings else None
+
+    # Decide whether to build presets at all.
+    if not has_prompt:
+        # No prompt dispatch → just drop legacy fields if present.
+        if settings is not None:
+            if "executor" in settings:
+                settings.pop("executor")
+                changes.append("settings.executor: removed (pure-script workflow)")
+            if "default_model" in settings:
+                settings.pop("default_model")
+                changes.append("settings.default_model: removed (pure-script workflow)")
+        # Even pure-script workflows may have stray Node.model — drop those too.
+        nodes = root.get("nodes")
+        if isinstance(nodes, CommentedSeq):
+            for node in nodes:
+                if isinstance(node, CommentedMap) and "model" in node:
+                    node.pop("model")
+        return
+
+    # Build presets. Default transport/provider when executor not set
+    # matches the auto-detect fallback (api+anthropic).
+    executor_key = legacy_executor or "anthropic"
+    if executor_key not in _EXECUTOR_TO_TRANSPORT_PROVIDER:
+        raise MigrateError(
+            f"Unknown legacy executor: {executor_key!r}; "
+            f"supported: {sorted(_EXECUTOR_TO_TRANSPORT_PROVIDER)!r}"
+        )
+    transport, provider = _EXECUTOR_TO_TRANSPORT_PROVIDER[executor_key]
+    default_model = legacy_default_model or "sonnet"
+
+    models = _collect_models_in_use(root, default_model)
+    model_to_preset: dict[str, str] = {}
+    presets = CommentedMap()
+    for model in models:
+        name = "default" if model == default_model else f"_auto_{_sanitize_model_name(model)}"
+        model_to_preset[model] = name
+        entry = CommentedMap()
+        entry["transport"] = transport
+        entry["provider"] = provider
+        entry["model"] = model
+        if model == default_model:
+            entry["default"] = True
+        presets[name] = entry
+
+    # Make sure settings exists; insert presets at the end.
+    if settings is None:
+        settings = CommentedMap()
+        root["settings"] = settings
+    if "executor" in settings:
+        settings.pop("executor")
+    if "default_model" in settings:
+        settings.pop("default_model")
+    settings["presets"] = presets
+
+    # Rewrite node-level model overrides → params.preset references.
+    nodes = root.get("nodes")
+    if isinstance(nodes, CommentedSeq):
+        for node in nodes:
+            if not isinstance(node, CommentedMap):
+                continue
+            node_id = str(node.get("id", "?"))
+            _rewrite_node_model_to_preset(
+                node, default_model, model_to_preset, f"nodes[{node_id}]", changes,
+            )
+            # fan_out template + final_nodes — same shape on the inside.
+            fan_out = node.get("fan_out")
+            if isinstance(fan_out, CommentedMap):
+                template = fan_out.get("template")
+                if isinstance(template, CommentedMap):
+                    _rewrite_node_model_to_preset(
+                        template, default_model, model_to_preset,
+                        f"nodes[{node_id}].fan_out.template", changes,
+                    )
+                finals = fan_out.get("final_nodes")
+                if isinstance(finals, CommentedSeq):
+                    for final in finals:
+                        if not isinstance(final, CommentedMap):
+                            continue
+                        final_id = str(final.get("id", "?"))
+                        _rewrite_node_model_to_preset(
+                            final, default_model, model_to_preset,
+                            f"nodes[{node_id}].fan_out.final_nodes[{final_id}]",
+                            changes,
+                        )
+
+    changes.append(
+        f"legacy executor: + default_model: → settings.presets: "
+        f"({len(presets)} preset(s); default model={default_model!r})"
+    )
+
+
 def _walk_and_migrate(root: CommentedMap, changes: list[str]) -> None:
     """Walk a parsed Graph and apply renames + restructures in place."""
     # phases: → nodes: at the top level
@@ -406,6 +669,11 @@ def _walk_and_migrate(root: CommentedMap, changes: list[str]) -> None:
             i += len(siblings) + 1
         else:
             i += 1
+
+    # Final pass: legacy executor/default_model/Node.model → settings.presets.
+    # Runs LAST so freshly-translated node shapes (e.g. fan_out templates
+    # lifted to execute blocks) are also walked for model references.
+    _migrate_legacy_executor_to_presets(root, changes)
 
 
 def migrate_yaml(text: str) -> tuple[str, list[str]]:

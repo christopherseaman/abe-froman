@@ -475,6 +475,16 @@ async def _run_eval_core(
     dep_outputs, dep_structured, dep_worktrees = _scope_dep_outputs_for_gate(
         node, state,
     )
+    # Gate LLM model: the default preset's model. Gates ignore the
+    # node's params.preset — they're a separate dispatch and use the
+    # workflow-level default. Falls back to "sonnet" only when no
+    # presets are declared (script-only workflows that somehow declare
+    # an LLM gate — unusual, but harmless default).
+    default_gate_model = "sonnet"
+    for preset in s.presets.values():
+        if preset.default:
+            default_gate_model = preset.model
+            break
     eval_call = run_evaluation(
         node.evaluation,
         node_id,
@@ -483,7 +493,7 @@ async def _run_eval_core(
         workflow_name=config.name,
         attempt_number=retries + 1,
         backend=backend,
-        default_model=s.default_model,
+        default_model=default_gate_model,
         dep_outputs=dep_outputs,
         dep_structured_outputs=dep_structured,
         dep_worktrees=dep_worktrees,

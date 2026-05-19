@@ -251,8 +251,6 @@ def extract_node_config(node: Node) -> dict[str, Any]:
         cfg["description"] = node.description
     if node.depends_on:
         cfg["depends_on"] = list(node.depends_on)
-    if node.model:
-        cfg["model"] = node.model
     if node.timeout is not None:
         cfg["timeout"] = node.timeout
     if node.execute:

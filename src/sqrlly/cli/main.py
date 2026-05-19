@@ -70,50 +70,6 @@ def validate(config_file: str):
 
 
 @cli.command()
-@click.argument("config_file", type=click.Path(exists=True))
-@click.option(
-    "--dry-run", is_flag=True,
-    help="Print rewritten YAML to stdout without writing the file.",
-)
-@click.option(
-    "--in-place", is_flag=True,
-    help="Rewrite the file on disk (default: print rewritten YAML to stdout).",
-)
-def migrate(config_file: str, dry_run: bool, in_place: bool):
-    """Migrate a pre-Stage-4 workflow YAML to the current schema.
-
-    Rewrites: phases → nodes, quality_gate → evaluation,
-    dynamic_subphases → fan_out (with template lift + final_phases
-    promoted to sibling nodes with depends_on).
-
-    Comments, anchors, and templated {{}} strings are preserved.
-    Idempotent: running on already-migrated YAML is a no-op.
-    """
-    from sqrlly.cli.migrate import migrate_file
-
-    if dry_run and in_place:
-        raise click.UsageError(
-            "--dry-run and --in-place are mutually exclusive: "
-            "--dry-run prints to stdout, --in-place rewrites the file"
-        )
-
-    path = Path(config_file)
-    rewritten, changes = migrate_file(path, in_place=in_place, dry_run=dry_run)
-
-    if not changes:
-        click.echo(f"No changes needed for {config_file}", err=True)
-        return
-
-    for c in changes:
-        click.echo(f"  - {c}", err=True)
-
-    if in_place and not dry_run:
-        click.echo(f"Wrote {len(changes)} changes to {config_file}", err=True)
-    else:
-        click.echo(rewritten, nl=False)
-
-
-@cli.command()
 @click.argument("config_file", type=click.Path())
 def graph(config_file: str):
     """Render the compiled LangGraph as a Mermaid diagram."""
@@ -191,7 +147,6 @@ async def _run_async(
     config: Graph,
     workdir: str,
     dry_run: bool,
-    executor_type: str | None,
     preset_override: str | None,
     resume: bool,
     log_file: str | None,
@@ -220,7 +175,7 @@ async def _run_async(
     result: dict = {}
     try:
         result = await _execute_workflow(
-            config, workdir, dry_run, executor_type, preset_override, resume,
+            config, workdir, dry_run, preset_override, resume,
             thread_id=thread_id, logger=logger,
         )
         return result
@@ -241,7 +196,6 @@ async def _execute_workflow(
     config: Graph,
     workdir: str,
     dry_run: bool,
-    executor_type: str | None,
     preset_override: str | None,
     resume: bool,
     *,
@@ -250,17 +204,11 @@ async def _execute_workflow(
 ) -> dict:
     """Compile the graph, wire executors / checkpointer / state, then run.
 
-    Backend wiring follows two paths, picked by presence of
-    ``config.settings.presets``:
-
-      - Non-empty presets → build a backend registry (one backend per
-        preset) via ``build_preset_registry`` + ``create_backend_from_preset``.
-        ``preset_override`` (from ``--preset`` flag) flips the default.
-      - Empty presets → legacy single-backend path:
-        ``executor_type`` (from ``--executor`` / ``settings.executor`` /
-        auto-detect) drives a single ``create_prompt_backend`` call.
-
-    Commit C will retire the legacy path.
+    Backend wiring: ``build_preset_registry`` returns a fully-resolved
+    ``dict[str, Preset]`` — either the user's ``settings.presets`` with
+    ``preset_override`` applied, or a single ``_auto`` preset synthesized
+    from environment keys when YAML didn't declare any. Each preset
+    gets its own backend via ``create_backend_from_preset``.
     """
     if dry_run:
         compiled = build_workflow_graph(config, None, logger=logger)
@@ -271,40 +219,26 @@ async def _execute_workflow(
 
     from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
-    if config.settings.presets:
-        from sqrlly.runtime.executor.backends.factory import (
-            create_backend_from_preset,
-        )
-        from sqrlly.runtime.executor.preset import build_preset_registry
+    from sqrlly.runtime.executor.backends.factory import (
+        create_backend_from_preset,
+    )
+    from sqrlly.runtime.executor.preset import build_preset_registry
 
-        registry = build_preset_registry(
-            config.settings, cli_override=preset_override,
-        )
-        # Sync the in-flight settings to reflect the (possibly flipped)
-        # default — runtime resolution reads ``settings.presets``, not
-        # the registry copy, so the override has to land somewhere it
-        # can see.
-        config.settings.presets = registry
-        prompt_backends = {
-            name: create_backend_from_preset(preset)
-            for name, preset in registry.items()
-        }
-        dispatch = DispatchExecutor(
-            workdir=workdir, prompt_backends=prompt_backends,
-            settings=config.settings,
-        )
-    else:
-        if preset_override is not None:
-            raise click.ClickException(
-                f"--preset {preset_override!r} given but "
-                f"settings.presets is empty. Declare presets in YAML "
-                f"or drop the flag (use --executor for the legacy path)."
-            )
-        from sqrlly.runtime.executor.backends.factory import create_prompt_backend
-        backend = create_prompt_backend(executor_type)
-        dispatch = DispatchExecutor(
-            workdir=workdir, prompt_backend=backend, settings=config.settings,
-        )
+    registry = build_preset_registry(
+        config.settings, cli_override=preset_override,
+    )
+    # Reflect the (possibly synthesized or flipped) registry in the
+    # in-flight settings — runtime resolution reads ``settings.presets``,
+    # so the override has to land somewhere it can see.
+    config.settings.presets = registry
+    prompt_backends = {
+        name: create_backend_from_preset(preset)
+        for name, preset in registry.items()
+    }
+    dispatch = DispatchExecutor(
+        workdir=workdir, prompt_backends=prompt_backends,
+        settings=config.settings,
+    )
 
     async with AsyncSqliteSaver.from_conn_string(_db_path(workdir)) as cp:
         await cp.setup()
@@ -372,24 +306,13 @@ async def _execute_workflow(
 @click.option(
     "--dry-run", is_flag=True, help="Validate and trace without executing"
 )
-@click.option("--model", "-m", help="Override default model (legacy path only)")
-@click.option(
-    "--executor", "-e",
-    help=(
-        "Legacy single-backend selector — used only when "
-        "settings.presets is empty. Choices: acp | anthropic | custom | "
-        "deepseek | openai. `custom` is for OpenAI-compatible third "
-        "parties (OpenRouter, Ollama, LM Studio, LiteLLM, Azure, ...) "
-        "via CUSTOM_API_KEY + CUSTOM_API_BASE_URL. Omit to auto-detect "
-        "(Anthropic key → DeepSeek key → npx/ACP; raises if none)."
-    ),
-)
 @click.option(
     "--preset", "-p",
     help=(
-        "Named-preset selector — forces a specific preset as the "
-        "default for this run. Required: settings.presets must declare "
-        "the named preset. Mutually exclusive with --executor."
+        "Force a specific named preset as the default for this run. "
+        "Must exist in settings.presets. Without this flag, the YAML's "
+        "default: true preset applies (or auto-detection synthesizes "
+        "one when settings.presets is empty)."
     ),
 )
 @click.option(
@@ -400,8 +323,6 @@ def run(
     config_file: str,
     workdir: str,
     dry_run: bool,
-    model: str | None,
-    executor: str | None,
     preset: str | None,
     resume: bool,
     log_file: str | None,
@@ -412,34 +333,8 @@ def run(
     except Exception as e:
         raise click.ClickException(str(e))
 
-    if executor is not None and preset is not None:
-        raise click.ClickException(
-            "--executor and --preset are mutually exclusive; --executor "
-            "drives the legacy single-backend path and --preset selects "
-            "from settings.presets."
-        )
-
-    if model:
-        config.settings.default_model = model
-
-    # New path: settings.presets declared → use --preset (or YAML default).
-    # Legacy path: settings.presets empty → use --executor / settings.executor
-    # / auto-detect.
-    if config.settings.presets:
-        executor_type: str | None = None  # not used on the preset path
-        preset_override = preset
-    else:
-        from sqrlly.runtime.executor.backends.factory import auto_detect_executor
-        executor_type = (
-            executor or config.settings.executor or auto_detect_executor()
-        )
-        preset_override = None
-
     result = asyncio.run(
-        _run_async(
-            config, workdir, dry_run, executor_type, preset_override,
-            resume, log_file,
-        )
+        _run_async(config, workdir, dry_run, preset, resume, log_file)
     )
 
     completed = result.get("completed_nodes", set())

@@ -40,3 +40,10 @@ nodes:
       validator: "examples/absurd-paper/gates/submission_check.py"
       threshold: 1.0
       blocking: true
+settings:
+  presets:
+    default:
+      transport: api
+      provider: anthropic
+      model: sonnet
+      default: true

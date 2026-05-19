@@ -124,7 +124,6 @@ def _make_fan_out_node(
             id=child_id,
             name=f"{parent_node.name} - {item.get('name', item_id)}",
             evaluation=template.evaluation,
-            model=parent_node.model,
             execute=template.execute,
         )
 
@@ -299,7 +298,6 @@ def _make_final_fan_out_node(
         name=final_node.name,
         description=final_node.description,
         evaluation=final_node.evaluation,
-        model=parent_node.model,
         depends_on=[parent_node.id],
         execute=final_node.execute,
     )

@@ -330,26 +330,36 @@ class TestPerModelBackpressure:
             ["git", "-C", str(tmp_path), "commit", "-q", "-m", "add p"],
             check=True,
         )
-        settings = Settings(default_model="sonnet")
+        from sqrlly.schema.models import Preset
+        settings = Settings(presets={
+            "fast": Preset(transport="api", provider="anthropic", model="opus"),
+            "balanced": Preset(
+                transport="api", provider="anthropic",
+                model="sonnet", default=True,
+            ),
+        })
         inner = DispatchExecutor(
-            workdir=str(tmp_path), prompt_backend=backend, settings=settings,
+            workdir=str(tmp_path),
+            prompt_backends={"fast": backend, "balanced": backend},
+            settings=settings,
         )
         foreman = ForemanExecutor(
             inner=inner,
             base_workdir=str(tmp_path),
             max_parallel_jobs=10,
             per_model_limits={"opus": 1, "sonnet": 2},
+            settings=settings,
         )
 
         nodes = []
         for i in range(3):
             nodes.append(Node(
                 id=f"opus{i}", name=f"opus{i}",
-                execute=Execute(url="p.md"), model="opus",
+                execute=Execute(url="p.md", params={"preset": "fast"}),
             ))
             nodes.append(Node(
                 id=f"son{i}", name=f"son{i}",
-                execute=Execute(url="p.md"), model="sonnet",
+                execute=Execute(url="p.md", params={"preset": "balanced"}),
             ))
 
         try:

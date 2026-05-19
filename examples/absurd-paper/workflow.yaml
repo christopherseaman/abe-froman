@@ -144,7 +144,6 @@ nodes:
       final_nodes:
         - id: publish_verdict
           name: "Editorial Publication Verdict"
-          model: "opus"
           evaluation:
             validator: "examples/absurd-paper/gates/publish_verdict.md"
             blocking: true
@@ -154,11 +153,11 @@ nodes:
 
           execute:
             url: "examples/absurd-paper/prompts/publish_verdict.md"
+            params:
+              preset: _auto_opus
     execute:
       url: "examples/absurd-paper/prompts/reviewer_pool.md"
 settings:
-  default_model: "sonnet"
-  executor: "acp"
   preamble_file: "examples/absurd-paper/preamble.md"
   output_directory: "paper"
   max_retries: 2
@@ -168,3 +167,13 @@ settings:
   per_model_limits:
     sonnet: 2
     opus: 1
+  presets:
+    default:
+      transport: acp
+      provider: anthropic
+      model: "sonnet"
+      default: true
+    _auto_opus:
+      transport: acp
+      provider: anthropic
+      model: "opus"

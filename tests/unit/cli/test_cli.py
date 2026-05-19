@@ -135,24 +135,31 @@ class TestRunCommand:
 
 
 class TestRunOptions:
-    def test_executor_unknown_raises(self, runner, tmp_path):
+    def test_preset_unknown_raises(self, runner, tmp_path):
         import shutil
         echo_bin = shutil.which("echo") or "/bin/echo"
         config = tmp_path / "simple.yaml"
+        # YAML with a single declared preset; --preset references one
+        # that doesn't exist.
         config.write_text(
-            "name: Test\nversion: '1.0'\nnodes:\n"
+            "name: Test\nversion: '1.0'\n"
+            "settings:\n"
+            "  presets:\n"
+            "    default:\n"
+            "      transport: api\n"
+            "      provider: anthropic\n"
+            "      model: sonnet\n"
+            "      default: true\n"
+            "nodes:\n"
             "  - id: node-1\n    name: Node 1\n"
             f"    execute:\n      url: {echo_bin}\n      params:\n        args: ['hi']\n"
         )
         result = runner.invoke(
-            cli, ["run", str(config), "--executor", "bogus", "--workdir", str(tmp_path)]
+            cli, ["run", str(config), "--preset", "bogus", "--workdir", str(tmp_path)]
         )
         assert result.exit_code != 0
-        # Validates the diagnostic, not just absence-of-success: the
-        # error must name the offending value AND list valid choices.
         combined = (result.output or "") + str(result.exception or "")
         assert "bogus" in combined
-        assert "Unknown executor" in combined or "executor" in combined.lower()
 
 
 class TestResumeCommand:

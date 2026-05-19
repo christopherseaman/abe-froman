@@ -7,5 +7,9 @@ nodes:
     execute:
       url: "examples/prompts/hello.md"
 settings:
-  default_model: "sonnet"
-  executor: "acp"
+  presets:
+    default:
+      transport: acp
+      provider: anthropic
+      model: "sonnet"
+      default: true
