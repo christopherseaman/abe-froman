@@ -462,3 +462,36 @@ class Graph(BaseModel):
                         f"cannot appear in another node's depends_on"
                     )
         return self
+
+    @model_validator(mode="after")
+    def _validate_preset_refs(self) -> Self:
+        """Every ``params.preset:`` reference must name a preset
+        declared in ``settings.presets`` (or rely on the auto-detect
+        default when presets is empty).
+
+        Without this, a typo (``params: {preset: 'smrt'}``) silently
+        survives validate-time and crashes the first time the node
+        runs with ``RuntimeError("no backend is registered")``.
+        Subgraph nodes are validated against the subgraph's own
+        ``settings.presets`` (merged settings are computed at runtime;
+        we only see the leaf-level declaration here).
+        """
+        declared = set(self.settings.presets)
+        for node in self.nodes:
+            if node.execute is None or not isinstance(node.execute.params, dict):
+                continue
+            preset_ref = node.execute.params.get("preset")
+            if preset_ref is None:
+                continue
+            if not declared:
+                raise ValueError(
+                    f"Node '{node.id}' references preset {preset_ref!r} "
+                    f"but settings.presets is empty"
+                )
+            if preset_ref not in declared:
+                raise ValueError(
+                    f"Node '{node.id}' references preset {preset_ref!r} "
+                    f"which is not declared in settings.presets "
+                    f"(declared: {sorted(declared)!r})"
+                )
+        return self

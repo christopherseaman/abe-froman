@@ -214,6 +214,83 @@ class TestOutputContract:
         assert contract.required_files == []
 
 
+class TestPresetReferenceValidation:
+    """`Graph._validate_preset_refs` catches typos at validate time
+    instead of letting them crash with RuntimeError at first run."""
+
+    def _preset_settings(self):
+        return {
+            "presets": {
+                "default": {
+                    "transport": "api", "provider": "anthropic",
+                    "model": "sonnet", "default": True,
+                },
+            },
+        }
+
+    def test_valid_preset_reference_validates(self):
+        Graph.model_validate({
+            "name": "T", "version": "1.0",
+            "settings": self._preset_settings(),
+            "nodes": [
+                {
+                    "id": "a", "name": "A",
+                    "execute": {
+                        "url": "t.md",
+                        "params": {"preset": "default"},
+                    },
+                },
+            ],
+        })
+
+    def test_unknown_preset_reference_rejected(self):
+        with pytest.raises(ValidationError, match="not declared in settings.presets"):
+            Graph.model_validate({
+                "name": "T", "version": "1.0",
+                "settings": self._preset_settings(),
+                "nodes": [
+                    {
+                        "id": "a", "name": "A",
+                        "execute": {
+                            "url": "t.md",
+                            "params": {"preset": "typo_name"},
+                        },
+                    },
+                ],
+            })
+
+    def test_preset_reference_with_empty_presets_rejected(self):
+        with pytest.raises(ValidationError, match="settings.presets is empty"):
+            Graph.model_validate({
+                "name": "T", "version": "1.0",
+                "nodes": [
+                    {
+                        "id": "a", "name": "A",
+                        "execute": {
+                            "url": "t.md",
+                            "params": {"preset": "anything"},
+                        },
+                    },
+                ],
+            })
+
+    def test_pure_script_workflow_no_presets_no_refs_validates(self):
+        """Script-only workflows don't need presets and don't reference
+        any — must validate cleanly."""
+        Graph.model_validate({
+            "name": "T", "version": "1.0",
+            "nodes": [
+                {
+                    "id": "a", "name": "A",
+                    "execute": {
+                        "url": "/bin/echo",
+                        "params": {"args": ["hi"]},
+                    },
+                },
+            ],
+        })
+
+
 class TestSettingsMemoryGates:
     """Memory back-pressure: percent + absolute-bytes forms with
     suffix parsing for the bytes form."""

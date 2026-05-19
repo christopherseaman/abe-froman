@@ -462,20 +462,17 @@ def _rewrite_node_model_to_preset(
     # We collapse that into a single params.preset per node, with the
     # higher-precedence source winning.
     chosen_model: str | None = None
+    chosen_source: str | None = None   # "params.model" or "node.model"
     exe = node.get("execute")
     if isinstance(exe, CommentedMap):
         params = exe.get("params")
         if isinstance(params, CommentedMap) and "model" in params:
             chosen_model = params.pop("model")
+            chosen_source = "params.model"
     if chosen_model is None and "model" in node:
         chosen_model = node.pop("model")
+        chosen_source = "node.model"
     if chosen_model is None or chosen_model == default_model:
-        # No node-level override OR matches default — nothing to write.
-        # Still report removal if we popped something.
-        if "model" not in node and isinstance(exe, CommentedMap):
-            params = exe.get("params")
-            if not isinstance(params, CommentedMap) or "model" not in params:
-                return
         return
 
     preset_name = model_to_preset.get(chosen_model)
@@ -483,15 +480,24 @@ def _rewrite_node_model_to_preset(
         # Shouldn't happen — every model in use should be in the map.
         return
 
-    # Insert params.preset on the node's execute block.
+    # Insert params.preset on the node's execute block. Gate-only nodes
+    # (no `execute:`) can't carry params, so the override is dropped
+    # at migrate time. Surface that as a change so the operator sees
+    # the lost semantics — gates on these nodes will use the default
+    # preset's model going forward.
     if not isinstance(exe, CommentedMap):
+        changes.append(
+            f"{path}: {chosen_source}={chosen_model!r} dropped (gate-only "
+            f"node has no execute: block to hold params.preset); gate "
+            f"will use default preset's model ({default_model!r})"
+        )
         return
     params = exe.get("params")
     if not isinstance(params, CommentedMap):
         params = CommentedMap()
         exe["params"] = params
     params["preset"] = preset_name
-    changes.append(f"{path}: model={chosen_model!r} → params.preset={preset_name!r}")
+    changes.append(f"{path}: {chosen_source}={chosen_model!r} → params.preset={preset_name!r}")
 
 
 def _migrate_legacy_executor_to_presets(
