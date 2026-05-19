@@ -248,6 +248,45 @@ class FanOut(BaseModel):
     final_nodes: list[FanOutFinalNode] = []
 
 
+class Preset(BaseModel):
+    """Named bundle of execution config — referenced by name from nodes.
+
+    A workflow declares presets in ``settings.presets:``; nodes choose
+    one via ``params.preset:`` (or inherit the ``default: true`` preset).
+    The ``--preset`` CLI flag overrides at run time. Resolution order:
+    CLI flag > ``params.preset:`` > the preset marked ``default: true``.
+
+    Today only LLM transports (``api``, ``acp``) are recognized; the
+    schema is future-extensible for non-LLM bundles (subprocess
+    interpreters, Python envs) via per-transport tagged-union shapes —
+    deferred until that case lands.
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    transport: Literal["api", "acp"]
+    provider: Literal["anthropic", "openai", "deepseek", "custom"]
+    model: str
+    base_url: str | None = None
+    default: bool = False
+
+    @model_validator(mode="after")
+    def _validate_combinations(self) -> Self:
+        if self.transport == "acp" and self.provider != "anthropic":
+            raise ValueError(
+                f"transport=acp only supports provider=anthropic "
+                f"(got provider={self.provider!r}); ACP wraps Claude Code"
+            )
+        if self.base_url is not None and not (
+            self.transport == "api" and self.provider == "custom"
+        ):
+            raise ValueError(
+                f"base_url is only meaningful when transport=api + "
+                f"provider=custom (got transport={self.transport!r}, "
+                f"provider={self.provider!r})"
+            )
+        return self
+
+
 class Settings(BaseModel):
     output_directory: str = "output"
     max_retries: int = 3
@@ -302,6 +341,30 @@ class Settings(BaseModel):
     allowed_url_hosts: list[str] = []  # fnmatch host patterns; [] = no filter
     url_headers: dict[str, dict[str, str]] = {}  # prefix → headers; ${VAR} expands
     max_remote_fetch_bytes: int = 5_000_000  # 5 MB cap
+    # Named presets — workflow-level bundles of execution config.
+    # Nodes reference one by name via ``params.preset:``; otherwise
+    # the preset marked ``default: true`` applies. When this dict is
+    # empty, the CLI auto-detects a default from environment keys
+    # (see ``factory.auto_detect_default_preset``).
+    presets: dict[str, Preset] = {}
+
+    @model_validator(mode="after")
+    def _validate_default_preset(self) -> Self:
+        if not self.presets:
+            return self
+        defaults = [name for name, p in self.presets.items() if p.default]
+        if len(defaults) == 0:
+            raise ValueError(
+                f"settings.presets has {len(self.presets)} preset(s) "
+                f"({sorted(self.presets)!r}) but none marked "
+                f"default: true — exactly one must be the default"
+            )
+        if len(defaults) > 1:
+            raise ValueError(
+                f"settings.presets has multiple default: true presets "
+                f"({sorted(defaults)!r}); exactly one allowed"
+            )
+        return self
 
 
 class Node(BaseModel):

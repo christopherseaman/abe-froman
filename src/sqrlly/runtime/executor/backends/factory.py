@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import shutil
+from typing import TYPE_CHECKING
 
 from sqrlly.runtime.result import PromptBackend
 from sqrlly.runtime.secrets import resolve_secret
+
+if TYPE_CHECKING:
+    from sqrlly.schema.models import Preset
 
 DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
 
@@ -104,6 +108,77 @@ def create_prompt_backend(executor_type: str, **kwargs: object) -> PromptBackend
     raise ValueError(
         f"Unknown executor type: {executor_type!r}. "
         f"Supported: acp, anthropic, custom, deepseek, openai"
+    )
+
+
+def create_backend_from_preset(preset: "Preset") -> PromptBackend:
+    """Instantiate a PromptBackend matching the preset's transport+provider.
+
+    The preset's ``model`` is consulted per-call via ``send_prompt(model=...)``;
+    backends themselves are stateless w.r.t. model selection, so two presets
+    differing only in model share an instance shape (different presets =
+    different backend instances at the registry level for lifecycle clarity).
+    """
+    if preset.transport == "acp":
+        from sqrlly.runtime.executor.backends.acp import ACPBackend
+        return ACPBackend(
+            program="npx",
+            args=("@zed-industries/claude-code-acp",),
+        )
+
+    # transport == "api"
+    if preset.provider == "anthropic":
+        from sqrlly.runtime.executor.backends.anthropic import AnthropicBackend
+        api_key = _resolve_anthropic_key()
+        if not api_key:
+            raise ValueError(
+                "Preset (transport=api, provider=anthropic) requires "
+                "ANTHROPIC_API_KEY in the environment or .env"
+            )
+        return AnthropicBackend(api_key=api_key)
+
+    if preset.provider == "openai":
+        from sqrlly.runtime.executor.backends.openai import OpenAIBackend
+        api_key = resolve_secret("OPENAI_API_KEY")
+        if not api_key:
+            raise ValueError(
+                "Preset (transport=api, provider=openai) requires "
+                "OPENAI_API_KEY in the environment or .env"
+            )
+        base_url = resolve_secret("OPENAI_BASE_URL")
+        return OpenAIBackend(api_key=api_key, base_url=base_url)
+
+    if preset.provider == "deepseek":
+        from sqrlly.runtime.executor.backends.openai import OpenAIBackend
+        api_key = _resolve_deepseek_key()
+        if not api_key:
+            raise ValueError(
+                "Preset (transport=api, provider=deepseek) requires "
+                "DEEPSEEK_API_KEY in the environment or .env"
+            )
+        return OpenAIBackend(api_key=api_key, base_url=DEEPSEEK_BASE_URL)
+
+    if preset.provider == "custom":
+        from sqrlly.runtime.executor.backends.openai import OpenAIBackend
+        api_key = resolve_secret("CUSTOM_API_KEY")
+        if not api_key:
+            raise ValueError(
+                "Preset (transport=api, provider=custom) requires "
+                "CUSTOM_API_KEY in the environment or .env"
+            )
+        # preset.base_url is the canonical place; CUSTOM_API_BASE_URL
+        # env var stays as a fallback for the no-YAML-presets path.
+        base_url = preset.base_url or resolve_secret("CUSTOM_API_BASE_URL")
+        if not base_url:
+            raise ValueError(
+                "Preset (transport=api, provider=custom) requires "
+                "preset.base_url OR CUSTOM_API_BASE_URL in the environment"
+            )
+        return OpenAIBackend(api_key=api_key, base_url=base_url)
+
+    raise ValueError(
+        f"Unsupported preset shape: transport={preset.transport!r}, "
+        f"provider={preset.provider!r}"
     )
 
 
