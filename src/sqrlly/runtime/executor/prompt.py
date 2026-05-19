@@ -10,14 +10,26 @@ from sqrlly.schema.models import Node, Settings
 
 
 def resolve_model(node: Node, settings: Settings) -> str:
-    """Pick the model for a node: node.model overrides settings.default_model.
+    """Pick the declared model for a node — used by foreman for per-model
+    semaphore selection.
 
-    Used by foreman for per-model-semaphore selection. PromptParams.model
-    is a runtime-only override (handled in dispatch._dispatch_prompt) and
-    is not visible here — foreman reserves the slot for the *declared*
-    model, not the runtime override.
+    Resolution: Node.model > preset.model (from params.preset or the
+    default preset, when ``settings.presets`` is non-empty) >
+    Settings.default_model (legacy path).
+
+    ``PromptParams.model`` is a runtime-only override (handled in
+    ``dispatch._dispatch_prompt``) and is intentionally NOT visible
+    here — foreman reserves the slot for the *declared* model, not
+    the per-call override.
     """
-    return node.model or settings.default_model
+    if node.model is not None:
+        return node.model
+    if settings.presets:
+        # Late import to avoid cycle: prompt.py → preset.py → models.py.
+        from sqrlly.runtime.executor.preset import resolve_preset_name
+        preset_name = resolve_preset_name(node, settings)
+        return settings.presets[preset_name].model
+    return settings.default_model
 
 
 def downgrade_model(current: str, chain: list[str]) -> str | None:

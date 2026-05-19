@@ -123,3 +123,43 @@ class TestRoundTripConstraint:
         # field would win over parent. Hence the function's docstring
         # warning.
         assert len(s_dumped.model_fields_set) > 1
+
+
+class TestPresetsInheritance:
+    """Presets are a dict-shaped field; ``model_fields_set`` handles them
+    the same as scalar fields — child either inherits or wholly replaces.
+
+    Today's behavior is whole-dict replace. Key-wise additive merge
+    (subgraph adds a preset while inheriting parent's others) is a
+    deferred refinement — subgraph authors copy parent presets when
+    they want to extend rather than replace.
+    """
+
+    def _preset(self, model="x", default=False):
+        from sqrlly.schema.models import Preset
+        return Preset(
+            transport="api", provider="anthropic", model=model, default=default,
+        )
+
+    def test_subgraph_no_presets_inherits_parent(self):
+        parent = Settings(presets={
+            "cheap": self._preset(model="haiku"),
+            "smart": self._preset(model="opus", default=True),
+        })
+        child = Settings()
+        merged = merge_settings(parent, child)
+        assert sorted(merged.presets) == ["cheap", "smart"]
+        assert merged.presets["smart"].default is True
+
+    def test_subgraph_declares_presets_replaces_parent(self):
+        parent = Settings(presets={
+            "cheap": self._preset(model="haiku"),
+            "smart": self._preset(model="opus", default=True),
+        })
+        child = Settings(presets={
+            "interactive": self._preset(model="sonnet", default=True),
+        })
+        merged = merge_settings(parent, child)
+        # Whole-replace: parent's presets are gone, child's is alone.
+        assert sorted(merged.presets) == ["interactive"]
+        assert merged.presets["interactive"].default is True

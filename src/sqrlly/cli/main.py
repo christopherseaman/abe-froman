@@ -191,7 +191,8 @@ async def _run_async(
     config: Graph,
     workdir: str,
     dry_run: bool,
-    executor_type: str,
+    executor_type: str | None,
+    preset_override: str | None,
     resume: bool,
     log_file: str | None,
 ) -> dict:
@@ -219,7 +220,7 @@ async def _run_async(
     result: dict = {}
     try:
         result = await _execute_workflow(
-            config, workdir, dry_run, executor_type, resume,
+            config, workdir, dry_run, executor_type, preset_override, resume,
             thread_id=thread_id, logger=logger,
         )
         return result
@@ -240,13 +241,27 @@ async def _execute_workflow(
     config: Graph,
     workdir: str,
     dry_run: bool,
-    executor_type: str,
+    executor_type: str | None,
+    preset_override: str | None,
     resume: bool,
     *,
     thread_id: str,
     logger: Any | None,
 ) -> dict:
-    """Compile the graph, wire executors / checkpointer / state, then run."""
+    """Compile the graph, wire executors / checkpointer / state, then run.
+
+    Backend wiring follows two paths, picked by presence of
+    ``config.settings.presets``:
+
+      - Non-empty presets → build a backend registry (one backend per
+        preset) via ``build_preset_registry`` + ``create_backend_from_preset``.
+        ``preset_override`` (from ``--preset`` flag) flips the default.
+      - Empty presets → legacy single-backend path:
+        ``executor_type`` (from ``--executor`` / ``settings.executor`` /
+        auto-detect) drives a single ``create_prompt_backend`` call.
+
+    Commit C will retire the legacy path.
+    """
     if dry_run:
         compiled = build_workflow_graph(config, None, logger=logger)
         state = make_initial_state(
@@ -256,12 +271,40 @@ async def _execute_workflow(
 
     from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
-    from sqrlly.runtime.executor.backends.factory import create_prompt_backend
+    if config.settings.presets:
+        from sqrlly.runtime.executor.backends.factory import (
+            create_backend_from_preset,
+        )
+        from sqrlly.runtime.executor.preset import build_preset_registry
 
-    backend = create_prompt_backend(executor_type)
-    dispatch = DispatchExecutor(
-        workdir=workdir, prompt_backend=backend, settings=config.settings,
-    )
+        registry = build_preset_registry(
+            config.settings, cli_override=preset_override,
+        )
+        # Sync the in-flight settings to reflect the (possibly flipped)
+        # default — runtime resolution reads ``settings.presets``, not
+        # the registry copy, so the override has to land somewhere it
+        # can see.
+        config.settings.presets = registry
+        prompt_backends = {
+            name: create_backend_from_preset(preset)
+            for name, preset in registry.items()
+        }
+        dispatch = DispatchExecutor(
+            workdir=workdir, prompt_backends=prompt_backends,
+            settings=config.settings,
+        )
+    else:
+        if preset_override is not None:
+            raise click.ClickException(
+                f"--preset {preset_override!r} given but "
+                f"settings.presets is empty. Declare presets in YAML "
+                f"or drop the flag (use --executor for the legacy path)."
+            )
+        from sqrlly.runtime.executor.backends.factory import create_prompt_backend
+        backend = create_prompt_backend(executor_type)
+        dispatch = DispatchExecutor(
+            workdir=workdir, prompt_backend=backend, settings=config.settings,
+        )
 
     async with AsyncSqliteSaver.from_conn_string(_db_path(workdir)) as cp:
         await cp.setup()
@@ -329,15 +372,24 @@ async def _execute_workflow(
 @click.option(
     "--dry-run", is_flag=True, help="Validate and trace without executing"
 )
-@click.option("--model", "-m", help="Override default model")
+@click.option("--model", "-m", help="Override default model (legacy path only)")
 @click.option(
     "--executor", "-e",
     help=(
-        "Prompt executor backend. Choices: acp | anthropic | custom | "
+        "Legacy single-backend selector — used only when "
+        "settings.presets is empty. Choices: acp | anthropic | custom | "
         "deepseek | openai. `custom` is for OpenAI-compatible third "
         "parties (OpenRouter, Ollama, LM Studio, LiteLLM, Azure, ...) "
         "via CUSTOM_API_KEY + CUSTOM_API_BASE_URL. Omit to auto-detect "
         "(Anthropic key → DeepSeek key → npx/ACP; raises if none)."
+    ),
+)
+@click.option(
+    "--preset", "-p",
+    help=(
+        "Named-preset selector — forces a specific preset as the "
+        "default for this run. Required: settings.presets must declare "
+        "the named preset. Mutually exclusive with --executor."
     ),
 )
 @click.option(
@@ -350,6 +402,7 @@ def run(
     dry_run: bool,
     model: str | None,
     executor: str | None,
+    preset: str | None,
     resume: bool,
     log_file: str | None,
 ):
@@ -359,18 +412,34 @@ def run(
     except Exception as e:
         raise click.ClickException(str(e))
 
+    if executor is not None and preset is not None:
+        raise click.ClickException(
+            "--executor and --preset are mutually exclusive; --executor "
+            "drives the legacy single-backend path and --preset selects "
+            "from settings.presets."
+        )
+
     if model:
         config.settings.default_model = model
 
-    # Resolution order: --executor flag > YAML settings.executor > auto-detect.
-    # auto_detect_executor warns when nothing is on disk and falls back to
-    # 'stub'; explicit choices never trigger that warning.
-    from sqrlly.runtime.executor.backends.factory import auto_detect_executor
-
-    executor_type = executor or config.settings.executor or auto_detect_executor()
+    # New path: settings.presets declared → use --preset (or YAML default).
+    # Legacy path: settings.presets empty → use --executor / settings.executor
+    # / auto-detect.
+    if config.settings.presets:
+        executor_type: str | None = None  # not used on the preset path
+        preset_override = preset
+    else:
+        from sqrlly.runtime.executor.backends.factory import auto_detect_executor
+        executor_type = (
+            executor or config.settings.executor or auto_detect_executor()
+        )
+        preset_override = None
 
     result = asyncio.run(
-        _run_async(config, workdir, dry_run, executor_type, resume, log_file)
+        _run_async(
+            config, workdir, dry_run, executor_type, preset_override,
+            resume, log_file,
+        )
     )
 
     completed = result.get("completed_nodes", set())

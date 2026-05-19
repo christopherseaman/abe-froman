@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from sqrlly.runtime.executor.preset import resolve_preset_name
 from sqrlly.runtime.executor.prompt import (
     PromptExecutor,
     prepend_eval_preamble,
@@ -57,20 +58,79 @@ class DispatchExecutor:
         self,
         workdir: str = ".",
         prompt_backend: PromptBackend | None = None,
+        prompt_backends: dict[str, PromptBackend] | None = None,
         settings: Settings | None = None,
     ):
+        """Construct a DispatchExecutor.
+
+        Backend wiring (mutually exclusive — pass at most one):
+          - ``prompt_backend``: single-backend convenience for tests
+            and the legacy ``settings.executor:`` path. Stored
+            internally under the synthetic preset name ``_legacy``.
+          - ``prompt_backends``: preset-name → backend dict. Used
+            when ``settings.presets:`` declares named presets;
+            each preset gets its own backend instance.
+
+        Passing neither is valid — dispatch will refuse prompt nodes
+        with a clear error (script / binary / join dispatch still work).
+        """
+        if prompt_backend is not None and prompt_backends is not None:
+            raise ValueError(
+                "DispatchExecutor: pass either prompt_backend (single) or "
+                "prompt_backends (dict), not both"
+            )
+
         self._workdir = workdir
         self._settings = settings or Settings()
         self._fetch_cache = _RemoteFetchCache()
 
+        # Normalize to internal registry (one PromptExecutor per backend).
+        # The ``_legacy`` synthetic name covers the single-backend path so
+        # downstream resolution always looks up by name without branching.
         if prompt_backend is not None:
-            self._prompt_executor: PromptExecutor | None = PromptExecutor(
-                backend=prompt_backend,
-                settings=self._settings,
-                workdir=workdir,
-            )
+            self._prompt_executors: dict[str, PromptExecutor] = {
+                "_legacy": PromptExecutor(
+                    backend=prompt_backend,
+                    settings=self._settings,
+                    workdir=workdir,
+                ),
+            }
+        elif prompt_backends is not None:
+            self._prompt_executors = {
+                name: PromptExecutor(
+                    backend=backend,
+                    settings=self._settings,
+                    workdir=workdir,
+                )
+                for name, backend in prompt_backends.items()
+            }
         else:
-            self._prompt_executor = None
+            self._prompt_executors = {}
+
+    def _resolve_prompt_executor(
+        self, node: Node, settings: Settings,
+    ) -> PromptExecutor | None:
+        """Pick the PromptExecutor for a node based on its preset.
+
+        Resolution:
+          - No executors registered → None (caller refuses prompt dispatch).
+          - Single ``_legacy`` executor → return it (single-backend mode).
+          - Multi-preset → ``resolve_preset_name(node, settings)`` →
+            look up by name. Raises if the named preset has no
+            corresponding backend in the registry (a CLI wiring bug).
+        """
+        if not self._prompt_executors:
+            return None
+        if "_legacy" in self._prompt_executors and len(self._prompt_executors) == 1:
+            return self._prompt_executors["_legacy"]
+        preset_name = resolve_preset_name(node, settings)
+        if preset_name not in self._prompt_executors:
+            raise RuntimeError(
+                f"Node {node.id!r} resolves to preset {preset_name!r}, "
+                f"but no backend is registered for it. Registry contains: "
+                f"{sorted(self._prompt_executors)}. CLI wiring bug."
+            )
+        return self._prompt_executors[preset_name]
 
     async def execute(
         self, node: Node, context: dict[str, Any],
@@ -148,13 +208,13 @@ class DispatchExecutor:
         settings: Settings,
     ) -> ExecutionResult:
         """Read prompt body (file or remote), render Jinja, send to backend."""
-        if self._prompt_executor is None:
+        prompt_executor = self._resolve_prompt_executor(node, settings)
+        if prompt_executor is None:
             raise RuntimeError(
                 f"Cannot dispatch prompt node {node.id!r}: no prompt "
                 f"backend wired. DispatchExecutor was constructed without "
-                f"a prompt_backend; pass one (e.g. via "
-                f"create_prompt_backend(...)) or run via the CLI which "
-                f"auto-detects."
+                f"a prompt_backend or prompt_backends; pass one or run via "
+                f"the CLI which auto-detects from settings.presets / env."
             )
 
         try:
@@ -166,7 +226,7 @@ class DispatchExecutor:
             )
 
         try:
-            applied = self._prompt_executor.apply_preamble(body, settings=settings)
+            applied = prompt_executor.apply_preamble(body, settings=settings)
         except FileNotFoundError as e:
             return ExecutionResult(
                 success=False,
@@ -175,22 +235,26 @@ class DispatchExecutor:
         rendered = render_template(applied, context)
         rendered = prepend_eval_preamble(rendered, context)
 
-        # PromptParams.model overrides Node.model overrides Settings.default.
-        # Explicit-None tests (not `or`) so an authored zero/empty value
-        # — e.g. `timeout: 0` to mean "kill immediately" — wins over the
-        # next-lower fallback rather than getting silently overridden.
+        # Model resolution (explicit-None tests, not `or`, so authored
+        # zero/empty values win over the next-lower fallback):
+        #   PromptParams.model > Node.model > preset.model (when presets
+        #   declared) > Settings.default_model (legacy fallback).
         params_model = getattr(params, "model", None)
-        current_model = (
-            params_model if params_model is not None
-            else node.model if node.model is not None
-            else settings.default_model
-        )
+        if params_model is not None:
+            current_model = params_model
+        elif node.model is not None:
+            current_model = node.model
+        elif settings.presets:
+            preset_name = resolve_preset_name(node, settings)
+            current_model = settings.presets[preset_name].model
+        else:
+            current_model = settings.default_model
         params_timeout = getattr(params, "timeout", None)
         timeout = (
             params_timeout if params_timeout is not None
             else node.effective_timeout(settings)
         )
-        return await self._prompt_executor.execute_rendered(
+        return await prompt_executor.execute_rendered(
             rendered, current_model, workdir, timeout=timeout,
             settings=settings,
         )
@@ -289,16 +353,29 @@ class DispatchExecutor:
             return ExecutionResult(success=False, error=str(e))
 
     def get_backend(self) -> PromptBackend | None:
-        """Return the PromptBackend, if one is configured.
+        """Return a PromptBackend for LLM-gate dispatch.
 
-        Used by the orchestrator to dispatch .md LLM gates through the
-        same backend the node executor uses.
+        Multi-preset workflows still need a single backend to evaluate
+        LLM gates (which aren't keyed by per-node preset). Resolution:
+          - No executors registered → None.
+          - Single-backend path → the only backend.
+          - Multi-preset path → the backend bound to the preset marked
+            ``default: true`` in ``Settings.presets``. If somehow no
+            default is resolvable (shouldn't happen — schema validator
+            blocks it), returns any backend deterministically.
         """
-        if self._prompt_executor is None:
+        if not self._prompt_executors:
             return None
-        return self._prompt_executor._backend
+        if "_legacy" in self._prompt_executors and len(self._prompt_executors) == 1:
+            return self._prompt_executors["_legacy"]._backend
+        for name, preset in self._settings.presets.items():
+            if preset.default and name in self._prompt_executors:
+                return self._prompt_executors[name]._backend
+        # Fallback: any backend. Deterministic via sorted key order.
+        first_name = sorted(self._prompt_executors)[0]
+        return self._prompt_executors[first_name]._backend
 
     async def close(self) -> None:
-        """Clean up backend resources."""
-        if self._prompt_executor is not None:
-            await self._prompt_executor.close()
+        """Close every PromptBackend in the registry."""
+        for executor in self._prompt_executors.values():
+            await executor.close()
