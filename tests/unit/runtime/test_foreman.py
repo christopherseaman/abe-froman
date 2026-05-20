@@ -50,6 +50,32 @@ def _cmd_phase(node_id: str, command: str = "pwd", args=None) -> Node:
     )
 
 
+class _InstrumentedForeman(ForemanExecutor):
+    """ForemanExecutor that records `_create_worktree` concurrency.
+
+    Not a mock — a real subclass overriding one method to add a small
+    delay plus an in-flight counter, so a test can observe whether two
+    creations overlapped (lock released across the subprocess) or
+    serialized (lock held). The delay makes the overlap deterministic.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.create_calls = 0
+        self._in_flight = 0
+        self.max_in_flight = 0
+
+    async def _create_worktree(self, node_id: str) -> str:
+        self.create_calls += 1
+        self._in_flight += 1
+        self.max_in_flight = max(self.max_in_flight, self._in_flight)
+        try:
+            await asyncio.sleep(0.05)
+            return await super()._create_worktree(node_id)
+        finally:
+            self._in_flight -= 1
+
+
 class TestWorktreePool:
     @pytest.mark.asyncio
     async def test_first_execute_creates_worktree(self, tmp_path):
@@ -127,6 +153,42 @@ class TestWorktreePool:
             wt_path = foreman.get_worktree("p")
             # pwd output should end with the worktree path (resolve symlinks)
             assert Path(result.output.strip()).resolve() == Path(wt_path).resolve()
+        finally:
+            await foreman.close()
+
+    @pytest.mark.asyncio
+    async def test_concurrent_same_node_creates_one_worktree(self, tmp_path):
+        """E3: two acquisitions racing for the same node_id share one
+        creation task — exactly one worktree, both callers get its path."""
+        _init_git_repo(tmp_path)
+        inner = DispatchExecutor(workdir=str(tmp_path))
+        foreman = _InstrumentedForeman(inner=inner, base_workdir=str(tmp_path))
+        try:
+            first, second = await asyncio.gather(
+                foreman._acquire_worktree("p"),
+                foreman._acquire_worktree("p"),
+            )
+            assert first == second
+            assert foreman.create_calls == 1
+        finally:
+            await foreman.close()
+
+    @pytest.mark.asyncio
+    async def test_concurrent_different_nodes_create_in_parallel(self, tmp_path):
+        """E3: acquisitions for distinct node_ids run their
+        `git worktree add` subprocesses concurrently — the global lock
+        is released before the subprocess, so both _create_worktree
+        bodies are in flight at once."""
+        _init_git_repo(tmp_path)
+        inner = DispatchExecutor(workdir=str(tmp_path))
+        foreman = _InstrumentedForeman(inner=inner, base_workdir=str(tmp_path))
+        try:
+            wa, wb = await asyncio.gather(
+                foreman._acquire_worktree("a"),
+                foreman._acquire_worktree("b"),
+            )
+            assert wa != wb
+            assert foreman.max_in_flight == 2
         finally:
             await foreman.close()
 

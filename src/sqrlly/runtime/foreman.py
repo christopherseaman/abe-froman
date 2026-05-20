@@ -64,6 +64,11 @@ class ForemanExecutor:
         }
         self._worktrees: dict[str, str] = dict(rehydrate or {})
         self._worktree_lock = asyncio.Lock()
+        # In-flight creations, keyed by node_id. The global lock is held
+        # only to register/look up a task here — never across the
+        # `git worktree add` subprocess — so concurrent fan-out children
+        # create their worktrees in parallel instead of serializing.
+        self._worktree_tasks: dict[str, asyncio.Task[str]] = {}
         self._settings = settings or Settings()
         self._memory_poll_s = memory_poll_interval_s
 
@@ -139,13 +144,31 @@ class ForemanExecutor:
             await asyncio.sleep(self._memory_poll_s)
 
     async def _acquire_worktree(self, node_id: str) -> str:
+        """Return the worktree path for ``node_id``, creating it once.
+
+        Concurrent callers for the *same* node_id share one creation
+        task; callers for *different* node_ids run their
+        ``git worktree add`` subprocesses in parallel. The lock guards
+        only the task registry, not the subprocess.
+        """
         async with self._worktree_lock:
             existing = self._worktrees.get(node_id)
             if existing and Path(existing).is_dir():
                 return existing
-            path = await self._create_worktree(node_id)
-            self._worktrees[node_id] = path
-            return path
+            task = self._worktree_tasks.get(node_id)
+            if task is None:
+                task = asyncio.create_task(self._create_worktree(node_id))
+                self._worktree_tasks[node_id] = task
+
+        try:
+            path = await task
+        finally:
+            # Drop the finished task so a failed creation can be retried
+            # rather than re-awaiting a task that holds a stale error.
+            async with self._worktree_lock:
+                if self._worktree_tasks.get(node_id) is task:
+                    del self._worktree_tasks[node_id]
+        return path
 
     async def _create_worktree(self, node_id: str) -> str:
         """Create a git worktree at base/.sqrlly/wt-<id>-<uuid>."""
@@ -168,7 +191,9 @@ class ForemanExecutor:
                 f"foreman: 'git worktree add' failed for {node_id}: "
                 f"{stderr.decode().strip()}"
             )
-        return str(dest)
+        path = str(dest)
+        self._worktrees[node_id] = path
+        return path
 
     def get_worktree(self, node_id: str) -> str | None:
         """Return the worktree path for a node_id, or None if not yet allocated."""
