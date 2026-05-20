@@ -66,10 +66,21 @@ def check_dep_failed(node: Node, state: WorkflowState) -> dict | None:
 def all_deps_completed(node: Node, state: WorkflowState) -> bool:
     """True iff every dep is in completed_nodes.
 
-    Multi-predecessor nodes whose preds are gated get triggered by each
-    pred's router independently (conditional edges). Returning {} from the
-    node body until all preds are done causes LangGraph to re-fire the
-    node on each subsequent pred-trigger — a natural join barrier.
+    Hand-rolled join barrier. A node with N gated predecessors gets
+    triggered N times — once per predecessor's Decision node firing
+    `Command(goto=this_node)`. The node body calls this guard and
+    returns `{}` until all N preds are done; LangGraph re-fires it on
+    each subsequent pred-trigger until the guard passes.
+
+    Why not LangGraph's native `NamedBarrierValue` multi-edge join:
+    that barrier counts only pure-static `add_edge` predecessors —
+    `Command(goto)` and conditional edges bypass it. Gated preds reach
+    this node via `Command(goto)` from their Decision nodes, and
+    `Command(goto)` does NOT suppress a node's static out-edges
+    (verified empirically), so there is no clean way to make the
+    Decision node a static-edge join predecessor without per-node
+    marker nodes that cost more than this guard. See WISHLIST #33
+    (closed not-a-defect, 2026-05-20).
     """
     completed = state.get("completed_nodes", set())
     return all(dep in completed for dep in node.depends_on)
