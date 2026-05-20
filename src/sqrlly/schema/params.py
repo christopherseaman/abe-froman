@@ -42,9 +42,14 @@ class SubprocessParams(_StrictParams):
     or direct-exec (binary path / unrecognized extension). Both paths
     use ``args`` + ``env`` and run through the same shared
     ``DispatchExecutor._run_subprocess``.
+
+    ``preset`` references a named command preset (``settings.presets``
+    with ``kind: command``) — the interpreter/command to run the script
+    under, replacing the extension→interpreter default.
     """
     args: list[str] = []
     env: dict[str, str] = {}
+    preset: str | None = None
 
 
 _PROMPT_EXTS = {".md", ".txt", ".prompt"}

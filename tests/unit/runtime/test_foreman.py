@@ -330,10 +330,10 @@ class TestPerModelBackpressure:
             ["git", "-C", str(tmp_path), "commit", "-q", "-m", "add p"],
             check=True,
         )
-        from sqrlly.schema.models import Preset
+        from sqrlly.schema.models import LlmPreset
         settings = Settings(presets={
-            "fast": Preset(transport="api", provider="anthropic", model="opus"),
-            "balanced": Preset(
+            "fast": LlmPreset(transport="api", provider="anthropic", model="opus"),
+            "balanced": LlmPreset(
                 transport="api", provider="anthropic",
                 model="sonnet", default=True,
             ),

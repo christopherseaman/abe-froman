@@ -130,8 +130,8 @@ class TestPresetsInheritance:
     """
 
     def _preset(self, model="x", default=False):
-        from sqrlly.schema.models import Preset
-        return Preset(
+        from sqrlly.schema.models import LlmPreset
+        return LlmPreset(
             transport="api", provider="anthropic", model=model, default=default,
         )
 

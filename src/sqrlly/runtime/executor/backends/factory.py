@@ -9,7 +9,7 @@ from sqrlly.runtime.result import PromptBackend
 from sqrlly.runtime.secrets import resolve_secret
 
 if TYPE_CHECKING:
-    from sqrlly.schema.models import Preset
+    from sqrlly.schema.models import LlmPreset
 
 DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
 
@@ -26,14 +26,14 @@ def _resolve_anthropic_key() -> str | None:
     return resolve_secret("ANTHROPIC_API_KEY")
 
 
-def _build_acp(_preset: "Preset") -> PromptBackend:
+def _build_acp(_preset: "LlmPreset") -> PromptBackend:
     return ACPBackend(
         program="npx",
         args=("@zed-industries/claude-code-acp",),
     )
 
 
-def _build_anthropic_api(_preset: "Preset") -> PromptBackend:
+def _build_anthropic_api(_preset: "LlmPreset") -> PromptBackend:
     api_key = _resolve_anthropic_key()
     if not api_key:
         raise ValueError(
@@ -43,7 +43,7 @@ def _build_anthropic_api(_preset: "Preset") -> PromptBackend:
     return AnthropicBackend(api_key=api_key)
 
 
-def _build_openai_api(_preset: "Preset") -> PromptBackend:
+def _build_openai_api(_preset: "LlmPreset") -> PromptBackend:
     api_key = resolve_secret("OPENAI_API_KEY")
     if not api_key:
         raise ValueError(
@@ -54,7 +54,7 @@ def _build_openai_api(_preset: "Preset") -> PromptBackend:
     return OpenAIBackend(api_key=api_key, base_url=base_url)
 
 
-def _build_deepseek_api(_preset: "Preset") -> PromptBackend:
+def _build_deepseek_api(_preset: "LlmPreset") -> PromptBackend:
     api_key = _resolve_deepseek_key()
     if not api_key:
         raise ValueError(
@@ -64,7 +64,7 @@ def _build_deepseek_api(_preset: "Preset") -> PromptBackend:
     return OpenAIBackend(api_key=api_key, base_url=DEEPSEEK_BASE_URL)
 
 
-def _build_custom_api(preset: "Preset") -> PromptBackend:
+def _build_custom_api(preset: "LlmPreset") -> PromptBackend:
     api_key = resolve_secret("CUSTOM_API_KEY")
     if not api_key:
         raise ValueError(
@@ -87,7 +87,7 @@ def _build_custom_api(preset: "Preset") -> PromptBackend:
 # (``Preset._validate_combinations`` + ``Literal`` field types) ensures
 # every parseable Preset matches one row. New transports/providers add
 # one row + one builder.
-_BACKEND_BUILDERS: dict[tuple[str, str], Callable[["Preset"], PromptBackend]] = {
+_BACKEND_BUILDERS: dict[tuple[str, str], Callable[["LlmPreset"], PromptBackend]] = {
     ("acp", "anthropic"): _build_acp,
     ("api", "anthropic"): _build_anthropic_api,
     ("api", "openai"):    _build_openai_api,
@@ -96,7 +96,7 @@ _BACKEND_BUILDERS: dict[tuple[str, str], Callable[["Preset"], PromptBackend]] = 
 }
 
 
-def create_backend_from_preset(preset: "Preset") -> PromptBackend:
+def create_backend_from_preset(preset: "LlmPreset") -> PromptBackend:
     """Instantiate a PromptBackend matching the preset's transport+provider.
 
     The preset's ``model`` is consulted per-call via ``send_prompt(model=...)``;

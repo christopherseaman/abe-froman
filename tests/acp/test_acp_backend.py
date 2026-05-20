@@ -77,9 +77,9 @@ class TestFactory:
             create_backend_from_preset,
         )
         from sqrlly.runtime.executor.backends.acp import ACPBackend
-        from sqrlly.schema.models import Preset
+        from sqrlly.schema.models import LlmPreset
 
-        preset = Preset(
+        preset = LlmPreset(
             transport="acp", provider="anthropic",
             model="sonnet", default=True,
         )
@@ -153,7 +153,7 @@ class TestACPIntegration:
         """End-to-end: DispatchExecutor → PromptExecutor → ACPBackend."""
         from sqrlly.runtime.executor.backends.acp import ACPBackend
         from sqrlly.runtime.executor.dispatch import DispatchExecutor
-        from sqrlly.schema.models import Execute, Node, Preset, Settings
+        from sqrlly.schema.models import Execute, Node, LlmPreset, Settings
 
         prompt_file = tmp_path / "test.md"
         prompt_file.write_text(
@@ -162,7 +162,7 @@ class TestACPIntegration:
 
         backend = ACPBackend()
         settings = Settings(presets={
-            "default": Preset(
+            "default": LlmPreset(
                 transport="acp", provider="anthropic",
                 model="sonnet", default=True,
             ),

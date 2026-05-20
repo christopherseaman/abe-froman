@@ -14,11 +14,11 @@ from sqrlly.runtime.executor.preset import (
     build_preset_registry,
     resolve_preset_name,
 )
-from sqrlly.schema.models import Execute, Node, Preset, Settings
+from sqrlly.schema.models import Execute, Node, LlmPreset, Settings
 
 
 def _preset(transport="api", provider="anthropic", model="sonnet", default=False, api_base_url=None):
-    return Preset(
+    return LlmPreset(
         transport=transport, provider=provider, model=model,
         default=default, api_base_url=api_base_url,
     )

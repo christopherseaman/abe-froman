@@ -24,7 +24,7 @@ import shutil
 from typing import TYPE_CHECKING
 
 from sqrlly.runtime.secrets import resolve_secret
-from sqrlly.schema.models import Preset, Settings
+from sqrlly.schema.models import LlmPreset, Preset, Settings
 
 if TYPE_CHECKING:
     from sqrlly.schema.models import Node
@@ -56,10 +56,11 @@ def resolve_preset_name(node: "Node", settings: Settings) -> str:
                 )
             return node_preset
 
-    # Fall through to default. Settings validator guarantees exactly
-    # one default when presets is non-empty; relying on that here.
+    # Fall through to the default LLM preset. The Settings validator
+    # guarantees exactly one when any LlmPreset exists. ``getattr`` —
+    # CommandPresets have no ``default`` attribute.
     for name, preset in settings.presets.items():
-        if preset.default:
+        if getattr(preset, "default", False):
             return name
 
     raise ValueError(
@@ -69,16 +70,16 @@ def resolve_preset_name(node: "Node", settings: Settings) -> str:
     )
 
 
-def auto_detect_default_preset() -> Preset:
-    """Synthesize a default Preset from environment keys.
+def auto_detect_default_preset() -> LlmPreset:
+    """Synthesize a default LlmPreset from environment keys.
 
     Resolution order (first match wins):
 
-      1. ``ANTHROPIC_API_KEY`` → ``Preset(transport=api,
+      1. ``ANTHROPIC_API_KEY`` → ``LlmPreset(transport=api,
          provider=anthropic, model=sonnet, default=True)``
-      2. ``DEEPSEEK_API_KEY`` → ``Preset(transport=api,
+      2. ``DEEPSEEK_API_KEY`` → ``LlmPreset(transport=api,
          provider=deepseek, model=deepseek-v4-flash, default=True)``
-      3. ``npx`` on PATH → ``Preset(transport=acp, provider=anthropic,
+      3. ``npx`` on PATH → ``LlmPreset(transport=acp, provider=anthropic,
          model=sonnet, default=True)`` (assumes
          ``@zed-industries/claude-code-acp`` is installed)
       4. Nothing → ``RuntimeError`` naming all three remediation
@@ -88,16 +89,16 @@ def auto_detect_default_preset() -> Preset:
     neither YAML nor CLI specified an explicit preset.
     """
     if resolve_secret("ANTHROPIC_API_KEY"):
-        return Preset(
+        return LlmPreset(
             transport="api", provider="anthropic", model="sonnet", default=True,
         )
     if resolve_secret("DEEPSEEK_API_KEY"):
-        return Preset(
+        return LlmPreset(
             transport="api", provider="deepseek",
             model="deepseek-v4-flash", default=True,
         )
     if shutil.which("npx"):
-        return Preset(
+        return LlmPreset(
             transport="acp", provider="anthropic", model="sonnet", default=True,
         )
     raise RuntimeError(
@@ -147,10 +148,19 @@ def build_preset_registry(
             f"--preset {cli_override!r} not found in settings.presets "
             f"(declared: {sorted(settings.presets)!r})"
         )
+    if not isinstance(settings.presets[cli_override], LlmPreset):
+        raise ValueError(
+            f"--preset {cli_override!r} names a command preset; the "
+            f"flag selects the default LLM preset and only applies to "
+            f"kind=llm presets."
+        )
 
-    # Flip default flags so cli_override wins. Use model_copy to avoid
-    # mutating the caller's Settings instance.
-    return {
-        name: p.model_copy(update={"default": name == cli_override})
-        for name, p in settings.presets.items()
-    }
+    # Flip the `default` flag so cli_override wins. Only LlmPresets carry
+    # `default` — CommandPresets pass through untouched. model_copy keeps
+    # the caller's Settings instance unmutated.
+    def _flip(name: str, preset: Preset) -> Preset:
+        if isinstance(preset, LlmPreset):
+            return preset.model_copy(update={"default": name == cli_override})
+        return preset
+
+    return {name: _flip(name, p) for name, p in settings.presets.items()}

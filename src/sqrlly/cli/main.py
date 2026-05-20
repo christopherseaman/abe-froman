@@ -223,6 +223,7 @@ async def _execute_workflow(
         create_backend_from_preset,
     )
     from sqrlly.runtime.executor.preset import build_preset_registry
+    from sqrlly.schema.models import LlmPreset
 
     registry = build_preset_registry(
         config.settings, cli_override=preset_override,
@@ -231,9 +232,13 @@ async def _execute_workflow(
     # in-flight settings — runtime resolution reads ``settings.presets``,
     # so the override has to land somewhere it can see.
     config.settings.presets = registry
+    # Only LLM presets become PromptBackends — command presets describe
+    # script interpreters, not LLM transports, and are consulted at
+    # script-dispatch time, not wired as backends.
     prompt_backends = {
         name: create_backend_from_preset(preset)
         for name, preset in registry.items()
+        if isinstance(preset, LlmPreset)
     }
     dispatch = DispatchExecutor(
         workdir=workdir, prompt_backends=prompt_backends,

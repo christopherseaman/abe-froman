@@ -16,7 +16,7 @@ from sqrlly.runtime.executor.backends.anthropic import AnthropicBackend
 from sqrlly.runtime.executor.backends.openai import OpenAIBackend
 from sqrlly.runtime.executor.dispatch import DispatchExecutor
 from sqrlly.runtime.executor.prompt import resolve_model
-from sqrlly.schema.models import Execute, Node, Preset, Settings
+from sqrlly.schema.models import Execute, Node, LlmPreset, Settings
 
 
 def _node(id_="n1", params=None):
@@ -28,10 +28,10 @@ def _node(id_="n1", params=None):
 
 def _settings_with_presets():
     return Settings(presets={
-        "cheap": Preset(
+        "cheap": LlmPreset(
             transport="api", provider="anthropic", model="haiku",
         ),
-        "smart": Preset(
+        "smart": LlmPreset(
             transport="api", provider="anthropic", model="opus",
             default=True,
         ),
@@ -41,10 +41,10 @@ def _settings_with_presets():
 class TestResolvePromptExecutor:
     def test_single_preset_via_registry(self):
         """One-entry registry: node resolves to that backend via default preset."""
-        from sqrlly.schema.models import Preset
+        from sqrlly.schema.models import LlmPreset
         backend = AnthropicBackend(api_key="sk-ant-fake")
         settings = Settings(presets={
-            "default": Preset(
+            "default": LlmPreset(
                 transport="api", provider="anthropic",
                 model="sonnet", default=True,
             ),
@@ -121,10 +121,10 @@ class TestGetBackend:
 
     def test_single_preset_returns_the_only_backend(self):
         """One-entry registry: get_backend() returns it."""
-        from sqrlly.schema.models import Preset
+        from sqrlly.schema.models import LlmPreset
         backend = AnthropicBackend(api_key="sk-ant")
         settings = Settings(presets={
-            "default": Preset(
+            "default": LlmPreset(
                 transport="api", provider="anthropic",
                 model="sonnet", default=True,
             ),

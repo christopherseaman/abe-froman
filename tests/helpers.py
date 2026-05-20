@@ -2,7 +2,7 @@
 
 import shutil
 
-from sqrlly.schema.models import Graph, Preset, Settings
+from sqrlly.schema.models import Graph, LlmPreset, Settings
 
 # Resolve binaries once at import time; the migrate tool uses
 # shutil.which the same way, so test helpers stay consistent.
@@ -16,7 +16,7 @@ def single_preset_settings(model: str = "sonnet", **extra_settings) -> Settings:
     """
     return Settings(
         presets={
-            "default": Preset(
+            "default": LlmPreset(
                 transport="api", provider="anthropic",
                 model=model, default=True,
             ),

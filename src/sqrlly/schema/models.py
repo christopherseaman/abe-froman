@@ -1,9 +1,17 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Literal, Self
+from typing import Annotated, Any, Literal, Self, Union
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Discriminator,
+    Field,
+    Tag,
+    field_validator,
+    model_validator,
+)
 
 
 # Binary multipliers (matches `free -h`, `dd`, `psutil` reporting
@@ -248,21 +256,16 @@ class FanOut(BaseModel):
     final_nodes: list[FanOutFinalNode] = []
 
 
-class Preset(BaseModel):
-    """Named bundle of execution config — referenced by name from nodes.
+class LlmPreset(BaseModel):
+    """Named bundle of LLM execution config — referenced by name from
+    prompt nodes via ``params.preset:`` (or the ``default: true`` one).
 
-    A workflow declares presets in ``settings.presets:``; nodes choose
-    one via ``params.preset:`` (or inherit the ``default: true`` preset).
     The ``--preset`` CLI flag overrides at run time. Resolution order:
     CLI flag > ``params.preset:`` > the preset marked ``default: true``.
-
-    Today only LLM transports (``api``, ``acp``) are recognized; the
-    schema is future-extensible for non-LLM bundles (subprocess
-    interpreters, Python envs) via per-transport tagged-union shapes —
-    deferred until that case lands.
     """
     model_config = ConfigDict(extra="forbid")
 
+    kind: Literal["llm"] = "llm"
     transport: Literal["api", "acp"]
     provider: Literal["anthropic", "openai", "deepseek", "custom"]
     model: str
@@ -289,6 +292,45 @@ class Preset(BaseModel):
                 f"provider={self.provider!r})"
             )
         return self
+
+
+class CommandPreset(BaseModel):
+    """Named interpreter/command bundle — referenced by name from script
+    nodes via ``params.preset:``. Replaces the hardwired
+    extension→interpreter map for nodes that opt in.
+
+    ``command`` is a command string (``"uv run"``, ``"python3.12 -X dev"``,
+    ``"deno run"``). At dispatch the command is ``shlex.split``, then the
+    resolved script path + ``params.args`` are appended — unless the
+    command contains the literal token ``{{file}}`` and/or ``{{args}}``,
+    in which case those tokens are substituted in place (token-level, not
+    string interpolation). Command presets carry no ``default`` — script
+    nodes opt in by name; no-preset scripts use the extension map.
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["command"] = "command"
+    command: str
+
+
+def _preset_discriminator(v: Any) -> str:
+    """Discriminator for the Preset union. Absent ``kind`` defaults to
+    ``"llm"`` so pre-command-preset YAML (which has no ``kind:`` field)
+    keeps parsing as an LlmPreset."""
+    if isinstance(v, dict):
+        return v.get("kind", "llm")
+    return getattr(v, "kind", "llm")
+
+
+# A preset is either an LLM bundle or a command bundle. Pydantic
+# dispatches on ``kind`` (callable discriminator → absent kind = llm).
+Preset = Annotated[
+    Union[
+        Annotated[LlmPreset, Tag("llm")],
+        Annotated[CommandPreset, Tag("command")],
+    ],
+    Discriminator(_preset_discriminator),
+]
 
 
 class Settings(BaseModel):
@@ -342,18 +384,26 @@ class Settings(BaseModel):
 
     @model_validator(mode="after")
     def _validate_default_preset(self) -> Self:
-        if not self.presets:
+        """Exactly one LlmPreset must be ``default: true`` when any
+        LlmPreset is declared. CommandPresets have no ``default`` —
+        script nodes opt in by name, so a default never applies to them.
+        """
+        llm_presets = {
+            name: p for name, p in self.presets.items()
+            if isinstance(p, LlmPreset)
+        }
+        if not llm_presets:
             return self
-        defaults = [name for name, p in self.presets.items() if p.default]
+        defaults = [name for name, p in llm_presets.items() if p.default]
         if len(defaults) == 0:
             raise ValueError(
-                f"settings.presets has {len(self.presets)} preset(s) "
-                f"({sorted(self.presets)!r}) but none marked "
+                f"settings.presets has {len(llm_presets)} LLM preset(s) "
+                f"({sorted(llm_presets)!r}) but none marked "
                 f"default: true — exactly one must be the default"
             )
         if len(defaults) > 1:
             raise ValueError(
-                f"settings.presets has multiple default: true presets "
+                f"settings.presets has multiple default: true LLM presets "
                 f"({sorted(defaults)!r}); exactly one allowed"
             )
         return self

@@ -128,9 +128,9 @@ class TestPrependEvalPreamble:
 
 class TestResolveModel:
     def _settings_with_default(self, model: str) -> Settings:
-        from sqrlly.schema.models import Preset
+        from sqrlly.schema.models import LlmPreset
         return Settings(presets={
-            "default": Preset(
+            "default": LlmPreset(
                 transport="api", provider="anthropic",
                 model=model, default=True,
             ),
@@ -552,17 +552,17 @@ class TestDispatchPromptFlow:
     async def test_preset_drives_model_per_node(self, tmp_path):
         """params.preset selects a non-default preset; the resolved
         preset's model is what the backend sees."""
-        from sqrlly.schema.models import Preset
+        from sqrlly.schema.models import LlmPreset
 
         prompt = tmp_path / "t.md"
         prompt.write_text("prompt")
         backend_smart = MemoryBackend()
         backend_cheap = MemoryBackend()
         settings = Settings(presets={
-            "cheap": Preset(
+            "cheap": LlmPreset(
                 transport="api", provider="anthropic", model="haiku",
             ),
-            "smart": Preset(
+            "smart": LlmPreset(
                 transport="api", provider="anthropic",
                 model="opus", default=True,
             ),
