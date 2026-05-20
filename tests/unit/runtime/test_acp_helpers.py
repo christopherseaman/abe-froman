@@ -1,58 +1,72 @@
 """Unit tests for pure helpers in runtime/executor/backends/acp.py.
 
-Covers _is_overload_error (pure predicate on exceptions) and the usage
-accumulation path inside _ACPCallbacks.session_update. No ACP process
-needed — these are pure data transformations.
+Covers ACP overload mapping (via the shared `maybe_raise_overload` +
+`ACP_OVERLOAD_SUBSTRINGS`) and the usage-accumulation path inside
+`_ACPCallbacks.session_update`. No ACP process needed — these are
+pure data transformations.
 """
 
 from types import SimpleNamespace
 
 import pytest
 
-from sqrlly.runtime.executor.backends.acp import (
-    _ACPCallbacks,
-    _is_overload_error,
+from sqrlly.runtime.executor.backends._overload import (
+    ACP_OVERLOAD_SUBSTRINGS,
+    maybe_raise_overload,
 )
+from sqrlly.runtime.executor.backends.acp import _ACPCallbacks
+from sqrlly.runtime.result import OverloadError
 
 
 # ---------------------------------------------------------------------------
-# _is_overload_error
+# ACP overload mapping — maybe_raise_overload + ACP_OVERLOAD_SUBSTRINGS
+#
+# ACP errors are message-shaped (generic exceptions, no status_code
+# attribute), so ACP passes its overload substrings to the shared
+# mapper. maybe_raise_overload RAISES OverloadError on a hit and
+# returns silently otherwise (caller re-raises the original).
 # ---------------------------------------------------------------------------
 
 
-class TestIsOverloadError:
+class TestACPOverloadMapping:
     @pytest.mark.parametrize(
-        "exc, expected",
+        "exc",
         [
-            (RuntimeError("529 overloaded, try again"), True),
-            (RuntimeError("API is overloaded"), True),
-            (RuntimeError("OVERLOAD detected"), True),  # case-insensitive
-            (RuntimeError("http 529 response"), True),
-            (RuntimeError("connection refused"), False),
-            (ValueError("bad input"), False),
-            (RuntimeError(""), False),
+            RuntimeError("529 overloaded, try again"),
+            RuntimeError("API is overloaded"),
+            RuntimeError("OVERLOAD detected"),  # case-insensitive
+            RuntimeError("http 529 response"),
         ],
     )
-    def test_message_heuristic(self, exc, expected):
-        assert _is_overload_error(exc) is expected
+    def test_overload_message_raises(self, exc):
+        with pytest.raises(OverloadError):
+            maybe_raise_overload(exc, message_substrings=ACP_OVERLOAD_SUBSTRINGS)
 
-    def test_status_code_529_attribute(self):
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            RuntimeError("connection refused"),
+            ValueError("bad input"),
+            RuntimeError(""),
+            Exception("innocent"),
+        ],
+    )
+    def test_non_overload_returns_silently(self, exc):
+        # No raise — returns None; the ACP caller then re-raises `exc`.
+        maybe_raise_overload(exc, message_substrings=ACP_OVERLOAD_SUBSTRINGS)
+
+    def test_status_529_attribute_still_caught(self):
+        """maybe_raise_overload also checks numeric status — an exception
+        carrying status_code 529 raises even without a message match."""
         exc = RuntimeError("something went wrong")
         exc.status_code = 529
-        assert _is_overload_error(exc) is True
+        with pytest.raises(OverloadError):
+            maybe_raise_overload(exc, message_substrings=ACP_OVERLOAD_SUBSTRINGS)
 
-    def test_status_529_attribute(self):
-        exc = RuntimeError("something")
-        exc.status = 529
-        assert _is_overload_error(exc) is True
-
-    def test_status_code_non_529_not_overload(self):
+    def test_non_overload_status_returns_silently(self):
         exc = RuntimeError("boom")
         exc.status_code = 500
-        assert _is_overload_error(exc) is False
-
-    def test_no_status_no_message_match(self):
-        assert _is_overload_error(Exception("innocent")) is False
+        maybe_raise_overload(exc, message_substrings=ACP_OVERLOAD_SUBSTRINGS)
 
 
 # ---------------------------------------------------------------------------

@@ -33,23 +33,36 @@ ANTHROPIC_OVERLOAD_NAMES = frozenset({
 # numeric status_code but should still trigger downgrade.
 OPENAI_OVERLOAD_NAMES = frozenset({"RateLimitError", "APIConnectionError"})
 
+# ACP errors are message-shaped, not attribute-shaped — the ACP
+# adapter surfaces overloads as plain exceptions whose text carries
+# the signal. These substrings (lower-cased) trigger downgrade.
+ACP_OVERLOAD_SUBSTRINGS = frozenset({"529", "overload"})
+
 
 def _is_overload_status(status: int | None) -> bool:
     return status is not None and status in _OVERLOAD_STATUSES
 
 
-def maybe_raise_overload(exc: BaseException, *, class_names: frozenset[str]) -> None:
+def maybe_raise_overload(
+    exc: BaseException,
+    *,
+    class_names: frozenset[str] = frozenset(),
+    message_substrings: frozenset[str] = frozenset(),
+) -> None:
     """If ``exc`` looks like a transient SDK error, raise ``OverloadError``.
 
     Returns silently otherwise — the caller re-raises ``exc`` to let
     real failures (4xx, ValueError, etc.) propagate.
 
-    Two checks, in order:
+    Three checks, in order:
       1. Numeric status on the exception (``status_code`` then ``status``)
          falls in the overload set.
       2. The exception's class name appears in ``class_names`` —
          provider-specific (e.g. Anthropic adds ``OverloadedError``,
          OpenAI uses just ``RateLimitError`` / ``APIConnectionError``).
+      3. Any of ``message_substrings`` (case-insensitive) appears in
+         ``str(exc)`` — for backends like ACP whose errors are
+         message-shaped, not attribute-shaped.
     """
     # `status_code` first, `status` as fallback — `is not None` rather
     # than `or` so a literal 0 status_code isn't skipped over.
@@ -60,3 +73,7 @@ def maybe_raise_overload(exc: BaseException, *, class_names: frozenset[str]) -> 
         raise OverloadError(str(exc)) from exc
     if type(exc).__name__ in class_names:
         raise OverloadError(str(exc)) from exc
+    if message_substrings:
+        msg = str(exc).lower()
+        if any(sub in msg for sub in message_substrings):
+            raise OverloadError(str(exc)) from exc

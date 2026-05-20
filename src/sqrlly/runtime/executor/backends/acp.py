@@ -10,17 +10,13 @@ from acp import spawn_agent_process, text_block
 from acp.interfaces import Client
 
 from sqrlly.runtime.executor.backends._lazy_client import await_with_timeout
-from sqrlly.runtime.result import ExecutionResult, OverloadError
+from sqrlly.runtime.executor.backends._overload import (
+    ACP_OVERLOAD_SUBSTRINGS,
+    maybe_raise_overload,
+)
+from sqrlly.runtime.result import ExecutionResult
 
 logger = logging.getLogger(__name__)
-
-
-def _is_overload_error(exc: Exception) -> bool:
-    msg = str(exc).lower()
-    if "529" in msg or "overload" in msg:
-        return True
-    status = getattr(exc, "status_code", None) or getattr(exc, "status", None)
-    return status == 529
 
 
 class _ACPCallbacks(Client):
@@ -130,8 +126,10 @@ class ACPBackend:
                 )
                 await await_with_timeout(coro, timeout)
             except Exception as e:
-                if _is_overload_error(e):
-                    raise OverloadError(str(e)) from e
+                # ACP errors are message-shaped — maybe_raise_overload
+                # checks the substrings; raises OverloadError on a hit,
+                # returns silently otherwise so we re-raise the original.
+                maybe_raise_overload(e, message_substrings=ACP_OVERLOAD_SUBSTRINGS)
                 raise
 
             return ExecutionResult(output=self._callbacks.text())

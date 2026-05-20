@@ -65,6 +65,7 @@ class RouteCase(BaseModel):
     paths typically perform a different task than the previous node,
     so the previous eval's feedback is noise unless explicitly wanted.
     """
+    model_config = ConfigDict(extra="forbid")
     when: str
     goto: str | list[str]
     include_eval: bool = False
@@ -72,6 +73,7 @@ class RouteCase(BaseModel):
 
 class RouteElse(BaseModel):
     """Structured else: target — same fields as RouteCase minus when:."""
+    model_config = ConfigDict(extra="forbid")
     goto: str | list[str]
     include_eval: bool = False
 
@@ -207,12 +209,14 @@ class Execute(BaseModel):
 
 
 class DimensionCheck(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     field: str
     min: float = Field(ge=0.0, le=1.0)
 
 
 class Evaluation(BaseModel):
     """Evaluation configuration for a node."""
+    model_config = ConfigDict(extra="forbid")
     validator: str
     threshold: float = Field(ge=0.0, le=1.0, default=0.0)
     blocking: bool = False
@@ -222,18 +226,21 @@ class Evaluation(BaseModel):
 
 
 class OutputContract(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     base_directory: str
     required_files: list[str] = []
 
 
 class FanOutTemplate(BaseModel):
     """Template for nodes spawned during fan-out over a manifest."""
+    model_config = ConfigDict(extra="forbid")
     execute: Execute
     evaluation: Evaluation | None = None
 
 
 class FanOutFinalNode(BaseModel):
     """A node that runs after fan-out completes, consuming aggregate output."""
+    model_config = ConfigDict(extra="forbid")
     id: str
     name: str
     description: str | None = None
