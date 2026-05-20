@@ -6,6 +6,7 @@ from click.testing import CliRunner
 
 from sqrlly.cli.main import (
     CHECKPOINT_DB,
+    _collect_subgraph_presets,
     _db_path,
     _is_git_repo,
     _thread_id_for,
@@ -240,3 +241,68 @@ class TestCliHelpers:
     def test_db_path(self, tmp_path):
         result = _db_path(str(tmp_path))
         assert result == str(Path(tmp_path) / CHECKPOINT_DB)
+
+
+class TestCollectSubgraphPresets:
+    """P1 regression — a subgraph node resolves its own preset, so the
+    CLI must collect subgraph-declared presets into the backend set."""
+
+    def _write(self, path: Path, text: str):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
+    def test_collects_preset_from_referenced_subgraph(self, tmp_path):
+        from sqrlly.schema.models import Graph
+
+        self._write(tmp_path / "sub.yaml", (
+            "name: Sub\nversion: '1.0'\n"
+            "settings:\n"
+            "  presets:\n"
+            "    sub_default:\n"
+            "      transport: acp\n"
+            "      provider: anthropic\n"
+            "      model: sonnet\n"
+            "      default: true\n"
+            "nodes:\n"
+            "  - id: inner\n    name: Inner\n"
+            "    execute:\n      url: inner.md\n"
+        ))
+        parent = Graph(
+            name="parent", version="1.0",
+            nodes=[{"id": "s", "name": "S", "execute": {"url": "sub.yaml"}}],
+        )
+        collected = _collect_subgraph_presets(parent, str(tmp_path))
+        assert "sub_default" in collected
+        assert collected["sub_default"].model == "sonnet"
+
+    def test_no_subgraphs_returns_empty(self, tmp_path):
+        from sqrlly.schema.models import Graph
+
+        parent = Graph(
+            name="parent", version="1.0",
+            nodes=[{"id": "a", "name": "A", "execute": {"url": "a.md"}}],
+        )
+        assert _collect_subgraph_presets(parent, str(tmp_path)) == {}
+
+    def test_recurses_into_nested_subgraphs(self, tmp_path):
+        from sqrlly.schema.models import Graph
+
+        self._write(tmp_path / "leaf.yaml", (
+            "name: Leaf\nversion: '1.0'\n"
+            "settings:\n"
+            "  presets:\n"
+            "    leaf_preset:\n"
+            "      transport: api\n      provider: anthropic\n"
+            "      model: haiku\n      default: true\n"
+            "nodes:\n  - id: x\n    name: X\n    execute:\n      url: x.md\n"
+        ))
+        self._write(tmp_path / "mid.yaml", (
+            "name: Mid\nversion: '1.0'\n"
+            "nodes:\n  - id: m\n    name: M\n    execute:\n      url: leaf.yaml\n"
+        ))
+        parent = Graph(
+            name="parent", version="1.0",
+            nodes=[{"id": "s", "name": "S", "execute": {"url": "mid.yaml"}}],
+        )
+        collected = _collect_subgraph_presets(parent, str(tmp_path))
+        assert "leaf_preset" in collected

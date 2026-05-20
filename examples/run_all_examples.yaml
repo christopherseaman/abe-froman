@@ -12,14 +12,13 @@ version: "0.1.0"
 #     in the same step. `settings.max_parallel_jobs` (default 4) caps
 #     concurrency via foreman's asyncio.Semaphore.
 #
-# Subgraphs inherit the parent's executor. Auto-detect picks the
-# first available real backend (Anthropic key → DeepSeek key → ACP);
-# raises if none are configured. Override per-run with `--executor`.
+# Each subgraph carries its own `settings.presets`; the CLI collects
+# them so subgraph nodes resolve their presets to real backends. A
+# workflow that declares no presets gets one synthesized by auto-detect
+# (Anthropic key → DeepSeek key → ACP). `--preset <name>` overrides.
 #
 # Usage:
 #   uv run sqrlly run examples/run_all_examples.yaml             # auto-detect
-#   uv run sqrlly run examples/run_all_examples.yaml -e acp      # force ACP
-#   uv run sqrlly run examples/run_all_examples.yaml -e anthropic
 #   uv run sqrlly run examples/run_all_examples.yaml --dry-run   # topology only
 
 nodes:

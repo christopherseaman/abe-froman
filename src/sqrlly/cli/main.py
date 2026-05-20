@@ -192,6 +192,47 @@ async def _run_async(
             logger.close()
 
 
+def _collect_subgraph_presets(
+    config: Graph,
+    base_dir: str,
+    _depth: int = 0,
+    _seen: set[str] | None = None,
+) -> dict:
+    """Recursively gather presets declared by every subgraph the
+    workflow references.
+
+    A subgraph node resolves ``params.preset`` against its own
+    ``settings.presets`` (merged at runtime), so those preset names
+    must have backends in the CLI-built registry. This walks the
+    subgraph tree and returns ``{name: Preset}`` for all of them.
+
+    Subgraph YAML that fails to load is skipped silently here — the
+    real load error surfaces during ``build_workflow_graph``.
+    """
+    from sqrlly.compile.subgraph import load_graph, node_subgraph_path
+
+    if _seen is None:
+        _seen = set()
+    collected: dict = {}
+    if _depth >= config.settings.max_subgraph_depth:
+        return collected
+    for node in config.nodes:
+        sub_path = node_subgraph_path(node)
+        if sub_path is None or sub_path in _seen:
+            continue
+        _seen.add(sub_path)
+        try:
+            sub = load_graph(sub_path, base_dir)
+        except Exception:
+            continue
+        for name, preset in sub.settings.presets.items():
+            collected[name] = preset
+        collected.update(
+            _collect_subgraph_presets(sub, base_dir, _depth + 1, _seen)
+        )
+    return collected
+
+
 async def _execute_workflow(
     config: Graph,
     workdir: str,
@@ -228,16 +269,40 @@ async def _execute_workflow(
     registry = build_preset_registry(
         config.settings, cli_override=preset_override,
     )
-    # Reflect the (possibly synthesized or flipped) registry in the
-    # in-flight settings — runtime resolution reads ``settings.presets``,
-    # so the override has to land somewhere it can see.
+    # Reflect the (possibly synthesized or flipped) root registry in
+    # the in-flight settings — root-scope runtime resolution reads
+    # ``config.settings.presets``. This stays the ROOT registry only
+    # (one ``default: true``); subgraph presets live in each subgraph's
+    # own merged settings.
     config.settings.presets = registry
+
+    # The backend registry, however, needs every preset NAME any node
+    # — including subgraph nodes — might resolve. Subgraph nodes
+    # resolve against their own settings.presets, so fold the whole
+    # subgraph tree's presets into the backend set. A name shared
+    # across scopes must describe the same backend (the registry is
+    # flat, name-keyed); ``default``-flag differences are scope-local
+    # and don't count as a conflict.
+    all_presets = dict(registry)
+    for name, preset in _collect_subgraph_presets(config, workdir).items():
+        existing = all_presets.get(name)
+        if existing is not None and (
+            existing.model_dump(exclude={"default"})
+            != preset.model_dump(exclude={"default"})
+        ):
+            raise click.ClickException(
+                f"Preset {name!r} is declared with conflicting definitions "
+                f"across the workflow and its subgraphs. A preset name "
+                f"shared between scopes must describe the same backend."
+            )
+        all_presets.setdefault(name, preset)
+
     # Only LLM presets become PromptBackends — command presets describe
     # script interpreters, not LLM transports, and are consulted at
     # script-dispatch time, not wired as backends.
     prompt_backends = {
         name: create_backend_from_preset(preset)
-        for name, preset in registry.items()
+        for name, preset in all_presets.items()
         if isinstance(preset, LlmPreset)
     }
     dispatch = DispatchExecutor(
