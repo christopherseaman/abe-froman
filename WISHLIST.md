@@ -63,6 +63,35 @@ Architectural findings from the second-round agent audit. The cluster of small-w
   2. **Empirically tested**: `Command(goto=X)` does NOT suppress a node's static out-edges — both fire. So the clean conversion ("Decision emits a plain dict + static edge on pass/fail, `Command(goto)` only on retry") is impossible: the static edge into the join target would fire on every retry cycle, tripping the barrier prematurely.
   The only native-join-compatible design is per-gated-node **marker nodes** (`_settled_<dep>`, reached only on terminal outcomes, carrying the static edge). That adds ~40-60 lines + a synthetic node per gated node — strictly more complexity than the 10-line `all_deps_completed` guard it would remove. `all_deps_completed` is non-idiomatic but correct, small, and doing a job LangGraph genuinely lacks a cleaner primitive for. Revisit only if a concrete defect surfaces.
 
+## Hardening — structural footgun checks (2026-05-20)
+
+Inspired by a "structural backpressure" review: deterministic,
+machine-checkable constraints beat behavioral instructions. Several
+entries in CLAUDE.md's "Known limitations" are *author footguns* —
+gotchas the workflow author must remember, with nothing in `validate`
+to catch a violation. The structural fix is to move each check into
+the compile/validate boundary. Warn at minimum; hard-error only where
+the construct is unambiguously broken.
+
+- [~] **(34) Compile-time footgun checks for documented gotchas** —
+  partial. Warning channel + hyphenated-id check delivered 2026-05-20.
+  - [x] **Warning channel** — `compile/lint.py::collect_warnings`
+    (pure, langgraph-free) + `cli/main.py::_emit_warnings` printing
+    yellow `warning:` lines to stderr. Wired into both `validate` and
+    `run` (covers `--dry-run`).
+  - [x] **Hyphenated node IDs** — `collect_warnings` flags any
+    top-level node id or fan-out final-node id containing `-`
+    (subtraction footgun), suggesting the underscore rename. Chose the
+    structural ID-only check over a template scan: pure, zero-I/O,
+    safe on every `run`. Top-level config only — subgraph configs are
+    not loaded.
+  - [ ] **`{{sender_id}}` on a non-goto-reachable node** —
+    `_route_sender` is last-write-wins; a node reached by a static
+    `depends_on` edge *after* an inline-route hop elsewhere can
+    observe a stale `sender_id`. CLAUDE.md tells authors to guard with
+    `{% if sender_id %}`. Deferred — needs topology reachability
+    analysis and is lower confidence (may be noisy).
+
 ## Coverage gaps from post-Stage-5c audit (2026-05-06)
 
 Five gaps surfaced when auditing test/example coverage of recently-

@@ -89,6 +89,8 @@ Three-layer split (enforced by `tests/architecture/test_layers.py`):
   (langgraph-free).
 - `evaluation.py` — `evaluation_to_routes()`, `walk_routes()` —
   desugars Evaluation → first-match route ladder.
+- `lint.py` — `collect_warnings()` — pure, langgraph-free advisory
+  footgun checks (non-fatal); surfaced by `validate` + `run`.
 
 **`src/sqrlly/runtime/`** — executors, backends, gates, foreman
 (no compile/langgraph imports, except `url.py` which is also
@@ -178,9 +180,8 @@ mapping (we're testing our wrapping code, not the SDK).
 
 - **Hyphenated node IDs in Jinja templates** — `{{research-phase}}`
   parses as subtraction. Use underscores in IDs that need template
-  substitution.
-- **Subphase quality gates record but don't retry** — retry routing
-  only works for top-level node gates, not fan-out children.
+  substitution. `validate` / `run` now emit an advisory warning for
+  any hyphenated node id (`compile/lint.py`).
 - **Per-model backpressure under downgrade** — Foreman acquires the
   semaphore for the node's *original* model. If `PromptExecutor`
   downgrades opus → sonnet mid-call (on `OverloadError`), the sonnet

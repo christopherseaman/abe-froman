@@ -9,6 +9,7 @@ import click
 import yaml
 
 from sqrlly.compile.graph import build_workflow_graph
+from sqrlly.compile.lint import collect_warnings
 from sqrlly.runtime.executor.dispatch import DispatchExecutor
 from sqrlly.runtime.foreman import ForemanExecutor
 from sqrlly.runtime.runner import run_workflow
@@ -49,6 +50,12 @@ def _db_path(workdir: str) -> str:
     return str(Path(workdir) / CHECKPOINT_DB)
 
 
+def _emit_warnings(config: Graph) -> None:
+    """Print advisory lint warnings to stderr (non-fatal)."""
+    for warning in collect_warnings(config):
+        click.echo(click.style(f"warning: {warning}", fg="yellow"), err=True)
+
+
 @click.group()
 def cli():
     """sqrlly — workflow orchestrator."""
@@ -62,11 +69,12 @@ def validate(config_file: str):
     try:
         config = load_config(config_file)
         build_workflow_graph(config)
-        click.echo(
-            f"Valid: {config.name} v{config.version} ({len(config.nodes)} nodes)"
-        )
     except Exception as e:
         raise click.ClickException(str(e))
+    _emit_warnings(config)
+    click.echo(
+        f"Valid: {config.name} v{config.version} ({len(config.nodes)} nodes)"
+    )
 
 
 @cli.command()
@@ -402,6 +410,8 @@ def run(
         config = load_config(config_file)
     except Exception as e:
         raise click.ClickException(str(e))
+
+    _emit_warnings(config)
 
     result = asyncio.run(
         _run_async(config, workdir, dry_run, preset, resume, log_file)

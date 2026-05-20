@@ -47,6 +47,21 @@ class TestValidateCommand:
         assert result.exit_code == 0
         assert "1 nodes" in result.output
 
+    def test_validate_warns_on_hyphenated_id(self, runner, tmp_path):
+        """A hyphenated node id is a valid config — validate still
+        succeeds (exit 0, 'Valid:') but emits an advisory warning."""
+        config = tmp_path / "hyphen.yaml"
+        config.write_text(
+            "name: Test\nversion: '1.0'\nnodes:\n"
+            "  - id: research-phase\n    name: Research\n"
+            "    execute:\n      url: t.md\n"
+        )
+        result = runner.invoke(cli, ["validate", str(config)])
+        assert result.exit_code == 0
+        assert "Valid:" in result.output
+        assert "research-phase" in result.stderr
+        assert "warning:" in result.stderr
+
 
 class TestGraphCommand:
     def test_graph_prints_phase_ids(self, runner, kitchen_sink_workflow_path):
@@ -119,6 +134,26 @@ class TestRunCommand:
         result = runner.invoke(cli, ["run", str(config), "--workdir", str(tmp_path)])
         assert result.exit_code == 0
         assert "Completed: 1 nodes" in result.output
+
+    def test_run_warns_on_hyphenated_id(self, runner, tmp_path):
+        """`run` surfaces the same advisory warning as `validate` — the
+        node still executes; the warning is non-fatal."""
+        import shutil
+        echo_bin = shutil.which("echo") or "/bin/echo"
+        config = tmp_path / "hyphen.yaml"
+        config.write_text(
+            "name: Simple\nversion: '1.0'\nnodes:\n"
+            "  - id: echo-test\n    name: Echo Test\n"
+            f"    execute:\n      url: {echo_bin}\n"
+            "      params:\n        args: ['hello']\n"
+        )
+        result = runner.invoke(
+            cli, ["run", str(config), "--workdir", str(tmp_path)]
+        )
+        assert result.exit_code == 0
+        assert "Completed: 1 nodes" in result.output
+        assert "echo-test" in result.stderr
+        assert "warning:" in result.stderr
 
     def test_run_failing_command_exits_nonzero(self, runner, tmp_path):
         """A failing command node should cause non-zero exit."""
