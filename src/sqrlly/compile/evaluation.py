@@ -128,7 +128,7 @@ def evaluation_to_routes(evaluation: Evaluation, max_retries: int) -> list[Route
     """
     if evaluation.dimensions:
         pass_clauses = [
-            Criterion(field=f"result.scores.{d.field}", op=">=", value=d.min)
+            Criterion(field=f"result.scores.{d.field}", op=">=", value=d.threshold)
             for d in evaluation.dimensions
         ]
         # Any single dim below its min → retry. Routes AND their clauses,
@@ -138,7 +138,7 @@ def evaluation_to_routes(evaluation: Evaluation, max_retries: int) -> list[Route
         retry_routes = [
             Route(
                 when=[
-                    Criterion(field=f"result.scores.{d.field}", op="<", value=d.min),
+                    Criterion(field=f"result.scores.{d.field}", op="<", value=d.threshold),
                     Criterion(field="invocation", op="<", value=max_retries),
                 ],
                 to="retry",

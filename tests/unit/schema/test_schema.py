@@ -146,15 +146,16 @@ class TestQualityGate:
         gate = Evaluation(
             validator="v.py",
             dimensions=[
-                DimensionCheck(field="correctness", min=0.7),
-                DimensionCheck(field="style", min=0.5),
+                DimensionCheck(field="correctness", threshold=0.7),
+                DimensionCheck(field="style", threshold=0.5),
             ],
         )
         assert len(gate.dimensions) == 2
         assert gate.dimensions[0].field == "correctness"
-        assert gate.dimensions[0].min == 0.7
+        assert gate.dimensions[0].threshold == 0.7
 
     def test_dimension_gate_from_yaml(self):
+        # `min` is the back-compat YAML alias for `threshold`.
         raw = {
             "validator": "v.py",
             "dimensions": [
@@ -164,6 +165,7 @@ class TestQualityGate:
         }
         gate = Evaluation(**raw)
         assert gate.dimensions[1].field == "style"
+        assert gate.dimensions[0].threshold == 0.7
 
     def test_dimension_check_bounds(self):
         with pytest.raises(ValidationError):

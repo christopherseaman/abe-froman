@@ -209,9 +209,11 @@ class Execute(BaseModel):
 
 
 class DimensionCheck(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    # `threshold` matches `Evaluation.threshold`; `min` stays accepted
+    # as a YAML alias for back-compat with pre-rename workflows.
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
     field: str
-    min: float = Field(ge=0.0, le=1.0)
+    threshold: float = Field(ge=0.0, le=1.0, alias="min")
 
 
 class Evaluation(BaseModel):

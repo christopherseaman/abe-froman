@@ -320,7 +320,7 @@ def _evaluation_summary(node: Node, result: EvaluationResult) -> str:
     evaluation = node.evaluation
     if evaluation.dimensions:
         parts = [
-            f"{d.field}={result.scores.get(d.field, 0.0):.2f}>={d.min}"
+            f"{d.field}={result.scores.get(d.field, 0.0):.2f}>={d.threshold}"
             for d in evaluation.dimensions
         ]
         return ", ".join(parts)

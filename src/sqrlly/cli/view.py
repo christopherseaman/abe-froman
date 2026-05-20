@@ -276,7 +276,7 @@ def extract_node_config(node: Node) -> dict[str, Any]:
             ev["threshold"] = node.evaluation.threshold
         if node.evaluation.dimensions:
             ev["dimensions"] = [
-                {"field": d.field, "min": d.min}
+                {"field": d.field, "min": d.threshold}
                 for d in node.evaluation.dimensions
             ]
         if node.evaluation.max_retries is not None:

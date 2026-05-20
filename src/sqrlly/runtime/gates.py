@@ -55,10 +55,12 @@ def build_eval_preamble(
             reason = dim_reasons.get(d.field)
             if reason:
                 head_lines.append(
-                    f"- {d.field}={score:.2f} (min={d.min}): {reason}"
+                    f"- {d.field}={score:.2f} (min={d.threshold}): {reason}"
                 )
             else:
-                head_lines.append(f"- {d.field}={score:.2f} (min={d.min})")
+                head_lines.append(
+                    f"- {d.field}={score:.2f} (min={d.threshold})"
+                )
         # Surface any extra dimensions the gate reported beyond what
         # was declared, so unexpected coverage is visible.
         declared = {d.field for d in dimensions}
@@ -182,7 +184,7 @@ def _parse_evaluation_output(
         # and never reads `result.score`, but the headline value
         # surfaces in JSONL events. Derive `min(dim_scores)` so the
         # operator sees the weakest-link value — matches the
-        # weakest-link semantics already encoded in `dimensions[].min`.
+        # weakest-link semantics already encoded in `dimensions[].threshold`.
         score = min(dim_scores.values())
     else:
         score = 0.0

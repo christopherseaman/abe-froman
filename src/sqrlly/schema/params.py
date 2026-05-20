@@ -81,7 +81,13 @@ def params_for_url(
     ``SubprocessParams`` (script + exec collapsed in Stage 5b cleanup).
     """
     if mode is not None:
-        return _MODE_TO_PARAMS[mode]
+        try:
+            return _MODE_TO_PARAMS[mode]
+        except KeyError:
+            raise ValueError(
+                f"Unknown execute mode {mode!r}; "
+                f"expected one of {sorted(_MODE_TO_PARAMS)}"
+            ) from None
     parts = urlsplit(resolved_url)
     ext = Path(parts.path).suffix.lower()
     if ext in _PROMPT_EXTS:

@@ -113,6 +113,14 @@ class TestParamsForURL:
         assert params_for_url("file:///x/Y.MD") is PromptParams
         assert params_for_url("file:///x/Y.YAML") is SubgraphParams
 
+    def test_explicit_mode_overrides_extension(self):
+        assert params_for_url("file:///x/y.py", mode="prompt") is PromptParams
+
+    def test_unknown_mode_raises_value_error(self):
+        with pytest.raises(ValueError) as ei:
+            params_for_url("file:///x/y.md", mode="bogus")
+        assert "bogus" in str(ei.value)
+
 
 class TestCoerceParams:
     def test_coerce_prompt_url_with_preset(self):

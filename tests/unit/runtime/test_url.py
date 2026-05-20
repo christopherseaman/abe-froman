@@ -116,6 +116,23 @@ class TestFetchFileURL:
         body = fetch_url(f"file://{path}", Settings(), cache)
         assert body == b"first"
 
+    def test_size_cap_rejects_oversize_file(self, tmp_path):
+        path = tmp_path / "big.md"
+        path.write_bytes(b"x" * 200)
+        cache = _RemoteFetchCache()
+        settings = Settings(max_remote_fetch_bytes=100)
+        with pytest.raises(RemoteURLFetchError) as ei:
+            fetch_url(f"file://{path}", settings, cache)
+        assert "max_remote_fetch_bytes" in str(ei.value)
+
+    def test_size_cap_allows_file_at_or_below(self, tmp_path):
+        path = tmp_path / "ok.md"
+        path.write_bytes(b"x" * 100)
+        cache = _RemoteFetchCache()
+        settings = Settings(max_remote_fetch_bytes=100)
+        body = fetch_url(f"file://{path}", settings, cache)
+        assert body == b"x" * 100
+
 
 # ----- fetch_url: remote URL gates -----
 

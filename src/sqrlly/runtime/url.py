@@ -128,7 +128,12 @@ def _matches_allowlist(host: str, patterns: list[str]) -> bool:
 def _select_headers(
     resolved_url: str, header_map: dict[str, dict[str, str]]
 ) -> dict[str, str]:
-    """First-prefix-wins header lookup."""
+    """First-prefix-wins header lookup.
+
+    ``header_map`` keys are URL *prefixes* (e.g. ``https://api.example.com/``),
+    not hostnames — the first key that ``resolved_url`` starts with wins,
+    so order entries most-specific-first in ``settings.url_headers``.
+    """
     for prefix, headers in header_map.items():
         if resolved_url.startswith(prefix):
             return {k: _expand_vars(v) for k, v in headers.items()}
@@ -140,7 +145,8 @@ def fetch_url(
 ) -> bytes:
     """Fetch a remote URL body, gated by Settings + cached per compile.
 
-    File URLs return the raw bytes. Remote URLs go through:
+    File URLs return the raw bytes, still subject to the
+    max_remote_fetch_bytes size cap. Remote URLs go through:
       1. allow_remote_urls (master switch).
       2. allowed_url_hosts (glob host match if non-empty).
       3. allow_remote_scripts (extra opt-in for .py/.js/.sh/etc).
@@ -158,6 +164,12 @@ def fetch_url(
     if parts.scheme == "file":
         path = Path(parts.path)
         body = path.read_bytes()
+        max_bytes = settings.max_remote_fetch_bytes
+        if len(body) > max_bytes:
+            raise RemoteURLFetchError(
+                f"File URL {canon!r} body exceeds "
+                f"settings.max_remote_fetch_bytes={max_bytes}"
+            )
         cache.bodies[canon] = body
         return body
 
