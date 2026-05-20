@@ -1,18 +1,34 @@
-"""Shared `_read_manifest` helper for fan-out manifest resolution.
+"""Shared langgraph-free compile helpers.
 
-Lives in its own module so both `compile/graph.py` (where the fan-out
-parent's conditional-edge router reads the manifest) and
-`compile/dynamic.py` (where the final-node aggregator reads it) can
-import it without crossing the private-import boundary in the other
-direction. Pure function — no langgraph imports.
+Lives in its own module so `compile/graph.py`, `compile/dynamic.py`,
+and `compile/subgraph.py` can all import these without crossing a
+private-import boundary in the other direction. Pure functions — no
+langgraph imports.
 """
 from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from sqrlly.runtime.state import WorkflowState
 from sqrlly.schema.models import Node
+
+if TYPE_CHECKING:
+    from sqrlly.schema.models import Graph
+
+
+def find_terminal_nodes(config: "Graph") -> list[str]:
+    """Node ids not depended on by any other node, in declaration order.
+
+    A subgraph's terminal output is the *last* such node; the top-level
+    builder wants the set. Returning an ordered list serves both —
+    callers ``set(...)`` it or take ``[-1]`` as needed.
+    """
+    depended_on: set[str] = set()
+    for node in config.nodes:
+        depended_on.update(node.depends_on)
+    return [n.id for n in config.nodes if n.id not in depended_on]
 
 
 def _read_manifest(state: WorkflowState, node: Node) -> list[dict]:

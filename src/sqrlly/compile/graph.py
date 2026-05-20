@@ -10,9 +10,13 @@ from typing import TYPE_CHECKING, Any
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, Send
 
-from sqrlly.compile._manifest import _read_manifest
+from sqrlly.compile._manifest import _read_manifest, find_terminal_nodes
 from sqrlly.compile.dynamic import _make_final_fan_out_node, _make_fan_out_node
-from sqrlly.compile.nodes import _make_evaluation_node, _make_execution_node
+from sqrlly.compile.nodes import (
+    _make_combined_eval_decide_node,
+    _make_evaluation_node,
+    _make_execution_node,
+)
 from sqrlly.compile.route import build_route_namespace, evaluate_case
 from sqrlly.compile.subgraph import node_subgraph_path
 from sqrlly.runtime.gates import build_eval_preamble
@@ -21,13 +25,6 @@ from sqrlly.schema.models import Graph, Node, Settings
 
 if TYPE_CHECKING:
     from sqrlly.runtime.result import NodeExecutor
-
-
-def _find_terminal_nodes(config: Graph) -> set[str]:
-    depended_on: set[str] = set()
-    for node in config.nodes:
-        depended_on.update(node.depends_on)
-    return {p.id for p in config.nodes if p.id not in depended_on}
 
 
 def _resolve_goto(target: str | list[str]) -> str | list[str]:
@@ -177,44 +174,6 @@ def _detect_cycles(config: Graph) -> None:
         raise ValueError(f"Circular dependency detected: {cycle}") from e
 
 
-def _register_evaluation_node(
-    builder: StateGraph,
-    node: Node,
-    config: Graph,
-    executor: NodeExecutor | None,
-    exec_node_id: str | None = None,
-    *,
-    effective_settings: Settings | None = None,
-    combined: bool = False,
-) -> str:
-    """Register ``_eval_{exec_node_id}`` and return its id.
-
-    ``combined=True`` selects ``_make_combined_eval_decide_node`` —
-    the pre-Stage-5d body that classifies inline and writes outcome
-    state in addition to the record. Used only for dynamic gated
-    parents (whose downstream conditional-edge dynamic_router needs
-    completed_nodes/failed_nodes/retries already in state).
-
-    Top-level gated nodes use ``combined=False`` (eval-only); a
-    separate Decision node downstream classifies + routes via
-    ``Command(update=..., goto=...)``.
-    """
-    from sqrlly.compile.nodes import _make_combined_eval_decide_node
-
-    factory = (
-        _make_combined_eval_decide_node if combined
-        else _make_evaluation_node
-    )
-    eval_id = f"_eval_{exec_node_id or node.id}"
-    builder.add_node(
-        eval_id,
-        factory(
-            node, config, executor, effective_settings=effective_settings,
-        ),
-    )
-    return eval_id
-
-
 def _wire_evaluation_pair(
     builder: StateGraph,
     node: Node,
@@ -341,8 +300,17 @@ def build_workflow_graph(
     base_dir = Path(_base_dir) if _base_dir is not None else Path(".")
 
     builder = StateGraph(WorkflowState)
-    terminal_ids = _find_terminal_nodes(config)
+    terminal_ids = set(find_terminal_nodes(config))
     node_map = {p.id: p for p in config.nodes}
+
+    # Reverse dependency map: dependents[x] = ids declaring `x` in their
+    # depends_on, in declaration order. Built once instead of an O(N)
+    # rescan of config.nodes per gated/dynamic node below.
+    dependents: dict[str, list[str]] = {n.id: [] for n in config.nodes}
+    for p in config.nodes:
+        for dep in p.depends_on:
+            if dep in dependents:
+                dependents[dep].append(p.id)
 
     gated_node_ids: set[str] = set()
     dynamic_fan_out_ids: set[str] = set()
@@ -433,10 +401,14 @@ def build_workflow_graph(
     # outcome from state.
     for node in config.nodes:
         if node.evaluation:
-            _register_evaluation_node(
-                builder, node, config, executor,
-                effective_settings=settings,
-                combined=(node.id in dynamic_fan_out_ids),
+            factory = (
+                _make_combined_eval_decide_node
+                if node.id in dynamic_fan_out_ids
+                else _make_evaluation_node
+            )
+            builder.add_node(
+                f"_eval_{node.id}",
+                factory(node, config, executor, effective_settings=settings),
             )
 
     # Dynamic node child template + final nodes.
@@ -474,9 +446,12 @@ def build_workflow_graph(
                     evaluation=final_node.evaluation,
                 )
                 final_synthetic_nodes[fid] = synthetic
-                _register_evaluation_node(
-                    builder, synthetic, config, executor, exec_node_id=fid,
-                    effective_settings=settings,
+                builder.add_node(
+                    f"_eval_{fid}",
+                    _make_evaluation_node(
+                        synthetic, config, executor,
+                        effective_settings=settings,
+                    ),
                 )
 
     # ----- exit_node: what downstream deps plain-edge from -----
@@ -549,7 +524,7 @@ def build_workflow_graph(
                 effective_settings=settings,
             )
         else:
-            deps_of = [p.id for p in config.nodes if node.id in p.depends_on]
+            deps_of = dependents[node.id]
             _wire_evaluation_pair(
                 builder, node, node.id, deps_of or [END], config,
                 effective_settings=settings,
@@ -597,7 +572,7 @@ def build_workflow_graph(
                     builder.add_edge(cur, nxt)
 
         # Branch exit → parent's dependents.
-        deps_of = [p.id for p in config.nodes if node.id in p.depends_on]
+        deps_of = dependents[node.id]
         last_final = (
             final_node_ids[(node.id, dsc.final_nodes[-1].id)]
             if dsc.final_nodes else None

@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
+from sqrlly.compile._manifest import find_terminal_nodes
 from sqrlly.compile.nodes import (
     all_deps_completed,
     build_context,
@@ -63,10 +64,7 @@ def _terminal_node_output(sub_state: dict[str, Any], sub_config: Graph) -> str:
     terminals exist, picks the last one defined. Returns "" if subgraph
     has no node_outputs.
     """
-    depended_on: set[str] = set()
-    for n in sub_config.nodes:
-        depended_on.update(n.depends_on)
-    terminals = [n.id for n in sub_config.nodes if n.id not in depended_on]
+    terminals = find_terminal_nodes(sub_config)
     if not terminals:
         return ""
     outputs = sub_state.get("node_outputs", {})

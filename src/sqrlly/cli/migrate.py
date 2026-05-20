@@ -58,7 +58,12 @@ from ruamel.yaml.comments import CommentedMap, CommentedSeq
 
 
 def _yaml() -> YAML:
-    """Round-trip-mode YAML preserving comments, anchors, and formatting."""
+    """Round-trip-mode YAML preserving comments, anchors, and formatting.
+
+    Deliberately duplicated in ``scripts/migrate_legacy_executor_to_
+    presets.py``: that script is a PEP-723 standalone (``uv run``-able
+    with no install) and cannot import from the ``sqrlly`` package.
+    """
     y = YAML(typ="rt")
     y.preserve_quotes = True
     y.width = 200  # avoid wrapping templated strings
