@@ -437,45 +437,64 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
 
 - [x] **Named presets (was: three orthogonal axes for LLM execution)** — _delivered, 2026-05-19, three commits: ba85287 (schema foundation), 8f1a3d0 (runtime wiring), this rework's final commit (cutover)._ Honest re-scope: the matrix is mostly diagonal (acp implies agent; api implies prompt), so the "three axes" framing was retired in favor of **two axes** (transport + provider/model) bundled into named ``settings.presets``. Nodes reference one via ``params.preset:``; the preset marked ``default: true`` applies otherwise; ``--preset/-p`` CLI flag overrides. Hard cutover — ``Settings.executor``, ``Settings.default_model``, ``Node.model``, ``PromptParams.model``, ``--executor/--model`` CLI flags, and ``sqrlly migrate`` subcommand all removed. The ``migrate.py`` module remains as an internal utility; one-time migration walked all ``examples/`` workflows automatically. 914 tests passing. Subgraph preset inheritance via the existing scope-aware ``model_fields_set`` path (subgraph without ``presets:`` inherits parent's; subgraph with ``presets:`` replaces; key-wise additive merge deferred).
 
-- [ ] **Switch `Preset` to a discriminated union when transport #3 lands** —
-  Today `Preset` is one flat Pydantic model: `transport: Literal["api",
-  "acp"]` + `provider` + `model` + `api_base_url`, with a
-  `_validate_combinations` validator forbidding fields outside their
-  valid `(transport, provider)` combo. That's fine for two near-identical
-  transports. The moment a structurally-different transport lands — e.g.
-  a `python` transport for the deferred "Python env as preset" idea,
-  needing `interpreter: str` + `requirements_path: str | None` and *no*
-  `provider`/`model` — the flat shape forces more `_validate_combinations`
-  branches forbidding cross-variant fields. At that point convert to a
-  Pydantic v2 discriminated union:
+- [ ] **Command presets — named interpreters for script nodes (was: D4
+  discriminated union)** — Today a `.py` script node is hardwired to
+  `python3` via the `_SCRIPT_INTERPRETERS` extension map; `.js` → `node`,
+  `.sh` → `bash`. There is no per-node way to say "run this `.py` under
+  `uv run`" short of abusing `execute.mode: exec` or a wrapper script.
+
+  Extend the `settings.presets` concept to cover script execution: a
+  **command preset** is a named command string. A script node references
+  it by name alongside the file URL:
+
+  ```yaml
+  settings:
+    presets:
+      uv:    { kind: command, command: "uv run" }
+      smart: { kind: llm, transport: api, provider: anthropic, model: opus, default: true }
+  nodes:
+    - id: build
+      execute:
+        url: scripts/build.py
+        params:
+          preset: uv          # → dispatches `uv run scripts/build.py`
+  ```
+
+  This is the structural divergence that makes the discriminated union
+  the right schema shape — an LLM preset and a command preset share *no*
+  fields. Convert `Preset` to a Pydantic v2 discriminated union keyed on
+  a `kind` discriminator:
 
   ```python
-  class ApiPreset(BaseModel):
-      transport: Literal["api"]
+  class LlmPreset(BaseModel):
+      kind: Literal["llm"] = "llm"
+      transport: Literal["api", "acp"]
       provider: Literal["anthropic", "openai", "deepseek", "custom"]
       model: str
       api_base_url: str | None = None
+      default: bool = False
 
-  class AcpPreset(BaseModel):
-      transport: Literal["acp"]
-      provider: Literal["anthropic"]
-      model: str
+  class CommandPreset(BaseModel):
+      kind: Literal["command"] = "command"
+      command: str            # e.g. "uv run", "python3.12 -X dev", "deno run"
+      default: bool = False
 
-  class PythonPreset(BaseModel):       # the trigger variant
-      transport: Literal["python"]
-      interpreter: str
-      requirements_path: str | None = None
-
-  Preset = Annotated[
-      ApiPreset | AcpPreset | PythonPreset,
-      Field(discriminator="transport"),
-  ]
+  Preset = Annotated[LlmPreset | CommandPreset, Field(discriminator="kind")]
   ```
 
-  Each variant carries only its valid fields; Pydantic dispatches on
-  `transport` at parse time; no cross-field validators. **Defer until
-  the third transport actually lands** — converting earlier just splits
-  two nearly-identical classes for no gain.
+  Open design questions (resolve before building): (1) `default:`
+  semantics across two kinds — at most one default *per kind*, or
+  default meaningful only for LLM? (2) command preset × `execute.mode`
+  interaction; (3) `SubprocessParams` needs a `preset` field (today
+  only `PromptParams` has one); (4) does the command get the resolved
+  file path appended + `params.args`?
+
+- [ ] **Revisit `Settings.base_url` naming** — after the command-preset
+  work lands. `Settings.base_url` resolves relative `execute.url` paths
+  to local files; the name reads as an API-endpoint URL (and now
+  collides conceptually with `Preset.api_base_url`). Candidates:
+  `url_base`, `workflow_root`, `file_base`. Captured per the
+  command-preset discussion; not urgent.
 
 ### Backends to add (lower priority once axes above land)
 
