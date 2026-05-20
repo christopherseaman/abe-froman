@@ -453,6 +453,27 @@ class TestDynamicEdgeCases:
         assert sub_keys == []
 
     @pytest.mark.asyncio
+    async def test_empty_manifest_fans_to_all_dependents(self, tmp_path):
+        """C1 regression: an empty manifest on a fan-out node with no
+        final_nodes must route to *every* dependent, not just the first.
+        The pre-fix router returned an abstract "no_items" key that a
+        route_map could only map to a single node."""
+        config = make_config([
+            dynamic_parent("p", []),
+            cmd_phase("d1", output="d1-ran", depends_on=["p"]),
+            cmd_phase("d2", output="d2-ran", depends_on=["p"]),
+        ])
+        executor = DispatchExecutor(workdir=str(tmp_path))
+        graph = build_workflow_graph(config, executor)
+        result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
+
+        assert "p" in result["completed_nodes"]
+        assert "d1" in result["completed_nodes"]
+        assert "d2" in result["completed_nodes"]
+        assert result["node_outputs"]["d1"] == "d1-ran"
+        assert result["node_outputs"]["d2"] == "d2-ran"
+
+    @pytest.mark.asyncio
     async def test_dry_run_traces_branches(self, tmp_path):
         """Dry run traces parent but doesn't fan out (no manifest to read)."""
         (tmp_path / "template.md").write_text("Sub {{id}}")

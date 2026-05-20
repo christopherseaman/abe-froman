@@ -210,9 +210,15 @@ def _wire_evaluation_pair(
     builder.add_edge(eval_id, decide_id)
 
 
-def _make_dynamic_router(node: Node, config: Graph):
-    """Conditional-edge router from the dynamic source to retry / fail
-    / no_items / Send-array dispatch.
+def _make_dynamic_router(node: Node, no_items_targets: list[str]):
+    """Conditional-edge router from the dynamic source.
+
+    Returns *concrete* target node-ids (or a list of them) rather than
+    abstract keys: ``END`` on fail, the parent id on retry,
+    ``no_items_targets`` when the manifest is empty, and the per-item
+    ``Send`` array otherwise. Returning the dependent list directly is
+    what lets the empty-manifest case fan to *every* dependent — a
+    ``route_map`` value could only ever be a single node.
 
     Reads ``state.failed_nodes`` / ``state.completed_nodes`` (written
     by the combined eval+decide factory upstream — see
@@ -223,28 +229,22 @@ def _make_dynamic_router(node: Node, config: Graph):
     """
     template_node_id = f"_sub_{node.id}"
 
-    dsc = node.fan_out
-    if dsc.final_nodes:
-        no_items_target = f"_final_{node.id}_{dsc.final_nodes[0].id}"
-    else:
-        no_items_target = None
-
     def router(state: WorkflowState):
         if node.id in state.get("failed_nodes", set()):
-            return "fail"
+            return END
         if node.evaluation and node.id not in state.get("completed_nodes", set()):
-            return "retry"
+            return node.id
 
         items = _read_manifest(state, node)
         if not items:
-            return "no_items"
+            return no_items_targets
 
         return [
             Send(template_node_id, {**state, "_fan_out_item": item})
             for item in items
         ]
 
-    return router, no_items_target
+    return router
 
 
 def build_workflow_graph(
@@ -586,13 +586,16 @@ def build_workflow_graph(
             for tgt in (deps_of or [END]):
                 builder.add_edge(exit_node[node.id], tgt)
 
-        # Fan-out router at the dynamic source.
-        router, no_items_target = _make_dynamic_router(node, config)
-        route_map = {
-            "retry": node.id, "fail": END,
-            "no_items": no_items_target or (deps_of[0] if deps_of else END),
-        }
-        builder.add_conditional_edges(dynamic_source, router, route_map)
+        # Fan-out router at the dynamic source. An empty manifest
+        # ("no_items") routes to the first final node when the fan-out
+        # declares final_nodes, otherwise to *every* dependent.
+        if dsc.final_nodes:
+            no_items_targets = [f"_final_{node.id}_{dsc.final_nodes[0].id}"]
+        else:
+            no_items_targets = deps_of or [END]
+        router = _make_dynamic_router(node, no_items_targets)
+        path_map = list(dict.fromkeys([END, node.id, *no_items_targets]))
+        builder.add_conditional_edges(dynamic_source, router, path_map)
 
     # ----- Terminal plain-end edges for ungated, non-dynamic nodes -----
     # Inline-route nodes (standalone or execute+route) drive their exit
