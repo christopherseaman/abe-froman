@@ -7,22 +7,29 @@ from jinja2 import Template
 
 from sqrlly.runtime.executor.preset import resolve_preset_name
 from sqrlly.runtime.result import ExecutionResult, OverloadError, PromptBackend
-from sqrlly.schema.models import Node, Settings
+from sqrlly.schema.models import LlmPreset, Node, Settings
 
 
 def resolve_model(node: Node, settings: Settings) -> str | None:
-    """Pick the declared model for a node — used by foreman for per-model
-    semaphore selection.
+    """Pick the declared LLM model for a node — used by foreman for
+    per-model semaphore selection.
 
-    Returns the model name from the resolved preset (``params.preset`` >
-    default preset). Returns ``None`` when ``settings.presets`` is
-    empty — the caller (foreman) treats that as "no per-model
-    semaphore." Pure-script workflows don't declare presets and
-    legitimately have no model.
+    Returns ``None`` (foreman → "no per-model semaphore") whenever no
+    LLM model applies:
+      - ``settings.presets`` is empty;
+      - the node resolves to a ``CommandPreset`` (a script node — no
+        model);
+      - the node has no ``params.preset`` and there is no default LLM
+        preset (a script node in a command-preset-only workflow —
+        ``resolve_preset_name`` raises, caught here).
     """
     if not settings.presets:
         return None
-    return settings.presets[resolve_preset_name(node, settings)].model
+    try:
+        preset = settings.presets[resolve_preset_name(node, settings)]
+    except ValueError:
+        return None
+    return preset.model if isinstance(preset, LlmPreset) else None
 
 
 def downgrade_model(current: str, chain: list[str]) -> str | None:

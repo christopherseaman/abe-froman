@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shlex
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -14,8 +15,45 @@ from sqrlly.runtime.executor.prompt import (
 )
 from sqrlly.runtime.result import ExecutionResult, PromptBackend
 from sqrlly.runtime.url import _RemoteFetchCache, fetch_url, resolve_url
-from sqrlly.schema.models import Execute, Node, Settings
+from sqrlly.schema.models import CommandPreset, Execute, Node, Settings
 from sqrlly.schema.params import coerce_params
+
+
+# Literal tokens recognized inside a command preset's command string.
+# Token-level (not string-interpolation) — a token equal to one of
+# these is replaced; absent tokens fall back to default append.
+_CMD_FILE_TOKEN = "{{file}}"
+_CMD_ARGS_TOKEN = "{{args}}"
+
+
+def _assemble_command_argv(
+    command: str, local_path: str, rendered_args: list[str],
+) -> list[str]:
+    """Build the argv for a command-preset script dispatch.
+
+    ``shlex.split`` the command string, then substitute placeholder
+    tokens: a token equal to ``{{file}}`` → the resolved script path,
+    ``{{args}}`` → the rendered args spliced in. If a placeholder is
+    absent, that piece is appended at the end (file before args) —
+    so ``"uv run"`` with no placeholders → ``uv run <path> <args>``,
+    and ``"pytest {{args}} {{file}}"`` places them explicitly.
+    """
+    tokens = shlex.split(command)
+    has_file = _CMD_FILE_TOKEN in tokens
+    has_args = _CMD_ARGS_TOKEN in tokens
+    argv: list[str] = []
+    for tok in tokens:
+        if tok == _CMD_FILE_TOKEN:
+            argv.append(local_path)
+        elif tok == _CMD_ARGS_TOKEN:
+            argv.extend(rendered_args)
+        else:
+            argv.append(tok)
+    if not has_file:
+        argv.append(local_path)
+    if not has_args:
+        argv.extend(rendered_args)
+    return argv
 
 # Script extension → interpreter prefix. URL → subprocess args via map +
 # resolved local path. Stays small; new languages add one row.
@@ -154,11 +192,12 @@ class DispatchExecutor:
         if execute.mode in _MODE_INTERPRETERS:
             return await self._dispatch_script(
                 node, resolved, params, context, effective_workdir,
-                interpreter=_MODE_INTERPRETERS[execute.mode],
+                settings=s, interpreter=_MODE_INTERPRETERS[execute.mode],
             )
         if execute.mode is None and ext in _SCRIPT_INTERPRETERS:
             return await self._dispatch_script(
                 node, resolved, params, context, effective_workdir,
+                settings=s,
             )
         # mode=="exec" or extension-driven fallthrough.
         return await self._dispatch_binary(
@@ -228,16 +267,17 @@ class DispatchExecutor:
         context: dict[str, Any],
         workdir: str,
         *,
+        settings: Settings,
         interpreter: list[str] | None = None,
     ) -> ExecutionResult:
-        """Run a script under its interpreter (python3 / node / bash / tsx).
+        """Run a script under its interpreter.
 
-        ``interpreter`` overrides the URL-extension lookup — used when
-        ``execute.mode:`` forces a specific interpreter regardless of suffix.
+        Two interpreter sources:
+          - ``params.preset`` naming a command preset → the preset's
+            command string (assembled via ``_assemble_command_argv``).
+          - Otherwise the URL-extension map (``_SCRIPT_INTERPRETERS``),
+            or ``interpreter`` when ``execute.mode:`` forced one.
         """
-        if interpreter is None:
-            ext = Path(urlsplit(resolved).path).suffix.lower()
-            interpreter = _SCRIPT_INTERPRETERS[ext]
         scheme = urlsplit(resolved).scheme
         if scheme != "file":
             # Remote script handoff (fetch → temp dir → chmod → run)
@@ -250,6 +290,34 @@ class DispatchExecutor:
                 ),
             )
         local_path = urlsplit(resolved).path
+
+        # Command-preset path: params.preset names a command preset.
+        preset_ref = getattr(params, "preset", None)
+        if preset_ref is not None:
+            preset = settings.presets.get(preset_ref)
+            if not isinstance(preset, CommandPreset):
+                return ExecutionResult(
+                    success=False,
+                    error=(
+                        f"Node {node.id!r}: params.preset={preset_ref!r} is "
+                        f"not a command preset (kind: command) — script "
+                        f"dispatch needs a command preset for interpreter "
+                        f"selection."
+                    ),
+                )
+            rendered_args = [render_template(a, context) for a in params.args]
+            rendered_env = {
+                k: render_template(v, context) for k, v in params.env.items()
+            }
+            argv = _assemble_command_argv(
+                preset.command, local_path, rendered_args,
+            )
+            return await self._exec_argv(argv, rendered_env, workdir)
+
+        # Extension-map / mode-override path.
+        if interpreter is None:
+            ext = Path(urlsplit(resolved).path).suffix.lower()
+            interpreter = _SCRIPT_INTERPRETERS[ext]
         return await self._run_subprocess(
             [*interpreter, local_path], params, context, workdir,
         )
@@ -281,22 +349,33 @@ class DispatchExecutor:
         context: dict[str, Any],
         workdir: str,
     ) -> ExecutionResult:
-        """Shared subprocess runner for script + binary dispatch.
+        """Extension-map / binary subprocess runner.
 
         ``params.args`` is Jinja-rendered against ``context`` so authors
-        can wire dep outputs into args. ``params.env`` is rendered the
-        same way and merged onto the parent env.
+        can wire dep outputs into args, then appended after ``cmd_prefix``.
+        ``params.env`` is rendered the same way and merged onto the
+        parent env.
         """
         rendered_args = [render_template(a, context) for a in params.args]
-        rendered_env: dict[str, str] = {}
-        for k, v in params.env.items():
-            rendered_env[k] = render_template(v, context)
+        rendered_env = {
+            k: render_template(v, context) for k, v in params.env.items()
+        }
+        return await self._exec_argv(
+            [*cmd_prefix, *rendered_args], rendered_env, workdir,
+        )
 
+    async def _exec_argv(
+        self, argv: list[str], rendered_env: dict[str, str], workdir: str,
+    ) -> ExecutionResult:
+        """Run a fully-assembled argv as a subprocess; capture stdout/stderr.
+
+        Shared exec core for extension-map dispatch (``_run_subprocess``)
+        and command-preset dispatch (``_dispatch_script``).
+        """
         env = {**os.environ, **rendered_env} if rendered_env else None
-
         try:
             proc = await asyncio.create_subprocess_exec(
-                *cmd_prefix, *rendered_args,
+                *argv,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=workdir,

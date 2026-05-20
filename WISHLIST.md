@@ -437,57 +437,29 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
 
 - [x] **Named presets (was: three orthogonal axes for LLM execution)** — _delivered, 2026-05-19, three commits: ba85287 (schema foundation), 8f1a3d0 (runtime wiring), this rework's final commit (cutover)._ Honest re-scope: the matrix is mostly diagonal (acp implies agent; api implies prompt), so the "three axes" framing was retired in favor of **two axes** (transport + provider/model) bundled into named ``settings.presets``. Nodes reference one via ``params.preset:``; the preset marked ``default: true`` applies otherwise; ``--preset/-p`` CLI flag overrides. Hard cutover — ``Settings.executor``, ``Settings.default_model``, ``Node.model``, ``PromptParams.model``, ``--executor/--model`` CLI flags, and ``sqrlly migrate`` subcommand all removed. The ``migrate.py`` module remains as an internal utility; one-time migration walked all ``examples/`` workflows automatically. 914 tests passing. Subgraph preset inheritance via the existing scope-aware ``model_fields_set`` path (subgraph without ``presets:`` inherits parent's; subgraph with ``presets:`` replaces; key-wise additive merge deferred).
 
-- [ ] **Command presets — named interpreters for script nodes (was: D4
-  discriminated union)** — Today a `.py` script node is hardwired to
-  `python3` via the `_SCRIPT_INTERPRETERS` extension map; `.js` → `node`,
-  `.sh` → `bash`. There is no per-node way to say "run this `.py` under
-  `uv run`" short of abusing `execute.mode: exec` or a wrapper script.
+- [x] **Command presets — named interpreters for script nodes (was: D4
+  discriminated union)** — _delivered, 2026-05-20, two commits: `eb6aeb5`
+  (schema) + dispatch/tests commit._ `settings.presets` is now a
+  `kind`-discriminated union of `LlmPreset` + `CommandPreset`. A script
+  node names a command preset via `params.preset:`; dispatch runs the
+  preset's command string (`shlex.split` + `{{file}}`/`{{args}}` token
+  placeholders, default-append when absent) instead of the
+  extension-map interpreter. Resolved design (Q1-Q5): `default` is
+  LLM-only (no `default` on CommandPreset; script nodes opt in by name);
+  command preset and `execute.mode` are mutually exclusive (validated);
+  `SubprocessParams.preset` added; callable discriminator defaults
+  absent `kind` to `llm` (zero migration). `examples/command_preset/`
+  demonstrates `uv run`.
 
-  Extend the `settings.presets` concept to cover script execution: a
-  **command preset** is a named command string. A script node references
-  it by name alongside the file URL:
-
-  ```yaml
-  settings:
-    presets:
-      uv:    { kind: command, command: "uv run" }
-      smart: { kind: llm, transport: api, provider: anthropic, model: opus, default: true }
-  nodes:
-    - id: build
-      execute:
-        url: scripts/build.py
-        params:
-          preset: uv          # → dispatches `uv run scripts/build.py`
-  ```
-
-  This is the structural divergence that makes the discriminated union
-  the right schema shape — an LLM preset and a command preset share *no*
-  fields. Convert `Preset` to a Pydantic v2 discriminated union keyed on
-  a `kind` discriminator:
-
-  ```python
-  class LlmPreset(BaseModel):
-      kind: Literal["llm"] = "llm"
-      transport: Literal["api", "acp"]
-      provider: Literal["anthropic", "openai", "deepseek", "custom"]
-      model: str
-      api_base_url: str | None = None
-      default: bool = False
-
-  class CommandPreset(BaseModel):
-      kind: Literal["command"] = "command"
-      command: str            # e.g. "uv run", "python3.12 -X dev", "deno run"
-      default: bool = False
-
-  Preset = Annotated[LlmPreset | CommandPreset, Field(discriminator="kind")]
-  ```
-
-  Open design questions (resolve before building): (1) `default:`
-  semantics across two kinds — at most one default *per kind*, or
-  default meaningful only for LLM? (2) command preset × `execute.mode`
-  interaction; (3) `SubprocessParams` needs a `preset` field (today
-  only `PromptParams` has one); (4) does the command get the resolved
-  file path appended + `params.args`?
+- [ ] **Soft-deprecate `execute.mode`'s interpreter values** — follow-up
+  to command presets. `execute.mode` accepts `python` / `node` / `tsx` /
+  `bash` (force a script interpreter) alongside `prompt` / `subgraph` /
+  `exec` (handler-family disambiguation). The interpreter values are now
+  redundant with command presets — a `command: "python3"` preset does
+  the same job, more flexibly. The handler-family values stay (they
+  disambiguate URL-extension-ambiguous nodes). Consider documenting the
+  interpreter values as soft-deprecated and steering authors to command
+  presets; eventual removal is a breaking change, defer.
 
 - [ ] **Revisit `Settings.base_url` naming** — after the command-preset
   work lands. `Settings.base_url` resolves relative `execute.url` paths

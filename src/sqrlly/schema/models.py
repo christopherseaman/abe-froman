@@ -548,4 +548,19 @@ class Graph(BaseModel):
                     f"which is not declared in settings.presets "
                     f"(declared: {sorted(declared)!r})"
                 )
+            # A command preset fully specifies the interpreter — it and
+            # execute.mode (the handler/interpreter selector) are
+            # mutually exclusive. Setting both is contradictory.
+            referenced = self.settings.presets[preset_ref]
+            if (
+                isinstance(referenced, CommandPreset)
+                and node.execute.mode is not None
+            ):
+                raise ValueError(
+                    f"Node '{node.id}' references command preset "
+                    f"{preset_ref!r} AND sets execute.mode="
+                    f"{node.execute.mode!r} — mutually exclusive; the "
+                    f"command preset already specifies the interpreter. "
+                    f"Drop execute.mode."
+                )
         return self

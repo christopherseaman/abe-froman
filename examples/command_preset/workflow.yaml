@@ -1,0 +1,24 @@
+name: "Command Preset Demo"
+version: "0.1.0"
+
+# Demonstrates a command preset: run a .py script under `uv run`
+# instead of the hardwired `python3`. The node opts in by naming the
+# preset — no messy per-extension interpreter routing.
+#
+# Run it:
+#   uv run sqrlly run examples/command_preset/workflow.yaml --workdir .
+settings:
+  presets:
+    uv:
+      kind: command
+      # --no-project: run the standalone script in a fresh ephemeral
+      # env, skipping a full sync of the surrounding project's deps.
+      command: "uv run --no-project"
+
+nodes:
+  - id: report
+    name: "Generate report under uv"
+    execute:
+      url: "examples/command_preset/scripts/report.py"
+      params:
+        preset: uv

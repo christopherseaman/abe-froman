@@ -3,6 +3,51 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased] — command presets (named script interpreters)
+
+Extends the preset concept beyond LLM config: a script node can now
+run under a named interpreter/command instead of the hardwired
+extension map (`.py` → `python3`).
+
+### Added
+
+- **`CommandPreset`** (`kind: command`) — a named command string for
+  script dispatch. `settings.presets` is now a `kind`-discriminated
+  union of `LlmPreset` (the prior shape) and `CommandPreset`:
+  ```yaml
+  settings:
+    presets:
+      uv: { kind: command, command: "uv run --no-project" }
+  nodes:
+    - id: build
+      execute:
+        url: scripts/build.py
+        params: { preset: uv }      # → `uv run --no-project scripts/build.py`
+  ```
+- The Preset union uses a **callable discriminator** that defaults
+  absent `kind` to `"llm"` — all existing kind-less preset YAML keeps
+  parsing, zero migration.
+- **`SubprocessParams.preset`** — script nodes carry the command-preset
+  reference.
+- Command assembly supports `{{file}}` / `{{args}}` placeholder tokens
+  (token-level, post-`shlex.split`): `command: "pytest {{args}} {{file}}"`
+  places them explicitly; absent placeholders fall back to default
+  append (command + path + args).
+- `examples/command_preset/` — a workflow demonstrating `uv run`.
+
+### Changed
+
+- `Settings._validate_default_preset` scoped to `LlmPreset`s — exactly
+  one `default: true` LLM preset when any exist; command presets have
+  no `default` (script nodes opt in by name, no-preset scripts use the
+  extension map).
+- `Graph._validate_preset_refs` rejects a command-preset reference
+  combined with `execute.mode` — mutually exclusive (the command
+  preset already specifies the interpreter).
+- `prompt.resolve_model` returns `None` for command-preset / no-LLM-
+  model nodes, so foreman's per-model semaphore selection cleanly
+  skips script nodes.
+
 ## [Unreleased] — preset rework review follow-ups
 
 A three-agent code review of the preset rework (bugs / YAGNI-KISS-DRY /
