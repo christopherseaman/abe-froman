@@ -8,7 +8,7 @@ operate on WorkflowState/Node dicts with no langgraph dependency.
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 from langgraph.graph import END
 from langgraph.types import Command
@@ -660,7 +660,6 @@ def _make_evaluation_node(
     config: Graph,
     executor: "NodeExecutor | None" = None,
     *,
-    node_id_resolver: Callable[[WorkflowState], str] | None = None,
     effective_settings: Settings | None = None,
 ):
     """Create the Evaluation node — first half of a gated node pair.
@@ -671,20 +670,15 @@ def _make_evaluation_node(
     routing live in the Decision node (``_make_decision_node``)
     downstream — this node's only job is to produce the record.
 
-    ``node_id_resolver`` lets child eval nodes derive the per-branch
-    id from ``state._fan_out_item``. Defaults to ``node.id`` for
-    top-level use.
-
     ``effective_settings`` (Phase 3 / scope-aware): drives the eval
     timeout and feeds ``run_evaluation`` the scope's ``default_model``
     for ``.md`` LLM gates.
     """
     settings = effective_settings or config.settings
     timeout = node.effective_timeout(settings)
-    resolve = node_id_resolver or (lambda _s: node.id)
 
     async def node_fn(state: WorkflowState) -> dict[str, Any]:
-        node_id = resolve(state)
+        node_id = node.id
 
         if node_id in state.get("failed_nodes", set()):
             return {}
@@ -747,7 +741,6 @@ def _make_combined_eval_decide_node(
     config: Graph,
     executor: "NodeExecutor | None" = None,
     *,
-    node_id_resolver: Callable[[WorkflowState], str] | None = None,
     effective_settings: Settings | None = None,
 ):
     """Pre-Stage-5d eval-and-classify-in-one-body shape, retained for
@@ -765,10 +758,9 @@ def _make_combined_eval_decide_node(
     """
     settings = effective_settings or config.settings
     timeout = node.effective_timeout(settings)
-    resolve = node_id_resolver or (lambda _s: node.id)
 
     async def node_fn(state: WorkflowState) -> dict[str, Any]:
-        node_id = resolve(state)
+        node_id = node.id
 
         if node_id in state.get("failed_nodes", set()):
             return {}
@@ -832,7 +824,6 @@ def _make_decision_node(
     *,
     exec_id: str,
     pass_targets: list[str],
-    node_id_resolver: Callable[[WorkflowState], str] | None = None,
     effective_settings: Settings | None = None,
 ):
     """Create the Decision node — second half of a gated node pair.
@@ -856,10 +847,9 @@ def _make_decision_node(
     """
     settings = effective_settings or config.settings
     max_retries = node.effective_max_retries(settings)
-    resolve = node_id_resolver or (lambda _s: node.id)
 
     async def node_fn(state: WorkflowState):
-        node_id = resolve(state)
+        node_id = node.id
 
         if node_id in state.get("failed_nodes", set()):
             return Command(goto=END)

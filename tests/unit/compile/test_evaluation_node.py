@@ -278,29 +278,3 @@ class TestEvaluationNodeSkips:
         # eval ran: a record was written. Decision node will route on
         # the next super-step.
         assert "p1" in result.get("evaluations", {})
-
-
-class TestEvaluationNodeBranchResolver:
-    @pytest.mark.asyncio
-    async def test_resolver_keys_off_fan_out_item(self, tmp_path):
-        """Branch-style resolver derives node_id from _fan_out_item,
-        so per-branch evaluation writes to distinct keys."""
-        node = Node(
-            id="_eval_sub_p", name="sub gate", execute=_exec(),
-            evaluation=Evaluation(
-                validator=_validator(tmp_path, "v.py", "0.9"), threshold=0.8,
-            ),
-        )
-        def resolve(state):
-            item = state.get("_fan_out_item", {})
-            return f"p::{item.get('id', '?')}"
-        node = _make_evaluation_node(node, _config_with(node), node_id_resolver=resolve)
-        state = make_initial_state(workdir=str(tmp_path))
-        state["node_outputs"] = {"p::x": "out-x"}
-        state["_fan_out_item"] = {"id": "x"}
-        update = await node(state)
-        # Eval-only: no completed_nodes write here; the Decision node
-        # (test_decision_node.py) handles that side via the same
-        # resolver shape.
-        assert "p::x" in update["evaluations"]
-        assert update["evaluations"]["p::x"][0]["result"]["score"] == 0.9

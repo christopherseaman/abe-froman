@@ -235,40 +235,6 @@ class TestDecisionNodeGuards:
         assert cmd.update == {"completed_nodes": {"p1"}}
 
 
-class TestDecisionNodeSubphaseResolver:
-    @pytest.mark.asyncio
-    async def test_resolver_keys_decision_off_fan_out_item(self):
-        """`node_id_resolver` lets per-branch decision nodes derive
-        the child's id from `_fan_out_item`."""
-        node = _gated_node()
-        def resolve(state):
-            item = state.get("_fan_out_item", {})
-            return f"parent::{item.get('id', '?')}"
-
-        decide = _make_decision_node(
-            node, _config_with(node, max_retries=2),
-            exec_id="_sub_parent",
-            pass_targets=["_final_parent_f0"],
-            node_id_resolver=resolve,
-        )
-        state = make_initial_state()
-        state["_fan_out_item"] = {"id": "x"}
-        state["evaluations"] = {
-            "parent::x": [{
-                "invocation": 0,
-                "result": {
-                    "score": 0.9, "scores": {}, "reasons": {},
-                    "feedback": None,
-                    "pass_criteria_met": [], "pass_criteria_unmet": [],
-                },
-                "timestamp": "t",
-            }],
-        }
-        cmd = await decide(state)
-        assert cmd.goto == "_final_parent_f0"
-        assert cmd.update == {"completed_nodes": {"parent::x"}}
-
-
 class TestDecisionReadsLatestRecord:
     @pytest.mark.asyncio
     async def test_decision_reads_latest_when_history_present(self):
