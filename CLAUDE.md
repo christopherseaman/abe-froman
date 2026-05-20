@@ -11,6 +11,9 @@ repo. Narrative documentation lives elsewhere:
 - **`TECHNICAL.md`** — three-layer architecture, pipeline flow, state
   model, key invariants, contributor reading order.
 - **`WISHLIST.md`** — open work, prioritized + non-prioritized.
+- **`TODO.md`** — review-surfaced defects/cleanups deferred for
+  focused work (each with a diagnosis). Distinct from WISHLIST
+  (feature wants).
 - **`CHANGELOG.md`** — release history.
 
 Read those when narrative context is needed; this file stays focused on
