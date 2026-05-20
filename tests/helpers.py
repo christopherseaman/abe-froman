@@ -2,12 +2,27 @@
 
 import shutil
 
-from sqrlly.schema.models import Graph
+from sqrlly.schema.models import Graph, Preset, Settings
 
 # Resolve binaries once at import time; the migrate tool uses
 # shutil.which the same way, so test helpers stay consistent.
 _ECHO = shutil.which("echo") or "/bin/echo"
 _FALSE = shutil.which("false") or "/bin/false"
+
+
+def single_preset_settings(model: str = "sonnet", **extra_settings) -> Settings:
+    """Settings with one default preset — for tests that wire a single
+    backend through DispatchExecutor(prompt_backends={"default": ...}).
+    """
+    return Settings(
+        presets={
+            "default": Preset(
+                transport="api", provider="anthropic",
+                model=model, default=True,
+            ),
+        },
+        **extra_settings,
+    )
 
 
 def make_config(nodes, **settings_kwargs) -> Graph:

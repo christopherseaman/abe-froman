@@ -72,18 +72,19 @@ class TestACPCallbacks:
 
 
 class TestFactory:
-    def test_acp_backend_created(self):
-        from sqrlly.runtime.executor.backends.factory import create_prompt_backend
+    def test_acp_backend_from_preset(self):
+        from sqrlly.runtime.executor.backends.factory import (
+            create_backend_from_preset,
+        )
         from sqrlly.runtime.executor.backends.acp import ACPBackend
+        from sqrlly.schema.models import Preset
 
-        backend = create_prompt_backend("acp")
+        preset = Preset(
+            transport="acp", provider="anthropic",
+            model="sonnet", default=True,
+        )
+        backend = create_backend_from_preset(preset)
         assert isinstance(backend, ACPBackend)
-
-    def test_unknown_type_raises(self):
-        from sqrlly.runtime.executor.backends.factory import create_prompt_backend
-
-        with pytest.raises(ValueError, match="Unknown executor type"):
-            create_prompt_backend("nonexistent")
 
 
 # ---------------------------------------------------------------------------
@@ -152,7 +153,7 @@ class TestACPIntegration:
         """End-to-end: DispatchExecutor → PromptExecutor → ACPBackend."""
         from sqrlly.runtime.executor.backends.acp import ACPBackend
         from sqrlly.runtime.executor.dispatch import DispatchExecutor
-        from sqrlly.schema.models import Execute, Node, Settings
+        from sqrlly.schema.models import Execute, Node, Preset, Settings
 
         prompt_file = tmp_path / "test.md"
         prompt_file.write_text(
@@ -160,9 +161,16 @@ class TestACPIntegration:
         )
 
         backend = ACPBackend()
-        settings = Settings(default_model="sonnet")
+        settings = Settings(presets={
+            "default": Preset(
+                transport="acp", provider="anthropic",
+                model="sonnet", default=True,
+            ),
+        })
         executor = DispatchExecutor(
-            workdir=str(tmp_path), prompt_backend=backend, settings=settings,
+            workdir=str(tmp_path),
+            prompt_backends={"default": backend},
+            settings=settings,
         )
         try:
             async with asyncio.timeout(ACP_TIMEOUT):

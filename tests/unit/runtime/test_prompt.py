@@ -31,6 +31,8 @@ from sqrlly.runtime.result import (
 )
 from sqrlly.schema.models import Execute, Node, Settings
 
+from helpers import single_preset_settings
+
 
 # ---------------------------------------------------------------------------
 # render_template
@@ -526,8 +528,8 @@ class TestDispatchPromptFlow:
         backend = MemoryBackend()
         executor = DispatchExecutor(
             workdir=str(tmp_path),
-            prompt_backend=backend,
-            settings=Settings(),
+            prompt_backends={"default": backend},
+            settings=single_preset_settings(),
         )
         node = Node(
             id="p1", name="P1",
@@ -586,8 +588,8 @@ class TestDispatchPromptFlow:
         backend = MemoryBackend()
         executor = DispatchExecutor(
             workdir=str(tmp_path),
-            prompt_backend=backend,
-            settings=Settings(default_timeout=60.0),
+            prompt_backends={"default": backend},
+            settings=single_preset_settings(default_timeout=60.0),
         )
         node = Node(
             id="p1", name="P1", timeout=15.5,
@@ -603,8 +605,8 @@ class TestDispatchPromptFlow:
         backend = MemoryBackend()
         executor = DispatchExecutor(
             workdir=str(tmp_path),
-            prompt_backend=backend,
-            settings=Settings(default_timeout=90.0),
+            prompt_backends={"default": backend},
+            settings=single_preset_settings(default_timeout=90.0),
         )
         node = Node(
             id="p1", name="P1",
@@ -620,8 +622,8 @@ class TestDispatchPromptFlow:
         backend = MemoryBackend()
         executor = DispatchExecutor(
             workdir=str(tmp_path),
-            prompt_backend=backend,
-            settings=Settings(),
+            prompt_backends={"default": backend},
+            settings=single_preset_settings(),
         )
         node = Node(
             id="p1", name="P1",
@@ -634,8 +636,8 @@ class TestDispatchPromptFlow:
     async def test_missing_prompt_file_returns_error(self, tmp_path):
         executor = DispatchExecutor(
             workdir=str(tmp_path),
-            prompt_backend=MemoryBackend(),
-            settings=Settings(),
+            prompt_backends={"default": MemoryBackend()},
+            settings=single_preset_settings(),
         )
         node = Node(
             id="p1", name="P1",
@@ -651,8 +653,8 @@ class TestDispatchPromptFlow:
         prompt.write_text("prompt")
         executor = DispatchExecutor(
             workdir=str(tmp_path),
-            prompt_backend=ErrorBackend(),
-            settings=Settings(),
+            prompt_backends={"default": ErrorBackend()},
+            settings=single_preset_settings(),
         )
         node = Node(
             id="p1", name="P1",
@@ -669,8 +671,8 @@ class TestDispatchPromptFlow:
         backend = MemoryBackend(response="text", structured={"key": "value"})
         executor = DispatchExecutor(
             workdir=str(tmp_path),
-            prompt_backend=backend,
-            settings=Settings(),
+            prompt_backends={"default": backend},
+            settings=single_preset_settings(),
         )
         node = Node(
             id="p1", name="P1",
@@ -695,8 +697,8 @@ class TestPreambleInjection:
         backend = MemoryBackend()
         executor = DispatchExecutor(
             workdir=str(tmp_path),
-            prompt_backend=backend,
-            settings=Settings(preamble_file="preamble.md"),
+            prompt_backends={"default": backend},
+            settings=single_preset_settings(preamble_file="preamble.md"),
         )
         node = Node(
             id="p1", name="P1",
@@ -716,8 +718,8 @@ class TestPreambleInjection:
         backend = MemoryBackend()
         executor = DispatchExecutor(
             workdir=str(tmp_path),
-            prompt_backend=backend,
-            settings=Settings(preamble_file="preamble.md"),
+            prompt_backends={"default": backend},
+            settings=single_preset_settings(preamble_file="preamble.md"),
         )
         node = Node(
             id="p1", name="P1",
@@ -738,8 +740,8 @@ class TestPreambleInjection:
         backend = MemoryBackend()
         executor = DispatchExecutor(
             workdir=str(tmp_path),
-            prompt_backend=backend,
-            settings=Settings(preamble_file="missing_preamble.md"),
+            prompt_backends={"default": backend},
+            settings=single_preset_settings(preamble_file="missing_preamble.md"),
         )
         node = Node(
             id="p1", name="P1",
@@ -758,8 +760,8 @@ class TestPreambleInjection:
         backend = MemoryBackend()
         executor = DispatchExecutor(
             workdir=str(tmp_path),
-            prompt_backend=backend,
-            settings=Settings(),
+            prompt_backends={"default": backend},
+            settings=single_preset_settings(),
         )
         node = Node(
             id="p1", name="P1",

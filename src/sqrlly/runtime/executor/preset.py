@@ -137,8 +137,10 @@ def build_preset_registry(
         return {_AUTO_PRESET_NAME: auto_detect_default_preset()}
 
     if cli_override is None:
-        # Validator already ensured exactly one default exists.
-        return {name: p.model_copy() for name, p in settings.presets.items()}
+        # New dict, same Preset instances. Pydantic models aren't mutated
+        # downstream, so a shallow dict copy is sufficient to give callers
+        # an independent registry without paying for per-element model_copy.
+        return dict(settings.presets)
 
     if cli_override not in settings.presets:
         raise ValueError(

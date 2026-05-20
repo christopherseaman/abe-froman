@@ -394,56 +394,65 @@ def _sanitize_model_name(model: str) -> str:
     return "".join(c if c.isalnum() else "_" for c in model).strip("_")
 
 
+def _walk_model_holders(root: CommentedMap):
+    """Yield every node-shape mapping that can carry a ``model:`` field
+    or ``execute.params.model``: top-level nodes, fan_out templates,
+    fan_out final_nodes. Emits ``(node_like, path)`` tuples.
+
+    Single source of truth — both ``_collect_models_in_use`` and the
+    per-node rewriter consume this iterator, so a new model-bearing
+    shape only needs adding here.
+    """
+    nodes = root.get("nodes")
+    if not isinstance(nodes, CommentedSeq):
+        return
+    for node in nodes:
+        if not isinstance(node, CommentedMap):
+            continue
+        node_id = str(node.get("id", "?"))
+        yield node, f"nodes[{node_id}]"
+        fan_out = node.get("fan_out")
+        if not isinstance(fan_out, CommentedMap):
+            continue
+        template = fan_out.get("template")
+        if isinstance(template, CommentedMap):
+            yield template, f"nodes[{node_id}].fan_out.template"
+        finals = fan_out.get("final_nodes")
+        if isinstance(finals, CommentedSeq):
+            for final in finals:
+                if isinstance(final, CommentedMap):
+                    fid = str(final.get("id", "?"))
+                    yield final, f"nodes[{node_id}].fan_out.final_nodes[{fid}]"
+
+
+def _node_model_refs(node_like: CommentedMap) -> tuple[str | None, str | None]:
+    """Read ``(params.model, node.model)`` from a node-shape mapping
+    without mutating either. Returns ``(None, None)`` when neither is
+    set. Used by the collector pass (read-only).
+    """
+    params_model: str | None = None
+    exe = node_like.get("execute")
+    if isinstance(exe, CommentedMap):
+        params = exe.get("params")
+        if isinstance(params, CommentedMap):
+            pm = params.get("model")
+            if isinstance(pm, str):
+                params_model = pm
+    node_model_val = node_like.get("model")
+    node_model = node_model_val if isinstance(node_model_val, str) else None
+    return params_model, node_model
+
+
 def _collect_models_in_use(root: CommentedMap, default_model: str) -> list[str]:
     """Return models referenced by default_model + any Node.model +
     any params.model, deduped and ordered (default_model first)."""
     seen: list[str] = []
     if default_model and default_model not in seen:
         seen.append(default_model)
-    nodes = root.get("nodes")
-    if isinstance(nodes, CommentedSeq):
-        for node in nodes:
-            if not isinstance(node, CommentedMap):
-                continue
-            nm = node.get("model")
-            if isinstance(nm, str) and nm not in seen:
-                seen.append(nm)
-            exe = node.get("execute")
-            if isinstance(exe, CommentedMap):
-                params = exe.get("params")
-                if isinstance(params, CommentedMap):
-                    pm = params.get("model")
-                    if isinstance(pm, str) and pm not in seen:
-                        seen.append(pm)
-            fan_out = node.get("fan_out")
-            if isinstance(fan_out, CommentedMap):
-                template = fan_out.get("template")
-                if isinstance(template, CommentedMap):
-                    tnm = template.get("model")
-                    if isinstance(tnm, str) and tnm not in seen:
-                        seen.append(tnm)
-                    texe = template.get("execute")
-                    if isinstance(texe, CommentedMap):
-                        tparams = texe.get("params")
-                        if isinstance(tparams, CommentedMap):
-                            tpm = tparams.get("model")
-                            if isinstance(tpm, str) and tpm not in seen:
-                                seen.append(tpm)
-                finals = fan_out.get("final_nodes")
-                if isinstance(finals, CommentedSeq):
-                    for final in finals:
-                        if not isinstance(final, CommentedMap):
-                            continue
-                        fnm = final.get("model")
-                        if isinstance(fnm, str) and fnm not in seen:
-                            seen.append(fnm)
-                        fexe = final.get("execute")
-                        if isinstance(fexe, CommentedMap):
-                            fparams = fexe.get("params")
-                            if isinstance(fparams, CommentedMap):
-                                fpm = fparams.get("model")
-                                if isinstance(fpm, str) and fpm not in seen:
-                                    seen.append(fpm)
+    for node_like, _path in _walk_model_holders(root):
+        for model in _node_model_refs(node_like):
+            if model is not None and model not in seen:
+                seen.append(model)
     return seen
 
 
@@ -576,35 +585,11 @@ def _migrate_legacy_executor_to_presets(
     settings["presets"] = presets
 
     # Rewrite node-level model overrides → params.preset references.
-    nodes = root.get("nodes")
-    if isinstance(nodes, CommentedSeq):
-        for node in nodes:
-            if not isinstance(node, CommentedMap):
-                continue
-            node_id = str(node.get("id", "?"))
-            _rewrite_node_model_to_preset(
-                node, default_model, model_to_preset, f"nodes[{node_id}]", changes,
-            )
-            # fan_out template + final_nodes — same shape on the inside.
-            fan_out = node.get("fan_out")
-            if isinstance(fan_out, CommentedMap):
-                template = fan_out.get("template")
-                if isinstance(template, CommentedMap):
-                    _rewrite_node_model_to_preset(
-                        template, default_model, model_to_preset,
-                        f"nodes[{node_id}].fan_out.template", changes,
-                    )
-                finals = fan_out.get("final_nodes")
-                if isinstance(finals, CommentedSeq):
-                    for final in finals:
-                        if not isinstance(final, CommentedMap):
-                            continue
-                        final_id = str(final.get("id", "?"))
-                        _rewrite_node_model_to_preset(
-                            final, default_model, model_to_preset,
-                            f"nodes[{node_id}].fan_out.final_nodes[{final_id}]",
-                            changes,
-                        )
+    # Shared walker covers nodes + fan_out.template + fan_out.final_nodes.
+    for node_like, path in _walk_model_holders(root):
+        _rewrite_node_model_to_preset(
+            node_like, default_model, model_to_preset, path, changes,
+        )
 
     changes.append(
         f"legacy executor: + default_model: → settings.presets: "

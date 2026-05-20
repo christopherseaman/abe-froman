@@ -39,13 +39,20 @@ def _settings_with_presets():
 
 
 class TestResolvePromptExecutor:
-    def test_legacy_single_backend_path(self):
+    def test_single_preset_via_registry(self):
+        """One-entry registry: node resolves to that backend via default preset."""
+        from sqrlly.schema.models import Preset
         backend = AnthropicBackend(api_key="sk-ant-fake")
+        settings = Settings(presets={
+            "default": Preset(
+                transport="api", provider="anthropic",
+                model="sonnet", default=True,
+            ),
+        })
         dispatcher = DispatchExecutor(
-            prompt_backend=backend, settings=Settings(),
+            prompt_backends={"default": backend}, settings=settings,
         )
-        # Single-backend path: any node resolves to the same executor.
-        executor = dispatcher._resolve_prompt_executor(_node(), Settings())
+        executor = dispatcher._resolve_prompt_executor(_node(), settings)
         assert executor is not None
         assert executor._backend is backend
 
@@ -90,16 +97,6 @@ class TestResolvePromptExecutor:
         with pytest.raises(RuntimeError, match="no backend is registered"):
             dispatcher._resolve_prompt_executor(_node(), settings)
 
-    def test_mutual_exclusive_constructor_args(self):
-        with pytest.raises(ValueError, match="either prompt_backend"):
-            DispatchExecutor(
-                prompt_backend=AnthropicBackend(api_key="sk-ant"),
-                prompt_backends={
-                    "x": AnthropicBackend(api_key="sk-ant-x"),
-                },
-            )
-
-
 class TestResolveModel:
     def test_no_presets_returns_none(self):
         """Pure-script workflow has no presets → resolve_model returns None
@@ -122,9 +119,19 @@ class TestResolveModel:
 class TestGetBackend:
     """get_backend() returns the right backend for LLM-gate dispatch."""
 
-    def test_legacy_returns_the_single_backend(self):
+    def test_single_preset_returns_the_only_backend(self):
+        """One-entry registry: get_backend() returns it."""
+        from sqrlly.schema.models import Preset
         backend = AnthropicBackend(api_key="sk-ant")
-        dispatcher = DispatchExecutor(prompt_backend=backend)
+        settings = Settings(presets={
+            "default": Preset(
+                transport="api", provider="anthropic",
+                model="sonnet", default=True,
+            ),
+        })
+        dispatcher = DispatchExecutor(
+            prompt_backends={"default": backend}, settings=settings,
+        )
         assert dispatcher.get_backend() is backend
 
     def test_multi_preset_returns_default(self):

@@ -5,7 +5,7 @@ from pathlib import Path
 import yaml
 
 from sqrlly.compile.graph import build_workflow_graph
-from sqrlly.runtime.executor.backends.factory import create_prompt_backend
+from sqrlly.runtime.executor.backends.factory import create_backend_from_preset
 from sqrlly.runtime.executor.dispatch import DispatchExecutor
 from sqrlly.runtime.state import make_initial_state
 from sqrlly.schema.models import Graph
@@ -13,15 +13,23 @@ from sqrlly.schema.models import Graph
 
 async def main():
     config = Graph(**yaml.safe_load(Path("examples/jokes/workflow.yaml").read_text()))
-    backend = create_prompt_backend("acp")
-    executor = DispatchExecutor(workdir=".", prompt_backend=backend, settings=config.settings)
+    # Build one backend per declared preset, keyed by name.
+    prompt_backends = {
+        name: create_backend_from_preset(preset)
+        for name, preset in config.settings.presets.items()
+    }
+    executor = DispatchExecutor(
+        workdir=".",
+        prompt_backends=prompt_backends,
+        settings=config.settings,
+    )
     compiled = build_workflow_graph(config, executor)
     state = make_initial_state(workflow_name=config.name, workdir=".")
     result = await compiled.ainvoke(state)
 
     print("=== Workflow Result ===")
-    print(f"Completed: {result.get('completed_nodes', [])}")
-    print(f"Failed: {result.get('failed_nodes', [])}")
+    print(f"Completed: {result.get('completed_nodes', set())}")
+    print(f"Failed: {result.get('failed_nodes', set())}")
 
     for err in result.get("errors", []):
         print(f"  Error: {err}")

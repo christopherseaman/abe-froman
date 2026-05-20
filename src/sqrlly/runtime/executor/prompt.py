@@ -5,6 +5,7 @@ from typing import Any
 
 from jinja2 import Template
 
+from sqrlly.runtime.executor.preset import resolve_preset_name
 from sqrlly.runtime.result import ExecutionResult, OverloadError, PromptBackend
 from sqrlly.schema.models import Node, Settings
 
@@ -21,10 +22,7 @@ def resolve_model(node: Node, settings: Settings) -> str | None:
     """
     if not settings.presets:
         return None
-    # Late import to avoid cycle: prompt.py → preset.py → models.py.
-    from sqrlly.runtime.executor.preset import resolve_preset_name
-    preset_name = resolve_preset_name(node, settings)
-    return settings.presets[preset_name].model
+    return settings.presets[resolve_preset_name(node, settings)].model
 
 
 def downgrade_model(current: str, chain: list[str]) -> str | None:

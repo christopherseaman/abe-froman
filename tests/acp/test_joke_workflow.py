@@ -71,12 +71,19 @@ class TestJokeWorkflowIntegration:
                     "depends_on": ["generate"],
                 },
             ],
-            executor="acp",
+            presets={
+                "default": {
+                    "transport": "acp", "provider": "anthropic",
+                    "model": "sonnet", "default": True,
+                },
+            },
         )
 
         backend = ACPBackend()
         executor = DispatchExecutor(
-            workdir=str(tmp_path), prompt_backend=backend, settings=config.settings,
+            workdir=str(tmp_path),
+            prompt_backends={"default": backend},
+            settings=config.settings,
         )
         try:
             graph = build_workflow_graph(config, executor)
