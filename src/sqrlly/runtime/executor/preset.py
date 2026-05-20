@@ -45,7 +45,7 @@ def resolve_preset_name(node: "Node", settings: Settings) -> str:
     # coerce to PromptParams here — that's done at dispatch time. This
     # helper deliberately works with the raw dict so it can be called
     # at compile-time before coercion runs.
-    if node.execute is not None and isinstance(node.execute.params, dict):
+    if node.execute is not None:
         node_preset = node.execute.params.get("preset")
         if node_preset is not None:
             if node_preset not in settings.presets:

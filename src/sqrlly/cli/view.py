@@ -4,8 +4,8 @@ Two modes:
   - Authoring: ``sqrlly view <yaml>`` — topology + per-node
     config panel. No runtime overlay.
   - Debug: ``sqrlly view <yaml> --log <jsonl>`` — same as above,
-    plus per-node status overlay (passed/failed/retried/untouched)
-    and per-node log slices on click.
+    plus per-node status overlay (passed/failed/untouched, with a
+    retry-count badge) and per-node log slices on click.
 
 The Mermaid output is generated directly from the ``Graph`` model
 rather than from ``compiled.get_graph().draw_mermaid()``. This gives
@@ -322,7 +322,10 @@ def extract_node_config(node: Node) -> dict[str, Any]:
 
 @dataclass
 class NodeStatus:
-    status: str  # "passed" | "failed" | "retried" | "untouched"
+    status: str  # "passed" | "failed" | "untouched"
+    # NB: retry is surfaced via ``retry_count`` (and the "retried" CSS
+    # class keys off retry_count > 0), not via this status field — a
+    # retried-then-passed node is "passed".
     fired_count: int
     retry_count: int
     last_error: str | None

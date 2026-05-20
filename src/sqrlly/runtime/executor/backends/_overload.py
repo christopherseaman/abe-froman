@@ -51,7 +51,11 @@ def maybe_raise_overload(exc: BaseException, *, class_names: frozenset[str]) -> 
          provider-specific (e.g. Anthropic adds ``OverloadedError``,
          OpenAI uses just ``RateLimitError`` / ``APIConnectionError``).
     """
-    status = getattr(exc, "status_code", None) or getattr(exc, "status", None)
+    # `status_code` first, `status` as fallback — `is not None` rather
+    # than `or` so a literal 0 status_code isn't skipped over.
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        status = getattr(exc, "status", None)
     if _is_overload_status(status):
         raise OverloadError(str(exc)) from exc
     if type(exc).__name__ in class_names:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from graphlib import CycleError, TopologicalSorter
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -157,26 +158,23 @@ def _make_inline_route_node(node: Node):
 
 
 def _detect_cycles(config: Graph) -> None:
-    adj: dict[str, list[str]] = {p.id: list(p.depends_on) for p in config.nodes}
-    WHITE, GRAY, BLACK = 0, 1, 2
-    color = {pid: WHITE for pid in adj}
+    """Raise ``ValueError`` if ``depends_on`` edges form a cycle.
 
-    def dfs(node: str) -> None:
-        color[node] = GRAY
-        for dep in adj[node]:
-            if dep not in color:
-                continue
-            if color[dep] == GRAY:
-                raise ValueError(
-                    f"Circular dependency detected involving '{node}' and '{dep}'"
-                )
-            if color[dep] == WHITE:
-                dfs(dep)
-        color[node] = BLACK
-
-    for node in adj:
-        if color[node] == WHITE:
-            dfs(node)
+    Delegates to ``graphlib.TopologicalSorter`` — its ``prepare()``
+    raises ``CycleError`` (carrying the offending cycle) on a cyclic
+    graph. Edges to undeclared node ids are dropped; ``_validate_
+    depends_on`` already rejects those at schema time.
+    """
+    node_ids = {n.id for n in config.nodes}
+    adj = {
+        n.id: {dep for dep in n.depends_on if dep in node_ids}
+        for n in config.nodes
+    }
+    try:
+        TopologicalSorter(adj).prepare()
+    except CycleError as e:
+        cycle = " → ".join(e.args[1])
+        raise ValueError(f"Circular dependency detected: {cycle}") from e
 
 
 def _register_evaluation_node(
@@ -348,7 +346,6 @@ def build_workflow_graph(
 
     gated_node_ids: set[str] = set()
     dynamic_fan_out_ids: set[str] = set()
-    gated_fan_out_template_ids: set[str] = set()
     subgraph_node_ids: set[str] = set()
     route_node_ids: set[str] = set()
     # Stage 5c: nodes carrying `Node.route` block. `synthetic_route_ids`
@@ -364,8 +361,6 @@ def build_workflow_graph(
             gated_node_ids.add(node.id)
         if node.fan_out is not None:
             dynamic_fan_out_ids.add(node.id)
-            if node.fan_out.template.evaluation:
-                gated_fan_out_template_ids.add(node.id)
         if node_subgraph_path(node) is not None:
             subgraph_node_ids.add(node.id)
             # Cycle detection happens once at top-level — nested calls

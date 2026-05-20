@@ -31,7 +31,7 @@ def _parse_byte_size(value: Any) -> Any:
     optional suffix (``"4GB"``, ``"500MiB"``, ``"2T"``) resolves via
     :data:`_BYTE_SUFFIXES`. Suffixes are case-insensitive. Returns
     ``None`` for ``None`` (the disable sentinel)."""
-    if value is None or isinstance(value, int) and not isinstance(value, bool):
+    if value is None or (isinstance(value, int) and not isinstance(value, bool)):
         return value
     if not isinstance(value, str):
         raise ValueError(
@@ -360,7 +360,7 @@ class Settings(BaseModel):
     # Both compose (AND) with ``max_parallel_jobs`` /
     # ``per_model_limits`` — every gate must allow dispatch. In-flight
     # jobs are never aborted by these gates; only new acquisitions wait.
-    memory_threshold_pct: float | None = None
+    memory_threshold_pct: float | None = Field(default=None, ge=0.0, le=100.0)
     memory_min_available_bytes: int | None = None
 
     @field_validator("memory_min_available_bytes", mode="before")
@@ -532,7 +532,7 @@ class Graph(BaseModel):
         """
         declared = set(self.settings.presets)
         for node in self.nodes:
-            if node.execute is None or not isinstance(node.execute.params, dict):
+            if node.execute is None:
                 continue
             preset_ref = node.execute.params.get("preset")
             if preset_ref is None:

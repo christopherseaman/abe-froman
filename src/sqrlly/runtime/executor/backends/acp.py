@@ -9,6 +9,7 @@ from typing import Any
 from acp import spawn_agent_process, text_block
 from acp.interfaces import Client
 
+from sqrlly.runtime.executor.backends._lazy_client import await_with_timeout
 from sqrlly.runtime.result import ExecutionResult, OverloadError
 
 logger = logging.getLogger(__name__)
@@ -127,10 +128,7 @@ class ACPBackend:
                     session_id=self._session_id,
                     prompt=[text_block(prompt)],
                 )
-                if timeout is not None:
-                    await asyncio.wait_for(coro, timeout=timeout)
-                else:
-                    await coro
+                await await_with_timeout(coro, timeout)
             except Exception as e:
                 if _is_overload_error(e):
                     raise OverloadError(str(e)) from e

@@ -362,4 +362,4 @@ def run(
             click.echo(f"  Error in {err['node']}: {err['error']}")
 
     if failed:
-        raise SystemExit(1)
+        raise click.exceptions.Exit(1)
