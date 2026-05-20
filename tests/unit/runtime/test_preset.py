@@ -17,10 +17,10 @@ from sqrlly.runtime.executor.preset import (
 from sqrlly.schema.models import Execute, Node, Preset, Settings
 
 
-def _preset(transport="api", provider="anthropic", model="sonnet", default=False, base_url=None):
+def _preset(transport="api", provider="anthropic", model="sonnet", default=False, api_base_url=None):
     return Preset(
         transport=transport, provider=provider, model=model,
-        default=default, base_url=base_url,
+        default=default, api_base_url=api_base_url,
     )
 
 
@@ -215,14 +215,14 @@ class TestCreateBackendFromPreset:
         with pytest.raises(ValueError, match="base_url"):
             create_backend_from_preset(preset)
 
-    def test_api_custom_uses_preset_base_url(self, monkeypatch, tmp_path):
+    def test_api_custom_uses_preset_api_base_url(self, monkeypatch, tmp_path):
         monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("CUSTOM_API_KEY", "sk-custom-test")
         monkeypatch.delenv("CUSTOM_API_BASE_URL", raising=False)
         from sqrlly.runtime.executor.backends.openai import OpenAIBackend
         preset = _preset(
             transport="api", provider="custom",
-            model="local-model", base_url="https://my-endpoint/v1",
+            model="local-model", api_base_url="https://my-endpoint/v1",
         )
         backend = create_backend_from_preset(preset)
         assert isinstance(backend, OpenAIBackend)

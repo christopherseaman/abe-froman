@@ -71,16 +71,16 @@ def _build_custom_api(preset: "Preset") -> PromptBackend:
             "Preset (transport=api, provider=custom) requires "
             "CUSTOM_API_KEY in the environment or .env"
         )
-    # ``preset.base_url`` is the canonical place; ``CUSTOM_API_BASE_URL``
+    # ``preset.api_base_url`` is the canonical place; ``CUSTOM_API_BASE_URL``
     # env var stays as a fallback for the auto-detect path that
-    # synthesizes presets without authored ``base_url``.
-    base_url = preset.base_url or resolve_secret("CUSTOM_API_BASE_URL")
-    if not base_url:
+    # synthesizes presets without an authored endpoint.
+    api_base_url = preset.api_base_url or resolve_secret("CUSTOM_API_BASE_URL")
+    if not api_base_url:
         raise ValueError(
             "Preset (transport=api, provider=custom) requires "
-            "preset.base_url OR CUSTOM_API_BASE_URL in the environment"
+            "preset.api_base_url OR CUSTOM_API_BASE_URL in the environment"
         )
-    return OpenAIBackend(api_key=api_key, base_url=base_url)
+    return OpenAIBackend(api_key=api_key, base_url=api_base_url)
 
 
 # (transport, provider) → builder. Exhaustive — the schema validator

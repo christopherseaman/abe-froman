@@ -434,6 +434,46 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
 
 - [x] **Named presets (was: three orthogonal axes for LLM execution)** — _delivered, 2026-05-19, three commits: ba85287 (schema foundation), 8f1a3d0 (runtime wiring), this rework's final commit (cutover)._ Honest re-scope: the matrix is mostly diagonal (acp implies agent; api implies prompt), so the "three axes" framing was retired in favor of **two axes** (transport + provider/model) bundled into named ``settings.presets``. Nodes reference one via ``params.preset:``; the preset marked ``default: true`` applies otherwise; ``--preset/-p`` CLI flag overrides. Hard cutover — ``Settings.executor``, ``Settings.default_model``, ``Node.model``, ``PromptParams.model``, ``--executor/--model`` CLI flags, and ``sqrlly migrate`` subcommand all removed. The ``migrate.py`` module remains as an internal utility; one-time migration walked all ``examples/`` workflows automatically. 914 tests passing. Subgraph preset inheritance via the existing scope-aware ``model_fields_set`` path (subgraph without ``presets:`` inherits parent's; subgraph with ``presets:`` replaces; key-wise additive merge deferred).
 
+- [ ] **Switch `Preset` to a discriminated union when transport #3 lands** —
+  Today `Preset` is one flat Pydantic model: `transport: Literal["api",
+  "acp"]` + `provider` + `model` + `api_base_url`, with a
+  `_validate_combinations` validator forbidding fields outside their
+  valid `(transport, provider)` combo. That's fine for two near-identical
+  transports. The moment a structurally-different transport lands — e.g.
+  a `python` transport for the deferred "Python env as preset" idea,
+  needing `interpreter: str` + `requirements_path: str | None` and *no*
+  `provider`/`model` — the flat shape forces more `_validate_combinations`
+  branches forbidding cross-variant fields. At that point convert to a
+  Pydantic v2 discriminated union:
+
+  ```python
+  class ApiPreset(BaseModel):
+      transport: Literal["api"]
+      provider: Literal["anthropic", "openai", "deepseek", "custom"]
+      model: str
+      api_base_url: str | None = None
+
+  class AcpPreset(BaseModel):
+      transport: Literal["acp"]
+      provider: Literal["anthropic"]
+      model: str
+
+  class PythonPreset(BaseModel):       # the trigger variant
+      transport: Literal["python"]
+      interpreter: str
+      requirements_path: str | None = None
+
+  Preset = Annotated[
+      ApiPreset | AcpPreset | PythonPreset,
+      Field(discriminator="transport"),
+  ]
+  ```
+
+  Each variant carries only its valid fields; Pydantic dispatches on
+  `transport` at parse time; no cross-field validators. **Defer until
+  the third transport actually lands** — converting earlier just splits
+  two nearly-identical classes for no gain.
+
 ### Backends to add (lower priority once axes above land)
 
 - [x] **Direct Anthropic API backend** — _landed alongside StubBackend removal._ `runtime/executor/backends/anthropic.py` (~160 LOC) implements `PromptBackend` via `AsyncAnthropic`. Generic model alias table (`sonnet` / `opus` / `haiku` → vendor IDs) with pass-through for explicit pins. `OverloadError` mapping for transient failures (status 429 / 502 / 503 / 504 / 529 + class-name fallback `RateLimitError` / `APIConnectionError` / `APITimeoutError` / `InternalServerError` / `OverloadedError`). Optional dep — install with `uv sync --extra anthropic`. Auto-detect picks it first; explicit `--executor anthropic` always wins. Token-count surfacing on `ExecutionResult` is still TODO.

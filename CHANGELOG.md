@@ -3,6 +3,60 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased] — preset rework review follow-ups
+
+A three-agent code review of the preset rework (bugs / YAGNI-KISS-DRY /
+off-the-shelf-reuse) surfaced findings; this is the cleanup pass.
+
+### Fixed
+
+- **Migrator silently dropped `Node.model` on gate-only nodes** — a
+  node with a `model:` override but no `execute:` block lost the
+  override without indication. The migrator now emits an explicit
+  change entry naming the dropped field + value + what the gate uses
+  going forward.
+- **`params.preset` typos crashed at runtime, not validate time** —
+  new `Graph._validate_preset_refs` model validator rejects any
+  `params.preset:` reference not declared in `settings.presets` at
+  parse time, instead of a `RuntimeError` on first node execution.
+
+### Changed
+
+- **`Preset.base_url` renamed to `Preset.api_base_url`** — disambiguates
+  from `Settings.base_url`, which serves an unrelated purpose (resolving
+  relative `execute.url` paths to local files).
+- **`DispatchExecutor` ctor takes only `prompt_backends` (dict)** — the
+  singular `prompt_backend=` convenience arg + its synthetic `_legacy`
+  registry key are gone. Three downstream methods no longer branch on
+  the magic key. Tests + `examples/jokes/run.py` construct an explicit
+  `prompt_backends={"default": backend}` registry.
+- **`create_backend_from_preset` uses a `(transport, provider)` dispatch
+  table** instead of a 5-branch if/elif chain. Adding a transport is one
+  row + one builder function.
+
+### Removed
+
+- **`factory.create_prompt_backend` and `factory.auto_detect_executor`**
+  — dead code after the preset cutover (zero production callers).
+- **The legacy executor → presets migration moved out of the CLI** —
+  `_migrate_legacy_executor_to_presets` and helpers are now a standalone
+  one-shot script at `scripts/migrate_legacy_executor_to_presets.py`
+  (PEP-723 metadata, run via `uv run`). The longer-lived base migrator
+  in `sqrlly.cli.migrate` keeps the phases→nodes / quality_gate→evaluation
+  transforms.
+
+### Internal
+
+- `prompt.resolve_model` import hoisted to module top (the "avoid cycle"
+  late-import guarded against a cycle that didn't exist).
+- `build_preset_registry` passthrough returns `dict(settings.presets)`
+  instead of a per-element `model_copy()` — Preset instances aren't
+  mutated downstream.
+- `cli/migrate.py` collector + rewriter share one `_walk_model_holders`
+  iterator instead of two parallel `isinstance` cascades over the same
+  fan_out topology (this helper moved to the standalone script with the
+  rest of the preset migrator).
+
 ## [Unreleased] — named-preset rework (executor: → settings.presets:)
 
 Three-commit migration replacing the collapsed ``executor:`` enum

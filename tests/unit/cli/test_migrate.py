@@ -511,57 +511,7 @@ class TestRoundTripInRepoExamples:
 # TestMigrateCLI removed in the preset rework — the `sqrlly migrate`
 # subcommand was dropped from the CLI. The migrate.py module remains
 # as an internal utility (see migrate_file/migrate_yaml above).
-
-
-class TestPresetMigrationEdgeCases:
-    """Bug-regression tests for the legacy-executor → presets migration."""
-
-    def test_gate_only_node_model_override_surfaces_as_change(self):
-        """B1: Gate-only nodes (no execute block) can't carry params.preset,
-        so a Node.model override is dropped at migrate time. The change
-        log must surface the loss so the operator sees the behavior change.
-        """
-        before = (
-            "name: T\nversion: '1.0'\n"
-            "settings:\n"
-            "  executor: anthropic\n"
-            "  default_model: sonnet\n"
-            "nodes:\n"
-            "  - id: worker\n    name: W\n"
-            "    execute:\n      url: t.md\n"
-            "  - id: gate_only\n    name: G\n"
-            "    model: opus\n"
-            "    evaluation:\n      validator: g.py\n      threshold: 0.5\n"
-        )
-        _, changes = migrate_yaml(before)
-        # The gate-only override must be reported, naming the field
-        # source + the model that was dropped + what the gate will use now.
-        drop_msgs = [c for c in changes if "gate_only" in c and "dropped" in c]
-        assert len(drop_msgs) == 1, f"expected one drop message, got: {changes}"
-        assert "node.model='opus'" in drop_msgs[0]
-        assert "default preset's model" in drop_msgs[0]
-        assert "'sonnet'" in drop_msgs[0]
-
-    def test_normal_node_model_override_migrates_to_params_preset(self):
-        """B1 control: a node WITH an execute block gets its model
-        moved to params.preset (the working path)."""
-        before = (
-            "name: T\nversion: '1.0'\n"
-            "settings:\n"
-            "  executor: anthropic\n"
-            "  default_model: sonnet\n"
-            "nodes:\n"
-            "  - id: heavy\n    name: H\n"
-            "    model: opus\n"
-            "    execute:\n      url: t.md\n"
-        )
-        after, changes = migrate_yaml(before)
-        # Node.model rewritten as params.preset reference.
-        assert "node.model='opus' → params.preset='_auto_opus'" in "\n".join(changes)
-        assert "preset: _auto_opus" in after
-        # Top-level Node.model field removed (presets block legitimately
-        # has model: keys inside it; the test pins that no top-level
-        # node carries a model: line).
-        assert "  - id: heavy" in after
-        node_section = after[after.index("  - id: heavy"):]
-        assert "    model:" not in node_section
+#
+# The legacy executor:/default_model: → settings.presets one-shot
+# migration moved to scripts/migrate_legacy_executor_to_presets.py;
+# its tests live in tests/scripts/.

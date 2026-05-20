@@ -266,7 +266,11 @@ class Preset(BaseModel):
     transport: Literal["api", "acp"]
     provider: Literal["anthropic", "openai", "deepseek", "custom"]
     model: str
-    base_url: str | None = None
+    # OpenAI-compatible API endpoint override (e.g. OpenRouter / Ollama /
+    # LM Studio / vLLM URL). ``api_`` prefix disambiguates from
+    # ``Settings.base_url`` which serves a different purpose (resolving
+    # relative ``execute.url`` paths to local files).
+    api_base_url: str | None = None
     default: bool = False
 
     @model_validator(mode="after")
@@ -276,11 +280,11 @@ class Preset(BaseModel):
                 f"transport=acp only supports provider=anthropic "
                 f"(got provider={self.provider!r}); ACP wraps Claude Code"
             )
-        if self.base_url is not None and not (
+        if self.api_base_url is not None and not (
             self.transport == "api" and self.provider == "custom"
         ):
             raise ValueError(
-                f"base_url is only meaningful when transport=api + "
+                f"api_base_url is only meaningful when transport=api + "
                 f"provider=custom (got transport={self.transport!r}, "
                 f"provider={self.provider!r})"
             )
