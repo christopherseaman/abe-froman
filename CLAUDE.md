@@ -55,13 +55,18 @@ uv run pytest -m live                        # live-backend tests (skipped per-k
 uv run pytest tests/architecture/test_layers.py  # layer rule enforcement
 
 uv run sqrlly validate config.yaml
-uv run sqrlly run config.yaml             # auto-detect backend
-uv run sqrlly run config.yaml -e acp      # force ACP (choices: acp | anthropic | custom | deepseek | openai)
+uv run sqrlly run config.yaml             # auto-detect backend (or settings.presets)
+uv run sqrlly run config.yaml -p <name>   # force a named preset from settings.presets
 uv run sqrlly run config.yaml --resume    # resume from checkpoint
 uv run sqrlly run config.yaml --log out.jsonl
 uv run sqrlly graph config.yaml           # Mermaid topology
-uv run sqrlly migrate old.yaml --in-place # pre-Stage-4 → 5b transforms
+uv run sqrlly view config.yaml            # self-contained HTML viewer
 ```
+
+CLI commands: `validate`, `run`, `graph`, `view`. There is no
+`migrate` subcommand — legacy-YAML migration is the standalone
+`scripts/migrate_legacy_executor_to_presets.py` (PEP-723; run with
+`uv run`).
 
 ## Project Layout
 
@@ -122,11 +127,16 @@ langgraph-free).
   frozensets. Both backends map transient SDK errors to
   `OverloadError` through this.
 
-**`src/sqrlly/cli/`** — entry points.
-- `main.py` — Click CLI; wires `AsyncSqliteSaver`, `ForemanExecutor`,
-  `thread_id`, `JsonlLogger`, auto-detect.
-- `migrate.py` — pre-Stage-4 → 4 → 5b YAML transforms (idempotent;
-  preserves comments + anchors).
+**`src/sqrlly/cli/`** — entry point + helpers.
+- `main.py` — Click CLI (`validate` / `run` / `graph` / `view`);
+  wires `AsyncSqliteSaver`, `ForemanExecutor`, `thread_id`,
+  `JsonlLogger`, auto-detect.
+- `view.py` — `view` command: self-contained HTML workflow viewer.
+- `migrate.py` — internal module (NOT a CLI command): pre-Stage-4 →
+  4 → 5b YAML transforms (idempotent; preserves comments + anchors).
+  The `sqrlly migrate` subcommand was removed in the preset-rework
+  cutover; `migrate_yaml` / `migrate_file` survive as a tested
+  library utility.
 
 ## Testing principles
 
