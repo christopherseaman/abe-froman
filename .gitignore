@@ -9,7 +9,7 @@ build/
 .mypy_cache/
 .ruff_cache/
 .sqrlly/
-.sqrlly-checkpoint.db
+*-checkpoint.db
 *.db-shm
 *.db-wal
 .claude/

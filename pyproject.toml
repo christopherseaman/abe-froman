@@ -1,8 +1,27 @@
 [project]
 name = "sqrlly"
 version = "0.1.0"
-description = "Workflow orchestrator using LangGraph and Claude Agent SDK"
+description = "Workflow orchestrator using LangGraph with Claude, DeepSeek, and script execution backends"
+readme = "README.md"
 requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Christopher Seaman", email = "chris@badmath.org" },
+]
+keywords = ["workflow", "orchestration", "langgraph", "agents", "llm"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Environment :: Console",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Libraries",
+]
 dependencies = [
     "pydantic>=2.0",
     "pyyaml>=6.0",
@@ -15,12 +34,19 @@ dependencies = [
     "psutil>=5.9",
 ]
 
+[project.urls]
+Homepage = "https://github.com/christopherseaman/sqrlly"
+Repository = "https://github.com/christopherseaman/sqrlly"
+Issues = "https://github.com/christopherseaman/sqrlly/issues"
+Changelog = "https://github.com/christopherseaman/sqrlly/blob/main/CHANGELOG.md"
+
 [project.scripts]
 sqrlly = "sqrlly.cli.main:cli"
 
 [project.optional-dependencies]
 openai = ["openai>=1.40"]
 anthropic = ["anthropic>=0.40"]
+acp = ["agent-client-protocol>=0.5"]
 
 [build-system]
 requires = ["hatchling"]
@@ -28,6 +54,33 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/sqrlly"]
+
+[tool.hatch.build.targets.sdist]
+# `.sqrlly/` is the foreman worktree pool — gitignored, but each
+# worktree carries a tracked `.env.example` that the `!.env.example`
+# un-ignore rule otherwise leaks into the sdist. Exclude it (plus
+# checkpoint DBs, scratch dirs, and internal dev docs) explicitly.
+# README / CHANGELOG / TECHNICAL / LICENSE stay — they are
+# user-facing.
+exclude = [
+    "/.sqrlly",
+    "/.sqrlly/**",
+    "/.temp",
+    "/.temp/**",
+    "/output",
+    "/output/**",
+    "**/*.db",
+    "**/*.db-shm",
+    "**/*.db-wal",
+    "/.env",
+    "/CLAUDE.md",
+    "/WISHLIST.md",
+    "/TODO.md",
+    "/BUILDER-REQUESTS.md",
+    "/DECISIONS.md",
+    "/plan_sketch.md",
+    "/example_workflow.json",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
