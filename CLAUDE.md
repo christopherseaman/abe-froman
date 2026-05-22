@@ -6,10 +6,15 @@ DeepSeek / scripts for execution.
 This file is operational guidance for Claude Code working inside this
 repo. Narrative documentation lives elsewhere:
 
-- **`README.md`** — what the project is, install, quickstart, full
-  schema reference, CLI reference, examples gallery, contributing.
+- **`README.md`** — what the project is, install, quickstart, concept
+  tour, CLI overview, examples gallery (PyPI-facing front page).
+- **`docs/schema-reference.md`** — the exhaustive field-by-field
+  schema reference (Settings / Node / Execute / presets / route /
+  evaluation), URL dispatch table, route-predicate namespace.
 - **`TECHNICAL.md`** — three-layer architecture, pipeline flow, state
   model, key invariants, contributor reading order.
+- **`SKILLS.md`** — agent skill doc: instructions for an AI coding
+  agent authoring and running sqrlly workflows (Codex skill format).
 - **`WISHLIST.md`** — open work, prioritized + non-prioritized.
 - **`TODO.md`** — review-surfaced defects/cleanups deferred for
   focused work (each with a diagnosis). Distinct from WISHLIST

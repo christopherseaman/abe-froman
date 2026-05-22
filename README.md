@@ -126,7 +126,7 @@ Each example directory ships a checked-in `view.html` (authoring view) and, wher
 
 - **[docs/schema-reference.md](https://github.com/christopherseaman/sqrlly/blob/main/docs/schema-reference.md)** — every Settings / Node / Execute / preset / route / evaluation field, the URL dispatch table, and the route-predicate namespace.
 - **[TECHNICAL.md](https://github.com/christopherseaman/sqrlly/blob/main/TECHNICAL.md)** — three-layer architecture, pipeline flow, state model, key invariants.
-- **[.agents/skills/sqrlly/SKILL.md](https://github.com/christopherseaman/sqrlly/blob/main/.agents/skills/sqrlly/SKILL.md)** — an agent skill: instructions for an AI coding agent authoring and running sqrlly workflows.
+- **[SKILLS.md](https://github.com/christopherseaman/sqrlly/blob/main/SKILLS.md)** — agent skill doc: instructions for an AI coding agent authoring and running sqrlly workflows.
 
 ## Contributing
 
