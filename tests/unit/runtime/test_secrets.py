@@ -146,6 +146,6 @@ class TestNoMachineGlobalAccess:
         # Plant a file at the legacy path — the resolver must IGNORE it.
         legacy = tmp_path / ".pi" / "agent" / "auth.json"
         legacy.parent.mkdir(parents=True)
-        legacy.write_text('{"anthropic": {"key": "from-legacy"}}')
+        legacy.write_text('{"some_service": {"key": "from-legacy"}}')
         _reset_dotenv_cache()
-        assert resolve_secret("ANTHROPIC_API_KEY") is None
+        assert resolve_secret("MY_KEY") is None

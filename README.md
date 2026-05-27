@@ -19,17 +19,18 @@ pipx install sqrlly             # or: uv tool install sqrlly
 As a project dependency:
 
 ```bash
-pip install sqrlly                       # core
-pip install "sqrlly[anthropic,openai]"   # + API backends
+pip install sqrlly             # core
+pip install "sqrlly[acp]"      # + ACP backend
 ```
 
-Backend extras:
+LLM dispatch currently goes through the local `claude-code-acp`
+adapter (also requires `npm i -g @zed-industries/claude-code-acp` on
+your PATH). The direct-API backends (Anthropic / OpenAI / DeepSeek /
+custom OpenAI-compatible endpoints) were removed in 0.2.x while the
+project consolidates around a single transport — a re-introduced
+`transport: cli` (and possibly `transport: api`) is on the roadmap.
 
-- **`anthropic`** — Claude via the Anthropic API.
-- **`openai`** — OpenAI, DeepSeek, and any OpenAI-compatible endpoint.
-- **`acp`** — Claude via the local `claude-code-acp` adapter (also needs `npm i -g @zed-industries/claude-code-acp`).
-
-Python 3.11+. From source: `git clone` then `uv sync` (add `--extra openai --extra anthropic` for backends).
+Python 3.11+. From source: `git clone` then `uv sync`.
 
 ## Quickstart
 
@@ -90,27 +91,16 @@ LLM and script execution is configured by **presets** under `settings.presets` �
 settings:
   presets:
     default:
-      transport: api        # api | acp
-      provider: anthropic   # anthropic | openai | deepseek | custom
+      transport: acp
+      provider: anthropic
       model: sonnet
       default: true
 ```
 
-If `settings.presets` is omitted, sqrlly auto-detects a backend from environment keys (first match wins):
-
-1. `ANTHROPIC_API_KEY` → Anthropic API
-2. `DEEPSEEK_API_KEY` → DeepSeek
-3. `npx` on `PATH` → ACP (Claude Code)
-
-Keys load from the process environment or a project-local `.env` (copy `.env.example`):
-
-```bash
-ANTHROPIC_API_KEY=sk-ant-...
-DEEPSEEK_API_KEY=sk-...
-OPENAI_API_KEY=sk-...                          # reserved for real openai.com
-CUSTOM_API_KEY=...                             # any OpenAI-compatible endpoint
-CUSTOM_API_BASE_URL=https://openrouter.ai/api/v1
-```
+If `settings.presets` is omitted, sqrlly auto-detects by checking for
+`npx` on `PATH` and synthesizing an ACP preset against `sonnet`. The
+adapter inherits the local `claude` CLI session, so no API keys are
+required — just `npm i -g @zed-industries/claude-code-acp`.
 
 Full reference (including `CommandPreset` for custom script interpreters): [docs/schema-reference.md](https://github.com/christopherseaman/sqrlly/blob/main/docs/schema-reference.md).
 

@@ -1,7 +1,7 @@
 # sqrlly — Operator Notes for Claude
 
-Workflow orchestrator using LangGraph for graph topology and Claude /
-DeepSeek / scripts for execution.
+Workflow orchestrator using LangGraph for graph topology and Claude
+(via the local ACP adapter) / scripts for execution.
 
 This file is operational guidance for Claude Code working inside this
 repo. Narrative documentation lives elsewhere:
@@ -51,12 +51,10 @@ See `TECHNICAL.md` for the full layered breakdown.
 
 ```bash
 uv sync                                      # core deps
-uv sync --extra openai                       # add OpenAI/DeepSeek backend
 npm i -g @zed-industries/claude-code-acp     # for ACP backend / acp tests
 
-uv run pytest tests/ --ignore=tests/acp -v   # ~878 tests, ~50s
+uv run pytest tests/ --ignore=tests/acp -v   # ~860 tests, ~35s
 uv run pytest tests/acp -v                   # ACP tests, ~2 min, requires npm package above
-uv run pytest -m live                        # live-backend tests (skipped per-key when absent)
 uv run pytest tests/architecture/test_layers.py  # layer rule enforcement
 
 uv run sqrlly validate config.yaml
@@ -123,14 +121,13 @@ langgraph-free).
 - `executor/dispatch.py` — `DispatchExecutor` (10-row URL dispatch).
 - `executor/prompt.py` — `PromptExecutor` (template render, model
   downgrade).
-- `executor/backends/{acp,anthropic,openai,factory}.py`.
-- `executor/backends/_lazy_client.py` — `LazyClientMixin` (lazy SDK
-  client init + idempotent close) and `await_with_timeout` helper.
-  Shared by anthropic + openai backends.
+- `executor/backends/{acp,factory}.py`. After the 0.2.x api-transport
+  strip, ACP is the only LLM backend; `factory.create_backend_from_preset`
+  is a one-row lookup table that returns an `ACPBackend` instance.
 - `executor/backends/_overload.py` — `maybe_raise_overload` +
-  per-provider `ANTHROPIC_OVERLOAD_NAMES` / `OPENAI_OVERLOAD_NAMES`
-  frozensets. Both backends map transient SDK errors to
-  `OverloadError` through this.
+  `ACP_OVERLOAD_SUBSTRINGS`. Maps the ACP adapter's message-shaped
+  transient errors to `OverloadError` so the model-downgrade chain
+  activates.
 
 **`src/sqrlly/cli/`** — entry point + helpers.
 - `main.py` — Click CLI (`validate` / `run` / `graph` / `view`);
@@ -148,9 +145,9 @@ langgraph-free).
 These guide all new tests; violations should be flagged in review.
 
 1. **No mocks of external systems.** Tests use real subprocess / real
-   ACP / real DeepSeek API (gated on key) / real validators.
-   `MockExecutor` (`tests/mock_executor.py`) is a custom test double
-   implementing the `NodeExecutor` Protocol — NOT `unittest.mock`.
+   ACP / real validators. `MockExecutor` (`tests/mock_executor.py`) is
+   a custom test double implementing the `NodeExecutor` Protocol —
+   NOT `unittest.mock`.
 2. **Tests validate output, not just absence-of-error.** Every test
    asserts a specific value: an output string, a state key, a file's
    contents, a graph shape. "Did not raise" is not a passing
@@ -232,12 +229,14 @@ mapping (we're testing our wrapping code, not the SDK).
 - **`tests/__init__.py` must NOT exist** — its presence breaks
   `from helpers import ...` and `from mock_executor import ...` in
   tests. Removing it is the supported state.
-- **API key resolution** — generic resolver at
+- **Secret resolution** — generic resolver at
   `runtime/secrets.py::resolve_secret(name, *, settings, settings_attr)`.
   Layers: workflow YAML setting → `os.environ[name]` → project-local
   `.env` file (auto-discovered by walking up from CWD). sqrlly
-  never reads from machine-global keystores. Both `_resolve_deepseek_key`
-  and `_resolve_anthropic_key` are thin wrappers over this resolver.
+  never reads from machine-global keystores. The api-transport strip
+  removed all in-tree consumers of this resolver, but it remains
+  available for workflow-defined keys (e.g. a script node that calls
+  out to a third-party service).
 - **`pyproject.toml`** marker for ACP tests: `acp` (used in
   `pytest -m`).
 
@@ -253,9 +252,7 @@ mapping (we're testing our wrapping code, not the SDK).
 | New WorkflowState field | `src/sqrlly/runtime/state.py` (TypedDict + REDUCERS) — beware of parity invariant in `compile/dynamic.py::_merge_updates` |
 | Inline routing (route block, sender bindings, include_eval preamble) | `src/sqrlly/schema/models.py::Route`, `src/sqrlly/compile/graph.py::_make_inline_route_node`, `src/sqrlly/runtime/gates.py::build_eval_preamble` |
 | Layer rule violation | `tests/architecture/test_layers.py` errors point to the offending file |
-| Live-backend regression test | `tests/e2e/test_live_backend_roundtrip.py` (parametrized over 4 backends; `pytest.mark.live`, skipif per-key) |
-| Backend lazy-init + close | `src/sqrlly/runtime/executor/backends/_lazy_client.py::LazyClientMixin` — subclass + implement `_create_client()` |
-| Transient-error → `OverloadError` mapping | `src/sqrlly/runtime/executor/backends/_overload.py::maybe_raise_overload` (status-code set + per-provider class-name frozensets) |
+| Transient-error → `OverloadError` mapping | `src/sqrlly/runtime/executor/backends/_overload.py::maybe_raise_overload` (status-code set + `ACP_OVERLOAD_SUBSTRINGS`) |
 
 When in doubt, read `TECHNICAL.md` Section 11 ("Key non-obvious
 invariants") before changing compile or runtime layer code — five of

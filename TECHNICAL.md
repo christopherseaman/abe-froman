@@ -339,17 +339,14 @@ send_prompt(prompt, model, workdir, timeout)` and `async close()`.
 
 - `acp.py::ACPBackend` — `npx @zed-industries/claude-code-acp`.
   See Section 9.
-- `anthropic.py::AnthropicBackend` — direct Anthropic Messages API
-  via the `anthropic` SDK. Generic model aliases (`sonnet` / `opus`
-  / `haiku` → vendor IDs) with pass-through; OverloadError mapping
-  for transient failures so the model-downgrade chain activates.
-- `openai.py::OpenAIBackend` — OpenAI-compatible client; reused for
-  DeepSeek (`base_url=https://api.deepseek.com/v1`).
-- `factory.py::create_prompt_backend(executor_type, **kwargs)` —
-  string → instance. `auto_detect_executor()` picks Anthropic key →
-  `"anthropic"`, else DeepSeek key → `"deepseek"`, else `npx` on
-  PATH → `"acp"`, else raises `RuntimeError` with concrete
-  remediation (no silent stub fallback).
+- `factory.py::create_backend_from_preset(preset)` — `LlmPreset`
+  instance → `PromptBackend` instance via a single-row
+  `(transport, provider) → builder` table. After the api-transport
+  strip the only row is `("acp", "anthropic") → ACPBackend`; the
+  schema validator constrains presets to that combination.
+  `auto_detect_default_preset()` (in `executor/preset.py`) synthesizes
+  an ACP preset when `npx` is on `PATH` and raises `RuntimeError`
+  otherwise.
 
 ### `runtime/gates.py`
 

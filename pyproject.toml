@@ -1,7 +1,7 @@
 [project]
 name = "sqrlly"
 version = "0.1.0"
-description = "Workflow orchestrator using LangGraph with Claude, DeepSeek, and script execution backends"
+description = "Workflow orchestrator using LangGraph with Claude (via ACP) and script execution backends"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
@@ -44,8 +44,6 @@ Changelog = "https://github.com/christopherseaman/sqrlly/blob/main/CHANGELOG.md"
 sqrlly = "sqrlly.cli.main:cli"
 
 [project.optional-dependencies]
-openai = ["openai>=1.40"]
-anthropic = ["anthropic>=0.40"]
 acp = ["agent-client-protocol>=0.5"]
 
 [build-system]
@@ -88,7 +86,7 @@ testpaths = ["tests"]
 pythonpath = ["tests"]
 markers = [
     "acp: tests requiring a live ACP adapter + Claude API (may be slow/flaky)",
-    "live: tests requiring a live API key on disk (ANTHROPIC_API_KEY / DEEPSEEK_API_KEY / OPENAI_API_KEY / CUSTOM_API_KEY+CUSTOM_API_BASE_URL); skipif per-key, opt-in via `pytest -m live`",
+    "live: tests requiring live network access (currently no in-tree consumers after the api-transport strip; reserved for future restoration)",
 ]
 
 [dependency-groups]

@@ -31,13 +31,12 @@ Write a YAML file with `name`, `version`, `nodes`, and `settings`.
    settings:
      presets:
        default:
-         transport: acp        # api | acp
-         provider: anthropic   # anthropic | openai | deepseek | custom
+         transport: acp        # acp (only option after the 0.2.x strip)
+         provider: anthropic   # anthropic (only option for transport: acp)
          model: sonnet
          default: true
    ```
-   Or omit `settings.presets` entirely to auto-detect from
-   `ANTHROPIC_API_KEY` → `DEEPSEEK_API_KEY` → `npx` (ACP).
+   Or omit `settings.presets` entirely to auto-detect via `npx` (ACP).
 5. **Add a gate** to retry a node until its output is good enough:
    ```yaml
    evaluation:

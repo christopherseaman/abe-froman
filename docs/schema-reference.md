@@ -91,14 +91,15 @@ defaults to `llm`, so pre-`CommandPreset` YAML still parses).
 | Field | Type | Default | Effect |
 |---|---|---|---|
 | `kind` | `"llm"` | `"llm"` | Discriminator. |
-| `transport` | `"api"` \| `"acp"` | required | API call vs. the local ACP adapter. |
-| `provider` | `"anthropic"` \| `"openai"` \| `"deepseek"` \| `"custom"` | required | Which backend. |
+| `transport` | `"acp"` | required | The local ACP adapter (only option after the 0.2.x api-transport strip). |
+| `provider` | `"anthropic"` | required | Which backend (only option for `transport: acp`). |
 | `model` | `str` | required | Model id. |
-| `api_base_url` | `str \| None` | `None` | Only valid with `transport: api` + `provider: custom`. |
 | `default` | `bool` | `false` | Exactly one `LlmPreset` must be `true`. |
 
-Constraints: `transport: acp` requires `provider: anthropic`;
-`api_base_url` is valid only for `transport: api` + `provider: custom`.
+The api transport — direct calls to Anthropic / OpenAI / DeepSeek /
+custom OpenAI-compatible endpoints — was removed in 0.2.x while the
+project consolidates around a single transport. Re-introduction of a
+`transport: cli` (and possibly `transport: api`) is on the roadmap.
 
 ### CommandPreset (`kind: command`)
 
@@ -123,28 +124,24 @@ Command-preset-only workflows are exempt.
 ### Auto-detection
 
 If `settings.presets` is omitted entirely, sqrlly synthesizes a single
-`_auto` preset from environment keys, first match wins:
+`_auto` preset:
 
-1. `ANTHROPIC_API_KEY` → `LlmPreset(transport=api, provider=anthropic, model=sonnet)`
-2. `DEEPSEEK_API_KEY` → `LlmPreset(transport=api, provider=deepseek, model=deepseek-v4-flash)`
-3. `npx` on `PATH` → `LlmPreset(transport=acp, provider=anthropic, model=sonnet)`
-4. None → `RuntimeError` with a remediation message.
+1. `npx` on `PATH` → `LlmPreset(transport=acp, provider=anthropic, model=sonnet)`
+2. None → `RuntimeError` instructing the user to install
+   `@zed-industries/claude-code-acp` or declare presets explicitly.
 
 `sqrlly run --preset <name>` overrides which `LlmPreset` is the default
 at run time (it cannot be combined with auto-detection).
 
-### API keys
+### Secrets
 
-Keys resolve in order: a binding in workflow YAML → process environment
-→ a project-local `.env` file (discovered by walking up from CWD).
+The ACP adapter inherits its credentials from the local `claude` CLI
+session — no API keys are required for transport: acp. The generic
+secret resolver (`runtime/secrets.py::resolve_secret`) is still
+available for workflow-defined values (e.g. a script node calling
+out to a third-party service); resolution order is process env →
+project-local `.env` file (discovered by walking up from CWD).
 sqrlly never reads machine-global keystores.
-
-| Env var | Provider |
-|---|---|
-| `ANTHROPIC_API_KEY` | `anthropic` |
-| `DEEPSEEK_API_KEY` | `deepseek` |
-| `OPENAI_API_KEY` | `openai` (reserved for real openai.com) |
-| `CUSTOM_API_KEY` + `CUSTOM_API_BASE_URL` | `custom` (any OpenAI-compatible endpoint — OpenRouter, Ollama, LM Studio, LiteLLM, Azure OpenAI, vLLM) |
 
 ---
 

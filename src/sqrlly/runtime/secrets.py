@@ -83,14 +83,14 @@ def resolve_secret(
     Calling shape:
 
         # plain env / .env lookup
-        key = resolve_secret("ANTHROPIC_API_KEY")
+        token = resolve_secret("MY_SERVICE_TOKEN")
 
         # with optional YAML override (when a workflow's
         # ``Settings`` model carries a matching field)
-        key = resolve_secret(
-            "ANTHROPIC_API_KEY",
+        token = resolve_secret(
+            "MY_SERVICE_TOKEN",
             settings=cfg.settings,
-            settings_attr="anthropic_api_key",
+            settings_attr="my_service_token",
         )
     """
     if settings is not None and settings_attr:
