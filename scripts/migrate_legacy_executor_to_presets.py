@@ -60,13 +60,15 @@ class MigrateError(ValueError):
 
 
 _PROMPT_EXTS = (".md", ".txt", ".prompt")
+
+# After the api-transport strip, only the local ACP adapter survives.
+# Legacy executor names that targeted the (now-deleted) api backends
+# have no acp equivalent and refuse to migrate (see _LEGACY_API_EXECUTORS).
 _EXECUTOR_TO_TRANSPORT_PROVIDER = {
     "acp": ("acp", "anthropic"),
-    "anthropic": ("api", "anthropic"),
-    "openai": ("api", "openai"),
-    "deepseek": ("api", "deepseek"),
-    "custom": ("api", "custom"),
 }
+
+_LEGACY_API_EXECUTORS = frozenset({"anthropic", "openai", "deepseek", "custom"})
 
 
 def _node_is_prompt_dispatch(node: CommentedMap) -> bool:
@@ -244,7 +246,18 @@ def migrate_legacy_executor_to_presets(
                     node.pop("model")
         return
 
-    executor_key = legacy_executor or "anthropic"
+    # Legacy default was `anthropic` (api transport) — after the strip,
+    # only `acp` is supported. Promote the absent-executor case to acp
+    # explicitly (the original auto-detect chain landed on the same
+    # backend when no api key was configured).
+    executor_key = legacy_executor or "acp"
+    if executor_key in _LEGACY_API_EXECUTORS:
+        raise MigrateError(
+            f"legacy executor {executor_key!r} has no acp equivalent; "
+            f"transport: api was removed in 0.2.x. Please rewrite the "
+            f"workflow manually to use transport: acp + provider: anthropic, "
+            f"or wait for transport: cli (planned)."
+        )
     if executor_key not in _EXECUTOR_TO_TRANSPORT_PROVIDER:
         raise MigrateError(
             f"Unknown legacy executor: {executor_key!r}; "

@@ -32,25 +32,28 @@ migrate_text = _mod.migrate_text
 
 
 class TestPromptWorkflowMigration:
-    def test_executor_and_default_model_become_presets(self):
+    @pytest.mark.parametrize(
+        "executor", ["anthropic", "openai", "deepseek", "custom"],
+    )
+    def test_legacy_api_executor_refuses_to_migrate(self, executor):
+        """After the api-transport strip, none of the legacy api-backed
+        executors have an acp equivalent. The migrator must surface a
+        clear MigrateError naming the executor and the removed transport
+        rather than silently producing invalid YAML."""
         before = (
             "name: T\nversion: '1.0'\n"
-            "settings:\n"
-            "  executor: anthropic\n"
+            f"settings:\n"
+            f"  executor: {executor}\n"
             "  default_model: sonnet\n"
             "nodes:\n"
             "  - id: a\n    name: A\n"
             "    execute:\n      url: t.md\n"
         )
-        after, changes = migrate_text(before)
-        assert "presets:" in after
-        assert "transport: api" in after
-        assert "provider: anthropic" in after
-        assert "model: sonnet" in after
-        assert "default: true" in after
-        assert "executor:" not in after
-        assert "default_model:" not in after
-        assert any("settings.presets" in c for c in changes)
+        with pytest.raises(_mod.MigrateError) as exc_info:
+            migrate_text(before)
+        msg = str(exc_info.value)
+        assert executor in msg
+        assert "transport: api was removed" in msg
 
     def test_acp_executor_maps_to_acp_transport(self):
         before = (
@@ -64,6 +67,26 @@ class TestPromptWorkflowMigration:
         )
         after, _ = migrate_text(before)
         assert "transport: acp" in after
+        assert "provider: anthropic" in after
+        assert "model: sonnet" in after
+        assert "default: true" in after
+        assert "executor:" not in after
+        assert "default_model:" not in after
+
+    def test_no_executor_defaults_to_acp(self):
+        """Absent executor used to default to 'anthropic' (api); after the
+        strip the implicit default is 'acp'."""
+        before = (
+            "name: T\nversion: '1.0'\n"
+            "settings:\n"
+            "  default_model: sonnet\n"
+            "nodes:\n"
+            "  - id: a\n    name: A\n"
+            "    execute:\n      url: t.md\n"
+        )
+        after, _ = migrate_text(before)
+        assert "transport: acp" in after
+        assert "provider: anthropic" in after
 
     def test_idempotent_on_already_migrated(self):
         before = (
@@ -71,7 +94,7 @@ class TestPromptWorkflowMigration:
             "settings:\n"
             "  presets:\n"
             "    default:\n"
-            "      transport: api\n"
+            "      transport: acp\n"
             "      provider: anthropic\n"
             "      model: sonnet\n"
             "      default: true\n"
@@ -90,7 +113,7 @@ class TestModelOverrideRewrite:
         before = (
             "name: T\nversion: '1.0'\n"
             "settings:\n"
-            "  executor: anthropic\n"
+            "  executor: acp\n"
             "  default_model: sonnet\n"
             "nodes:\n"
             "  - id: heavy\n    name: H\n"
@@ -111,7 +134,7 @@ class TestModelOverrideRewrite:
         before = (
             "name: T\nversion: '1.0'\n"
             "settings:\n"
-            "  executor: anthropic\n"
+            "  executor: acp\n"
             "  default_model: sonnet\n"
             "nodes:\n"
             "  - id: worker\n    name: W\n"
