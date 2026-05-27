@@ -120,7 +120,7 @@ These items are already drafted in `sqrlly/WISHLIST.md`. Samus's needs assign pr
     2. **Wave-driven dynamic-task pattern** — _shippable today (resolved 2026-05-06 via spike). Existing primitives suffice once the resume-mode `# Skip if already completed` holdover guard is removed; that 3-line removal landed alongside the resolution._
     3. **Memory back-pressure in Foreman** — small focused requirement
     4. **Foreman branch/commit/merge management** — substantial; requirements + open design questions enumerated
-- **22 existing WISHLIST items** tagged with Samus priorities; as of 2026-05-06, six of the highest-priority Samus items have landed (Direct Anthropic backend, `stream_mode="updates"`, stop diffing state, OpenAI backend, scope-aware settings, default-executor-real-not-stub). The Anthropic backend leaves one Samus-blocking sub-item open: token-count surfacing on `ExecutionResult` (WISHLIST audit item #13)
+- **22 existing WISHLIST items** tagged with Samus priorities; as of 2026-05-06, six of the highest-priority Samus items have landed (Direct Anthropic backend, `stream_mode="updates"`, stop diffing state, OpenAI backend, scope-aware settings, default-executor-real-not-stub).
 - **6 items** explicitly kept in Samus's own codebase (not requested of sqrlly)
 
 The bulk of Samus's platform needs are **already on the sqrlly WISHLIST** (the maintainer's own roadmap). This document largely prioritizes that backlog against Samus's specific Phase-by-Phase needs. The post-Stage-5b refresh dropped three originally-proposed orchestrator features that, on second look, are better expressed as Samus-side consumers of the sqrlly event stream rather than sqrlly concerns.

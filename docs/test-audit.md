@@ -54,7 +54,6 @@ Severity legend: 🔴 block shipping, 🟠 fix soon, 🟡 nice-to-have.
 | J5 | 🟠 | `tests/e2e/test_dynamic.py` | MISSING | No test verifies that manifest item fields **beyond `id`** are passed to template context. `{{id}}` flow via subphase_id is implicit but `{{custom_field}}` never tested | `compile/dynamic.py:67-71` | Add test: manifest item `{"id": "x", "custom_field": "value123"}` → subphase template uses `{{custom_field}}` → assert it expanded correctly |
 | J6 | 🟠 | `tests/e2e/test_timeout.py:21-50` | MISPLACED (7 tests) | Pure Pydantic schema tests (`test_phase_timeout_field`, `test_effective_timeout_*`, etc.) in E2E file | `schema/models.py:108-112` | Move to `tests/unit/schema/test_schema.py`. Also add the currently-MISSING test for `Phase.effective_timeout` |
 | J7 | 🟠 | `tests/e2e/test_timeout.py:182,222` | WEAK | Timeout tests assert `"timed out"` in error message but have no elapsed-time bound. Would pass if test failed for unrelated reason | `compile/nodes.py:126-138` | Add `t0 = time.monotonic()`, `...`, `assert time.monotonic() - t0 < timeout * 3` (bound above; below is implicitly covered by the message match) |
-| J8 | 🟡 | `tests/unit/cli/test_cli.py:116` | WEAK | `TestTokenSummary.test_token_summary_displayed` only tests the negative path (stub backend → no "Tokens:") | `cli/main.py:214-221` | Add positive-path test with a test double backend that returns `tokens_used={"input":100,"output":50}`, assert output contains the summary |
 | J9 | 🟡 | `tests/unit/cli/test_cli.py` | MISSING | `_is_git_repo` (main.py:20-30), `_thread_id_for` (main.py:41-44), `_db_path` (main.py:47-48) have no unit tests. `_thread_id_for` is load-bearing for checkpoint resume | `cli/main.py:20-48` | Decide: unit-test the three helpers, or accept integration-only coverage via the resume tests |
 | J10 | 🟡 | `tests/unit/schema/test_schema.py` | MISSING | `Phase.effective_timeout` (models.py:108-112) has no test | `schema/models.py:108-112` | Add pair: phase override wins / falls back to settings / both None |
 | J11 | 🟡 | `tests/architecture/test_layers.py:88` | WEAK | `test_no_langgraph_terminology` is text-search not AST-aware; `from langgraph.types import Send as S` would bypass | `tests/architecture/test_layers.py:80-93` | Convert to AST-based import inspection matching the other layer tests |
@@ -80,7 +79,6 @@ All in `src/sqrlly/runtime/executor/backends/acp.py`:
 - `compile/nodes.py:253-330` (`_make_phase_node` body) — only partially integration-tested
 - `runtime/foreman.py:86-97` — `git worktree add` failure path untested
 - `runtime/executor/backends/acp.py:12-20` (`_is_overload_error`) — untested
-- `runtime/executor/backends/acp.py:34-36` (`add_usage` token callback) — untested
 - `runtime/gates.py:167-210` (`evaluate_gate_llm`) — only E2E-covered
 
 ## What the audit did NOT flag (confirming the suite's strengths)

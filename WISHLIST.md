@@ -520,13 +520,13 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
     - Propagate to executors, persist partial state, clean up ACP subprocesses
 
 - [ ] **`sqrlly status` / `dump-state`**
-    - Pretty-print persisted state: completed/failed phases, retry counts, gate scores, token usage
+    - Pretty-print persisted state: completed/failed nodes, retry counts, gate scores
     - Works against state file or a langgraph checkpointer if adopted
 
 ## Refactoring
 
 - [ ] **Unified `ExecutionResult` type**
-    - Merge `PhaseResult` + `PromptBackendResult` (overlapping `output`, `structured_output`, `tokens_used`)
+    - Merge `PhaseResult` + `PromptBackendResult` (overlapping `output`, `structured_output`)
     - Document "executor owns retry policy, backend owns transport"
 
 - [ ] **State shape cleanup**
@@ -577,7 +577,7 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
 
 ### Backends to add (lower priority once axes above land)
 
-- [x] **Direct Anthropic API backend** — _landed alongside StubBackend removal._ `runtime/executor/backends/anthropic.py` (~160 LOC) implements `PromptBackend` via `AsyncAnthropic`. Generic model alias table (`sonnet` / `opus` / `haiku` → vendor IDs) with pass-through for explicit pins. `OverloadError` mapping for transient failures (status 429 / 502 / 503 / 504 / 529 + class-name fallback `RateLimitError` / `APIConnectionError` / `APITimeoutError` / `InternalServerError` / `OverloadedError`). Optional dep — install with `uv sync --extra anthropic`. Auto-detect picks it first; explicit `--executor anthropic` always wins. Token-count surfacing on `ExecutionResult` is still TODO.
+- [x] **Direct Anthropic API backend** — _landed alongside StubBackend removal._ `runtime/executor/backends/anthropic.py` (~160 LOC) implements `PromptBackend` via `AsyncAnthropic`. Generic model alias table (`sonnet` / `opus` / `haiku` → vendor IDs) with pass-through for explicit pins. `OverloadError` mapping for transient failures (status 429 / 502 / 503 / 504 / 529 + class-name fallback `RateLimitError` / `APIConnectionError` / `APITimeoutError` / `InternalServerError` / `OverloadedError`). Optional dep — install with `uv sync --extra anthropic`. Auto-detect picks it first.
 
 - [x] **OpenAI-compatible backend** — _landed post-Stage-5b. `runtime/executor/backends/openai.py` (~105 LOC) implements the `PromptBackend` Protocol via the `openai` SDK with overridable `base_url`. Validated end-to-end against DeepSeek (`base_url=https://api.deepseek.com/v1`, model `deepseek-v4-flash`) — auto-detect picks it up via `~/.pi/agent/auth.json`. Maps 429/502/503/504/529 + `RateLimitError` + `APIConnectionError` → `OverloadError` (activates the existing model-downgrade chain). Optional dep — install with `uv sync --extra openai`. Three-axis LLM config sketch above is still TODO; this backend is the first concrete demo that decouples provider/model from the ACP transport. Unlocks OpenAI, Azure OpenAI, Ollama, vLLM, llama.cpp, LM Studio, LiteLLM via the same backend with `base_url` overrides._
 

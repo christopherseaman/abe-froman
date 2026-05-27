@@ -65,7 +65,6 @@ The prior audit's "~314 tests" line undercounted: current suite reads 335+ test 
 | J5 | 🟠 | **PARTIAL** | `test_custom_fields_reach_subphase_context` (test_dynamic.py:364) uses `MockExecutor` and asserts against the mock's spy dict; never verifies the template placeholder was actually interpolated in a DispatchExecutor-driven output. |
 | J6 | 🟠 | AUDIT-WAS-WRONG | `test_timeout.py:19–226` — all 9 tests are integration tests; no pure schema tests at `L21–50` as audit claimed. `Phase.effective_timeout` IS tested at `test_schema.py:400–413`. Either the MISPLACED tests were moved before this audit, or the audit's L21–50 reference was based on an earlier file state. |
 | J7 | 🟠 | **PARTIAL** | `test_timeout_on_slow_executor` (test_timeout.py:133) has elapsed-time bound at `L152`. But `test_subphase_inherits_parent_timeout` (test_timeout.py:195–225) still asserts only message substring — no bound. |
-| J8 | 🟡 | RESOLVED | `test_cli.py:209` — `TestTokenSummaryPositive.test_token_summary_displayed_when_tokens_present` asserts "Tokens:", "100", "50" in output via tokens-returning backend. Legacy L124 test remains as negative-path regression guard. |
 | J9 | 🟡 | RESOLVED | `test_cli.py:250–284` — `TestCliHelpers` unit-tests all three: `_is_git_repo`, `_thread_id_for` (determinism + workdir sensitivity), `_db_path`. |
 | J10 | 🟡 | RESOLVED | `test_schema.py:400–413` — three tests: override wins, fallback to settings, both None. |
 | J11 | 🟡 | RESOLVED | `test_layers.py:89` — `test_no_langgraph_identifiers_via_ast` uses `ast.walk()` + `ast.Name`/`ast.Attribute` inspection; catches aliased imports. |
@@ -86,18 +85,10 @@ The prior audit's "~314 tests" line undercounted: current suite reads 335+ test 
 **Severity**: 🔴 (policy violation; 18+ tests affected)
 **Disposition**: Judgment-call — **defer to follow-up plan** for user decision.
 
-### 🟠 NF-2 — `test_token_usage_merges_across_phases` doesn't verify merge semantics — `test_state.py:33–40`
-
-Asserts keys are present but doesn't verify shallow-copy independence: modifying `merged["p1"]` after merge would silently corrupt `left["p1"]` under the current shallow merge, and the test wouldn't catch it. Severity: 🟡. **Trivial-fix candidate**.
-
 ### 🟠 NF-3 — `test_phase_node.py` tests the wrong thing — `test_phase_node.py:1–3` + full file
 
 Filename and docstring say "phase_node"; actual tests exercise `_make_gate_router` (from `compile/graph.py`), not `_make_phase_node`. The 15 pure helpers extracted from the node body are tested in `test_node_helpers.py`; the closure body (early-exit sequencing, timeout wrap, contract validation, worktree hand-off) has **zero unit coverage** — only E2E. Severity: 🟡 docstring, 🟠 coverage gap.
 **Trivial-fix candidate** for docstring. **Judgment call** for the coverage gap.
-
-### 🟠 NF-4 — Two DEAD tests in `test_node_helpers.py:275–283`
-
-`test_none_tokens_excluded` and `test_none_structured_excluded` in `TestAssembleSuccessUpdate` assert absence of a dict key — stdlib behavior, not src logic. Severity: 🟡. **Judgment call** (deletion requires confirming no latent value).
 
 ### 🟠 NF-5 — WEAK parametrize rows in `test_node_helpers.py:295,408`
 
@@ -147,7 +138,6 @@ Severity: 🟡. **Judgment call** — the audit already flagged these as "not bl
 | FU-1 | **NF-1**: `test_prompt.py` PromptBackend doubles — 18+ tests rely on `MemoryBackend`/`ErrorBackend`/`_OverloadBackend` | Architectural decision: refactor to pure-helper tests, move to real-ACP integration, or relax the policy. Not a 5-LOC change. |
 | FU-2 | **NF-8 / C2 src-side**: explicit try/finally around accumulator in `acp.py:send_prompt` | Source change, not test change. Plan owner should verify impact on concurrent-call semantics. |
 | FU-3 | **NF-3 coverage**: no unit test for `_make_phase_node` closure body | Requires designing what "unit-level" looks like for the closure (direct call with fake state dict vs. assembled graph with minimal config). |
-| FU-4 | **NF-4**: Delete 2 DEAD tests (`test_none_tokens_excluded`, `test_none_structured_excluded`) | Low-risk but requires sign-off that no latent value exists. |
 | FU-5 | **NF-7**: Strengthen `test_basic_fan_out` to verify template interpolation | Changing MockExecutor → DispatchExecutor is a test-architecture change (per plan's trivial-fix definition). |
 | FU-6 | **NF-9 MISSING coverage**: `_is_overload_error`, `add_usage`, `evaluate_gate_llm` positive path, `evaluate_gate_and_outcome`, `git worktree add` failure | Each is a new test requiring design decisions (what to assert, how to stage). |
 | FU-7 | **J2 residual**: add context-flow assertion to `test_three_phase_chain` | The concern is already covered by `test_dependency_output_in_executor_context`; decide whether to leave or consolidate. |
@@ -156,7 +146,6 @@ Severity: 🟡. **Judgment call** — the audit already flagged these as "not bl
 
 Each FU item was reviewed by the owner. Annotated here for the historical record:
 
-- **FU-4 (Delete 2 DEAD tests)** — **Leave both in place.** Re-examination showed `test_none_tokens_excluded` / `test_none_structured_excluded` pin a real invariant: `assemble_success_update` must omit (not write `None` to) keys so LangGraph's `_merge_dicts` reducer doesn't overwrite prior entries with `None`. Deleting these tests would expose that invariant to silent regression. Keeping them is deliberate.
 - **FU-7 (J2 residual)** — **Do nothing.** Context-flow coverage already exists at `test_orchestrator.py:487` (`test_dependency_output_in_executor_context`). Adding the assertion to `test_three_phase_chain` would duplicate coverage without improving signal. Accepted residual.
 
 ## Verdict on the original question
