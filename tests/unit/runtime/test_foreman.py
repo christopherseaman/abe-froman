@@ -394,9 +394,9 @@ class TestPerModelBackpressure:
         )
         from sqrlly.schema.models import LlmPreset
         settings = Settings(presets={
-            "fast": LlmPreset(transport="api", provider="anthropic", model="opus"),
+            "fast": LlmPreset(transport="acp", provider="anthropic", model="opus"),
             "balanced": LlmPreset(
-                transport="api", provider="anthropic",
+                transport="acp", provider="anthropic",
                 model="sonnet", default=True,
             ),
         })

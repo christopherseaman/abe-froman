@@ -131,7 +131,7 @@ class TestResolveModel:
         from sqrlly.schema.models import LlmPreset
         return Settings(presets={
             "default": LlmPreset(
-                transport="api", provider="anthropic",
+                transport="acp", provider="anthropic",
                 model=model, default=True,
             ),
         })
@@ -560,10 +560,10 @@ class TestDispatchPromptFlow:
         backend_cheap = MemoryBackend()
         settings = Settings(presets={
             "cheap": LlmPreset(
-                transport="api", provider="anthropic", model="haiku",
+                transport="acp", provider="anthropic", model="haiku",
             ),
             "smart": LlmPreset(
-                transport="api", provider="anthropic",
+                transport="acp", provider="anthropic",
                 model="opus", default=True,
             ),
         })

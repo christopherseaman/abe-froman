@@ -4,16 +4,15 @@ Tests focus on _resolve_prompt_executor + the registry-shape construction:
 given a registry of preset-keyed PromptExecutors, the dispatcher picks
 the right one for a node based on params.preset vs the default flag.
 
-No actual network calls — backends are constructed lazy (LazyClientMixin
-defers client init until send_prompt). The tests inspect the returned
-PromptExecutor's identity and per-call model resolution.
+No actual network calls — ACPBackend defers process spawn until the
+first ``send_prompt``; construction is offline-safe. The tests inspect
+the returned PromptExecutor's identity and per-call model resolution.
 """
 from __future__ import annotations
 
 import pytest
 
-from sqrlly.runtime.executor.backends.anthropic import AnthropicBackend
-from sqrlly.runtime.executor.backends.openai import OpenAIBackend
+from sqrlly.runtime.executor.backends.acp import ACPBackend
 from sqrlly.runtime.executor.dispatch import DispatchExecutor
 from sqrlly.runtime.executor.prompt import resolve_model
 from sqrlly.schema.models import Execute, Node, LlmPreset, Settings
@@ -29,10 +28,10 @@ def _node(id_="n1", params=None):
 def _settings_with_presets():
     return Settings(presets={
         "cheap": LlmPreset(
-            transport="api", provider="anthropic", model="haiku",
+            transport="acp", provider="anthropic", model="haiku",
         ),
         "smart": LlmPreset(
-            transport="api", provider="anthropic", model="opus",
+            transport="acp", provider="anthropic", model="opus",
             default=True,
         ),
     })
@@ -42,10 +41,10 @@ class TestResolvePromptExecutor:
     def test_single_preset_via_registry(self):
         """One-entry registry: node resolves to that backend via default preset."""
         from sqrlly.schema.models import LlmPreset
-        backend = AnthropicBackend(api_key="sk-ant-fake")
+        backend = ACPBackend()
         settings = Settings(presets={
             "default": LlmPreset(
-                transport="api", provider="anthropic",
+                transport="acp", provider="anthropic",
                 model="sonnet", default=True,
             ),
         })
@@ -58,8 +57,8 @@ class TestResolvePromptExecutor:
 
     def test_multi_preset_uses_default(self):
         settings = _settings_with_presets()
-        cheap_be = AnthropicBackend(api_key="sk-ant-cheap")
-        smart_be = AnthropicBackend(api_key="sk-ant-smart")
+        cheap_be = ACPBackend()
+        smart_be = ACPBackend()
         dispatcher = DispatchExecutor(
             prompt_backends={"cheap": cheap_be, "smart": smart_be},
             settings=settings,
@@ -70,8 +69,8 @@ class TestResolvePromptExecutor:
 
     def test_multi_preset_params_override(self):
         settings = _settings_with_presets()
-        cheap_be = AnthropicBackend(api_key="sk-ant-cheap")
-        smart_be = AnthropicBackend(api_key="sk-ant-smart")
+        cheap_be = ACPBackend()
+        smart_be = ACPBackend()
         dispatcher = DispatchExecutor(
             prompt_backends={"cheap": cheap_be, "smart": smart_be},
             settings=settings,
@@ -89,9 +88,7 @@ class TestResolvePromptExecutor:
         settings = _settings_with_presets()
         # Registry missing the 'smart' backend that settings declares as default.
         dispatcher = DispatchExecutor(
-            prompt_backends={
-                "cheap": AnthropicBackend(api_key="sk-ant-cheap"),
-            },
+            prompt_backends={"cheap": ACPBackend()},
             settings=settings,
         )
         with pytest.raises(RuntimeError, match="no backend is registered"):
@@ -122,10 +119,10 @@ class TestGetBackend:
     def test_single_preset_returns_the_only_backend(self):
         """One-entry registry: get_backend() returns it."""
         from sqrlly.schema.models import LlmPreset
-        backend = AnthropicBackend(api_key="sk-ant")
+        backend = ACPBackend()
         settings = Settings(presets={
             "default": LlmPreset(
-                transport="api", provider="anthropic",
+                transport="acp", provider="anthropic",
                 model="sonnet", default=True,
             ),
         })
@@ -136,8 +133,8 @@ class TestGetBackend:
 
     def test_multi_preset_returns_default(self):
         settings = _settings_with_presets()
-        cheap_be = AnthropicBackend(api_key="sk-ant-cheap")
-        smart_be = AnthropicBackend(api_key="sk-ant-smart")
+        cheap_be = ACPBackend()
+        smart_be = ACPBackend()
         dispatcher = DispatchExecutor(
             prompt_backends={"cheap": cheap_be, "smart": smart_be},
             settings=settings,

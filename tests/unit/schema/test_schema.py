@@ -224,7 +224,7 @@ class TestPresetReferenceValidation:
         return {
             "presets": {
                 "default": {
-                    "transport": "api", "provider": "anthropic",
+                    "transport": "acp", "provider": "anthropic",
                     "model": "sonnet", "default": True,
                 },
             },

@@ -17,10 +17,9 @@ from sqrlly.runtime.executor.preset import (
 from sqrlly.schema.models import Execute, Node, LlmPreset, Settings
 
 
-def _preset(transport="api", provider="anthropic", model="sonnet", default=False, api_base_url=None):
+def _preset(transport="acp", provider="anthropic", model="sonnet", default=False):
     return LlmPreset(
-        transport=transport, provider=provider, model=model,
-        default=default, api_base_url=api_base_url,
+        transport=transport, provider=provider, model=model, default=default,
     )
 
 
@@ -76,31 +75,10 @@ class TestResolvePresetName:
 
 
 class TestAutoDetectDefaultPreset:
-    def test_anthropic_key_wins(self, monkeypatch, tmp_path):
-        # Walk up from a clean tmp_path so .env discovery doesn't pick
-        # up the developer's real keys.
+    def test_acp_wins_when_npx_available(self, monkeypatch, tmp_path):
+        """Single remaining branch after the api strip — npx on PATH
+        synthesizes an ACP preset."""
         monkeypatch.chdir(tmp_path)
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
-        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-        p = auto_detect_default_preset()
-        assert p.transport == "api"
-        assert p.provider == "anthropic"
-        assert p.model == "sonnet"
-        assert p.default is True
-
-    def test_deepseek_after_no_anthropic(self, monkeypatch, tmp_path):
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-ds-test")
-        p = auto_detect_default_preset()
-        assert p.transport == "api"
-        assert p.provider == "deepseek"
-        assert p.model == "deepseek-v4-flash"
-
-    def test_acp_after_no_keys(self, monkeypatch, tmp_path):
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
         # Synthesize an `npx` shim on PATH so shutil.which finds something.
         bin_dir = tmp_path / "bin"
         bin_dir.mkdir()
@@ -110,11 +88,11 @@ class TestAutoDetectDefaultPreset:
         p = auto_detect_default_preset()
         assert p.transport == "acp"
         assert p.provider == "anthropic"
+        assert p.model == "sonnet"
+        assert p.default is True
 
-    def test_no_keys_no_npx_raises(self, monkeypatch, tmp_path):
+    def test_no_npx_raises(self, monkeypatch, tmp_path):
         monkeypatch.chdir(tmp_path)
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
         monkeypatch.setenv("PATH", "/nonexistent")
         with pytest.raises(RuntimeError, match="No preset declared"):
             auto_detect_default_preset()
@@ -154,13 +132,18 @@ class TestBuildPresetRegistry:
 
     def test_empty_presets_auto_detects(self, monkeypatch, tmp_path):
         monkeypatch.chdir(tmp_path)
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
-        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+        # Synthesize npx so auto-detect resolves to the ACP branch.
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        (bin_dir / "npx").write_text("#!/bin/sh\nexit 0\n")
+        (bin_dir / "npx").chmod(0o755)
+        monkeypatch.setenv("PATH", str(bin_dir))
         settings = Settings()
         registry = build_preset_registry(settings)
         assert set(registry) == {_AUTO_PRESET_NAME}
         assert registry[_AUTO_PRESET_NAME].default is True
         assert registry[_AUTO_PRESET_NAME].provider == "anthropic"
+        assert registry[_AUTO_PRESET_NAME].transport == "acp"
 
     def test_empty_presets_with_cli_override_raises(self):
         settings = Settings()
@@ -185,48 +168,6 @@ class TestBuildPresetRegistry:
 
 
 class TestCreateBackendFromPreset:
-    def test_api_anthropic_requires_key(self, monkeypatch, tmp_path):
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-        preset = _preset(transport="api", provider="anthropic")
-        with pytest.raises(ValueError, match="ANTHROPIC_API_KEY"):
-            create_backend_from_preset(preset)
-
-    def test_api_anthropic_with_key_returns_backend(self, monkeypatch, tmp_path):
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
-        from sqrlly.runtime.executor.backends.anthropic import AnthropicBackend
-        preset = _preset(transport="api", provider="anthropic", model="opus")
-        backend = create_backend_from_preset(preset)
-        assert isinstance(backend, AnthropicBackend)
-
-    def test_api_deepseek_requires_key(self, monkeypatch, tmp_path):
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-        preset = _preset(transport="api", provider="deepseek")
-        with pytest.raises(ValueError, match="DEEPSEEK_API_KEY"):
-            create_backend_from_preset(preset)
-
-    def test_api_custom_requires_base_url(self, monkeypatch, tmp_path):
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setenv("CUSTOM_API_KEY", "sk-custom-test")
-        monkeypatch.delenv("CUSTOM_API_BASE_URL", raising=False)
-        preset = _preset(transport="api", provider="custom")
-        with pytest.raises(ValueError, match="base_url"):
-            create_backend_from_preset(preset)
-
-    def test_api_custom_uses_preset_api_base_url(self, monkeypatch, tmp_path):
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setenv("CUSTOM_API_KEY", "sk-custom-test")
-        monkeypatch.delenv("CUSTOM_API_BASE_URL", raising=False)
-        from sqrlly.runtime.executor.backends.openai import OpenAIBackend
-        preset = _preset(
-            transport="api", provider="custom",
-            model="local-model", api_base_url="https://my-endpoint/v1",
-        )
-        backend = create_backend_from_preset(preset)
-        assert isinstance(backend, OpenAIBackend)
-
     def test_acp_returns_acp_backend(self):
         from sqrlly.runtime.executor.backends.acp import ACPBackend
         preset = _preset(transport="acp", provider="anthropic", model="sonnet")

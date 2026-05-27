@@ -132,7 +132,7 @@ class TestPresetsInheritance:
     def _preset(self, model="x", default=False):
         from sqrlly.schema.models import LlmPreset
         return LlmPreset(
-            transport="api", provider="anthropic", model=model, default=default,
+            transport="acp", provider="anthropic", model=model, default=default,
         )
 
     def test_subgraph_no_presets_inherits_parent(self):

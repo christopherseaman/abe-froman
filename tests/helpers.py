@@ -17,7 +17,7 @@ def single_preset_settings(model: str = "sonnet", **extra_settings) -> Settings:
     return Settings(
         presets={
             "default": LlmPreset(
-                transport="api", provider="anthropic",
+                transport="acp", provider="anthropic",
                 model=model, default=True,
             ),
         },

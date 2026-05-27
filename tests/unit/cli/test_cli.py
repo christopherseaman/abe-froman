@@ -182,7 +182,7 @@ class TestRunOptions:
             "settings:\n"
             "  presets:\n"
             "    default:\n"
-            "      transport: api\n"
+            "      transport: acp\n"
             "      provider: anthropic\n"
             "      model: sonnet\n"
             "      default: true\n"
@@ -327,7 +327,7 @@ class TestCollectSubgraphPresets:
             "settings:\n"
             "  presets:\n"
             "    leaf_preset:\n"
-            "      transport: api\n      provider: anthropic\n"
+            "      transport: acp\n      provider: anthropic\n"
             "      model: haiku\n      default: true\n"
             "nodes:\n  - id: x\n    name: X\n    execute:\n      url: x.md\n"
         ))

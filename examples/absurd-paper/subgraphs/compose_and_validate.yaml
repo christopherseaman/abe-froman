@@ -43,7 +43,7 @@ nodes:
 settings:
   presets:
     default:
-      transport: api
+      transport: acp
       provider: anthropic
       model: sonnet
       default: true
