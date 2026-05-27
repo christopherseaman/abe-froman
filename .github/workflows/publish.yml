@@ -87,11 +87,11 @@ jobs:
 #    every release behind manual approval.
 #
 # 3. Cut a release:
-#      # bump version in pyproject.toml, commit
-#      git tag v0.2.0
-#      git push --tags
-#    The tag push fires this workflow; build runs first, then publish
-#    requests OIDC auth from PyPI and uploads.
+#      scripts/release.sh patch    # or `minor` / `major`
+#    The script bumps the version, commits, tags, and pushes. The tag
+#    push fires this workflow; build runs first, then publish requests
+#    OIDC auth from PyPI and uploads. (Manual equivalent: bump version
+#    in pyproject.toml, commit, `git tag vX.Y.Z && git push --tags`.)
 #
 # Local manual uploads with a token still work — Trusted Publishing
 # coexists with token auth.
