@@ -3,6 +3,65 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.0] — strip `transport: api` (ACP-only release)
+
+Consolidates around a single LLM transport while the project explores
+adding `transport: cli` (subprocess-invoked `claude -p` / `codex` /
+`gemini`). Direct-API backends are gone for now.
+
+### Removed
+
+- **`transport: "api"`** and the four api providers (`anthropic`,
+  `openai`, `deepseek`, `custom`). The `LlmPreset.transport` literal
+  is now `Literal["acp"]` and `LlmPreset.provider` is
+  `Literal["anthropic"]`. `LlmPreset.api_base_url` deleted.
+- **Backend modules**: `runtime/executor/backends/anthropic.py`,
+  `openai.py`, and `_lazy_client.py` deleted. `_overload.py` keeps
+  `ACP_OVERLOAD_SUBSTRINGS` + `maybe_raise_overload`; the
+  `ANTHROPIC_OVERLOAD_NAMES` / `OPENAI_OVERLOAD_NAMES` frozensets are
+  gone.
+- **`pyproject.toml` extras**: `[anthropic]` and `[openai]` removed.
+  `[acp]` is the only LLM-backend extra now.
+- **Auto-detect** trimmed to the `npx`-on-`PATH` branch only;
+  `ANTHROPIC_API_KEY` / `DEEPSEEK_API_KEY` no longer synthesize a
+  default preset.
+- **Tests**: `tests/unit/runtime/test_anthropic_backend.py`,
+  `test_openai_backend.py`, `test_factory.py`, and the four-backend
+  `tests/e2e/test_live_backend_roundtrip.py` deleted. Test count
+  drops from 918 to 877.
+- **`.env.example`**: the four API-key blocks (`ANTHROPIC_API_KEY`,
+  `DEEPSEEK_API_KEY`, `OPENAI_API_KEY`, `CUSTOM_API_KEY` +
+  `CUSTOM_API_BASE_URL`) removed. ACP inherits the local `claude` CLI
+  session — no env vars needed.
+
+### Changed
+
+- **Migrators refuse non-acp legacy executors**:
+  `scripts/migrate_legacy_executor_to_presets.py` and the internal
+  `cli/migrate.py` raise `MigrateError` rather than emit
+  `transport: api`. The "no executor declared" default migrates to
+  `transport: acp` (matching runtime auto-detect).
+- **Example workflows** (`absurd-paper/subgraphs/*.yaml`) updated to
+  `transport: acp`.
+- **Docs** — README, SKILLS, schema-reference, CLAUDE, TECHNICAL
+  refreshed for the narrower transport surface; the strip is flagged
+  as consolidation pending a `transport: cli` follow-up.
+
+### Why
+
+The api transport was functional but narrow: text-in/text-out with no
+filesystem or tool access. Producer-shape workflow nodes (the design
+center of gravity) silently degraded under api presets — the agent
+produced text describing what it would have done, not the artifact.
+Until structured-return via output contracts lands, that mismatch
+costs more in user-confusion than the cheap-classifier use case
+gains. The full pre-strip patch lives on
+`experiment/strip-api-transport` and the audit + design notes are in
+[WISHLIST.md][wl35] (item 35) for re-introduction once
+`transport: cli` provides the agent-shaped alternative.
+
+[wl35]: https://github.com/christopherseaman/sqrlly/blob/main/WISHLIST.md
+
 ## [Unreleased] — command presets (named script interpreters)
 
 Extends the preset concept beyond LLM config: a script node can now
