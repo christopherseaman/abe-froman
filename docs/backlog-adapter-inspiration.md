@@ -38,7 +38,7 @@ Features observed in `../adapter` that sqrlly could adopt. Excludes anything tie
 
 ### 6. Structured phase status logging (JSONL)
 **What:** Emit structured events (phase start, phase end, gate result, retry, error) as JSONL to a log file.
-**Why:** Machine-parseable execution history enables dashboards, cost analysis, and post-mortem debugging.
+**Why:** Machine-parseable execution history enables dashboards and post-mortem debugging.
 **sqrlly fit:** Add an optional `--log` flag to CLI. Emit events from `_make_phase_node` and gate evaluation.
 
 ---
@@ -50,39 +50,34 @@ Features observed in `../adapter` that sqrlly could adopt. Excludes anything tie
 **Why:** Immediate retries during API rate limits just burn tokens. Exponential backoff gives the API time to recover.
 **sqrlly fit:** Add `retry_backoff` to settings (list of delay values or exponential config). Apply in the retry loop within `_make_phase_node`.
 
-### 8. Token usage tracking
-**What:** Track input/output/cache tokens per phase and per model. Aggregate totals at workflow completion.
-**Why:** Cost visibility. Long workflows can burn $50+ in tokens — teams need to know where the spend goes.
-**sqrlly fit:** Lighter approach — add token counts to `PhaseResult`, accumulate in `WorkflowState`, print summary at end. Backend-specific: ACP backend can extract token counts from response metadata.
-
-### 9. Execution mode fallback chain
+### 8. Execution mode fallback chain
 **What:** If the primary execution mode fails (e.g., ACP backend timeout), fall back to a secondary mode (e.g., direct API call).
 **Adapter impl:** Falls back from hive-mind → direct Claude CLI after 3 retries.
 **sqrlly fit:** `PromptBackend` could accept a fallback backend. Or configure per-phase: `execution.fallback: {type: command, ...}`.
 
-### 10. Post-workflow cleanup
+### 9. Post-workflow cleanup
 
 **What:** After workflow completion, remove intermediate artifacts (scaffolding files, temp files, validation byproducts) while preserving final deliverables.
 **sqrlly fit:** Add optional `cleanup` section to workflow config listing glob patterns to remove on success.
 
-### 11. Environment variable injection into validators
+### 10. Environment variable injection into validators
 
 **What:** Pass workflow context as env vars to gate validator scripts (phase ID, workflow name, attempt number).
 **sqrlly status:** `PHASE_ID` is already injected — tested in `test_gates.py::TestGateEnvironment`. Could extend with `WORKFLOW_NAME`, `ATTEMPT_NUMBER`, `WORKDIR`.
 
-### 12. Preamble / shared context injection
+### 11. Preamble / shared context injection
 
 **What:** A shared markdown preamble prepended to all phase prompts, containing project-wide context.
 **Adapter impl:** `backpack/preamble.md` automatically injected.
 **sqrlly fit:** Add `settings.preamble_file` — `PromptExecutor` prepends its contents before template rendering.
 
-### 13. Git integration for outputs
+### 12. Git integration for outputs
 
 **What:** Auto-commit and push workflow outputs to a branch on completion.
 **Why:** Useful for CI/CD pipelines where the workflow runs in automation and results need to land in a repo.
 **sqrlly fit:** Post-workflow hook or `settings.git_push` config. Low priority — easy to script externally.
 
-### 14. Health check / liveness endpoint
+### 13. Health check / liveness endpoint
 
 **What:** HTTP endpoint reporting workflow status, current phase, duration.
 **Why:** Required for container orchestration (Kubernetes, Railway) to know the process is alive.

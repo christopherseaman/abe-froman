@@ -28,7 +28,6 @@ follow-up; items 3+ are real cleanup wins held for explicit decisions.
 
 ## Post-merge findings (2026-05-06, native-events + Anthropic + stubectomy branch)
 
-- [ ] ~~**(13) `AnthropicBackend` doesn't surface `tokens_used`**~~ — _out of scope (decided 2026-05-06)._ Token-count surfacing on `ExecutionResult` was previously removed from scope; Samus's "Phase 5 (high)" priority on this is not a binding requirement on sqrlly. If a future consumer needs token counts, they can be threaded then; until that consumer exists, adding the field is YAGNI.
 - [x] **(14) `Settings.executor` rejects unknown strings at schema time** — _delivered (commit `f563935`)._ `schema/models.py::Settings.executor` is now `Literal["acp", "anthropic", "custom", "deepseek", "openai"] | None`. Typo'd values fail at `validate` time rather than late at `run`. The `custom` choice covers OpenRouter / Ollama / LM Studio / LiteLLM / Azure OpenAI / vLLM via `CUSTOM_API_KEY` + `CUSTOM_API_BASE_URL`.
 - [x] **(15) `AnthropicBackend` empty-text-block edge case** — _delivered (commit `f563935`)._ The text-block filter now drops empty-text blocks before the `if not text_parts:` check (`anthropic.py:128-133`: `... and getattr(block, "text", "")`). An all-empty-text response now triggers the loud "no non-empty text block" failure path instead of silently returning `ExecutionResult(output="")`.
 - [x] **(16) `_OVERLOAD_EXCEPTION_NAMES` includes speculative class names** — _delivered (commit `f563935`)._ Dropped the speculative `OverloadedError` entry from the frozenset and replaced the "(newer SDK versions)" comment with a verified-against-0.99 note. Final set: `RateLimitError` / `APIConnectionError` / `APITimeoutError` / `InternalServerError` — all observed in the live SDK.
@@ -91,6 +90,85 @@ the construct is unambiguously broken.
     observe a stale `sender_id`. CLAUDE.md tells authors to guard with
     `{% if sender_id %}`. Deferred — needs topology reachability
     analysis and is lower confidence (may be noisy).
+
+## Transport / backend design (2026-05-27)
+
+Design discussion surfaced during PyPI launch. The current backend
+axis treats `transport: api` and `transport: acp` as equivalents, but
+they have capability-wise different shapes:
+
+- **API backends** (`anthropic`, `openai`, `deepseek`, `custom`) are
+  text → text. The model has no filesystem, no tool use, no local
+  context. Workflow nodes that assume an agent with worktree access
+  (most of them) silently degrade to "transform input text into
+  output text." Honest fit is *stateless transforms* (classify,
+  score, JSON-shape a piece of text) — not producer nodes.
+- **ACP backend** is the agent-with-local-context shape the project
+  was designed around.
+
+- [ ] **(35) `transport: cli` + ACP value reassessment** — design.
+
+  **`transport: cli` (agent-CLI subprocess).** Add a third transport
+  shape: `subprocess.run([cli_for(provider), …print-mode flags,
+  "--model", model], input=prompt, …)`. Same "agent with local
+  context" capability as ACP, but a plain subprocess — no stream
+  protocol, no process-tree cleanup, no `aclose` warnings, no
+  soak-under-load concern. Provider table: `anthropic` → `claude -p`,
+  `openai` → `codex exec` (pin syntax at impl time), `google` →
+  `gemini -p` (adds `google` to the provider literal). Escape hatch:
+  `transport: cli, provider: custom, cli_command: "aider --message
+  {{prompt}}"` mirrors the existing `api_base_url` constraint
+  pattern on `transport: api, provider: custom`.
+
+  **ACP value-add reassessment.** What ACP currently buys that
+  `transport: cli` wouldn't:
+  - Session persistence across prompts — *doesn't matter* in
+    sqrlly's independent-per-node model; no warm state to reuse.
+  - Streaming `session_update` events (tool calls in flight, plan
+    updates) — *could matter* if we grew "live progress in the JSONL
+    log"; not surfaced today (we only keep the final text).
+  - Programmatic per-tool permission control — *could matter* for
+    policy enforcement; not used today (we auto-approve everything
+    in `_ACPCallbacks.request_permission`).
+  - Declarative MCP servers via `new_session(mcp_servers=[...])` —
+    CLI equivalent is `--mcp-config`. Same capability, different
+    surface. We pass `[]` today.
+  - Multi-vendor portability — ACP is a Zed-designed *protocol*, in
+    theory implementable by codex / gemini. As of 2026-05 only
+    `claude-code-acp` ships publicly. *Hypothetical* until that
+    changes.
+
+  None of these are load-bearing today. ACP earns its weight only if
+  (a) we surface mid-flight events to the log, or (b) other vendors
+  ship ACP servers. Until either, ACP is the protocol whose stream we
+  don't consume.
+
+  **Migration option once `cli` lands.** Run `cli` + `acp` in parallel
+  for a release or two; if nothing trips on the difference, retire
+  `transport: acp` (deletes the backend, the conftest pre-flight, the
+  npm dependency note, the soak concerns in WISHLIST 49/53/54). Frees
+  roughly the process-tree-cleanup surface and ~400 lines.
+
+  **Text-pipe CLIs are NOT in scope for `transport: cli`.** Tools like
+  `ollama run` / `llm` / llama.cpp's `main` are text-in/text-out with
+  no agent shape — they belong in `transport: api` + `provider:
+  custom` against the tool's OpenAI-compatible HTTP server (Ollama,
+  vLLM, llama.cpp all ship one).
+
+  **Order of operations** if any of this becomes real work:
+  1. Doc-only: README/SKILLS clarifies the API-vs-agent distinction.
+     Zero code.
+  2. `transport: cli` backend — focused add (~200 lines + tests).
+     Stands on its own.
+  3. Contracts arc lands (existing WISHLIST: *Schema enforcement at
+     backend boundary*, *Schema sources*, *Schema-first templates*).
+     Independent of the transport work, and the gating piece for
+     **making API mode useful for producer-shaped nodes via
+     structured returns**. The inline-context alternative (bake file
+     contents into prompts via `{{dep_id}}` extensions) is a smaller
+     patch but doesn't scale to large workdirs and re-eats tokens on
+     every retry.
+  4. Revisit `transport: acp` retirement.
 
 ## Coverage gaps from post-Stage-5c audit (2026-05-06)
 
