@@ -1,16 +1,26 @@
 # sqrlly
 
-**A workflow orchestrator that compiles a YAML file into a runnable LangGraph.** Each step runs an LLM prompt, a script, a binary, or a nested workflow; quality gates retry failing steps with feedback; routing and fan-out handle branching and parallelism.
+**A high-level interface to and extension of [LangGraph](https://github.com/langchain-ai/langgraph) for agents in local environments.** Declare a workflow in YAML; sqrlly compiles it to a runnable `StateGraph` and adds the runtime extensions agent workflows need:
 
-## What it is
-
-sqrlly turns a declarative YAML workflow into a compiled LangGraph `StateGraph` and runs it. A workflow is a list of **nodes** — each node executes one thing: a prompt against an LLM, an interpreted script (`.py` / `.js` / `.ts` / `.sh`), a binary, or a recursive subgraph (another sqrlly workflow). **Quality gates** wrap any node — a gate scores the node's output and retries it with feedback until it passes. **Routing** sends flow to the next node conditionally; **fan-out** spawns a parallel branch per item in a manifest. State checkpoints to SQLite, so `--resume` picks up where a stopped run left off.
+- **Nodes** execute one of: an LLM prompt (agent-with-tools or text-only), an interpreted script (`.py` / `.js` / `.ts` / `.sh`), a binary, or a recursive subgraph.
+- **Local context** — when run inside a git repo, every node gets its own isolated worktree; agents read dep outputs, edit files on disk, and run tools.
+- **Quality gates** — a script or LLM scorer judges output; failing gates re-run the node with feedback injected, up to a configurable retry budget.
+- **Branching** — `route:` sends flow conditionally; `fan_out:` spawns parallel branches over a JSON manifest.
+- **Resumable** — state checkpoints to SQLite; `--resume` picks up where a stopped run left off.
 
 ## Install
 
+For CLI use (recommended — isolated venv, doesn't touch your project's environment):
+
 ```bash
-pip install sqrlly                      # core
-pip install "sqrlly[anthropic,openai]"  # + API backends
+pipx install sqrlly             # or: uv tool install sqrlly
+```
+
+As a project dependency:
+
+```bash
+pip install sqrlly                       # core
+pip install "sqrlly[anthropic,openai]"   # + API backends
 ```
 
 Backend extras:
@@ -19,7 +29,7 @@ Backend extras:
 - **`openai`** — OpenAI, DeepSeek, and any OpenAI-compatible endpoint.
 - **`acp`** — Claude via the local `claude-code-acp` adapter (also needs `npm i -g @zed-industries/claude-code-acp`).
 
-Requires Python 3.11+. From source: `git clone` then `uv sync` (add `--extra openai --extra anthropic` for backends).
+Python 3.11+. From source: `git clone` then `uv sync` (add `--extra openai --extra anthropic` for backends).
 
 ## Quickstart
 
@@ -60,18 +70,17 @@ sqrlly validate examples/jokes/workflow.yaml
 sqrlly run examples/jokes/workflow.yaml --log run.jsonl
 ```
 
-`validate` compiles the graph and reports the node count. `run` executes it and writes a JSONL event log you can inspect for `workflow_start`, `node_completed`, `gate_evaluated`, `node_retried`, and `workflow_end` events.
+- `validate` — compiles the graph and reports the node count.
+- `run` — executes the workflow; with `--log`, writes a JSONL event stream (`workflow_start`, `node_completed`, `gate_evaluated`, `node_retried`, `workflow_end`).
 
 ## How it works
 
-A node's `execute.url` is dispatched by extension: `.md` / `.txt` / `.prompt` → LLM prompt, `.py` / `.js` / `.ts` / `.sh` → script, `.yaml` → subgraph, anything else → binary. Prompt files are Jinja2 templates — `{{generate}}` interpolates the output of an upstream node named `generate`.
-
-- **Gates & retries** — an `evaluation:` block runs a script or LLM scorer over a node's output. Below `threshold`, the node re-runs with the gate's feedback injected (`{{_retry_reason}}`), up to `max_retries`.
-- **Routing** — a `route:` block declares where flow goes next: `goto:` for unconditional dispatch, or a `cases:` / `else:` predicate ladder for conditional branching.
-- **Fan-out** — a `fan_out:` block spawns one parallel branch per item in a JSON manifest, optionally backed by a per-item subgraph.
-- **Subgraphs** — a node whose `execute.url` is a `.yaml` runs another workflow, recursively. The same file is runnable standalone or as a subgraph reference.
-- **Foreman** — when run inside a git repository, each node executes in its own git worktree, reused across retries so prompt nodes can iterate on prior files.
-- **Resume** — state checkpoints to `<workdir>/.sqrlly-checkpoint.db`; `--resume` restarts from the last checkpoint.
+- **URL-based dispatch** — `execute.url`'s extension picks the handler: `.md` / `.txt` / `.prompt` → LLM prompt, `.py` / `.js` / `.ts` / `.sh` → script, `.yaml` → subgraph, anything else → binary.
+- **Jinja2 templates** — prompt files are full Jinja2; `{{generate}}` interpolates an upstream node's output; `{% if %}` / `{% for %}` / filters all work.
+- **Retry feedback loop** — when a gate scores below `threshold`, the next attempt's context gets `{{_retry_reason}}` auto-populated with the previous score, per-dimension thresholds, and feedback.
+- **Worktree isolation** — inside a git repo, each node runs in its own `git worktree` under `<workdir>/.sqrlly/`, reused across retries so prompt nodes can iterate on prior files.
+- **Checkpointed state** — runs persist to `<workdir>/.sqrlly-checkpoint.db` (LangGraph `AsyncSqliteSaver`); `--resume` continues from the last checkpoint.
+- **Recursive subgraphs** — a `.yaml` URL runs another sqrlly workflow; the same file works standalone or as a subgraph reference.
 
 ## Backends and presets
 
@@ -87,7 +96,13 @@ settings:
       default: true
 ```
 
-If `settings.presets` is omitted entirely, sqrlly auto-detects a backend from environment keys, in order: `ANTHROPIC_API_KEY` → `DEEPSEEK_API_KEY` → `npx` on `PATH` (ACP). API keys load from the environment or a project-local `.env` file (copy `.env.example`):
+If `settings.presets` is omitted, sqrlly auto-detects a backend from environment keys (first match wins):
+
+1. `ANTHROPIC_API_KEY` → Anthropic API
+2. `DEEPSEEK_API_KEY` → DeepSeek
+3. `npx` on `PATH` → ACP (Claude Code)
+
+Keys load from the process environment or a project-local `.env` (copy `.env.example`):
 
 ```bash
 ANTHROPIC_API_KEY=sk-ant-...
@@ -97,7 +112,7 @@ CUSTOM_API_KEY=...                             # any OpenAI-compatible endpoint
 CUSTOM_API_BASE_URL=https://openrouter.ai/api/v1
 ```
 
-The full preset and settings reference — including `CommandPreset` for custom script interpreters — is in [docs/schema-reference.md](https://github.com/christopherseaman/sqrlly/blob/main/docs/schema-reference.md).
+Full reference (including `CommandPreset` for custom script interpreters): [docs/schema-reference.md](https://github.com/christopherseaman/sqrlly/blob/main/docs/schema-reference.md).
 
 ## CLI
 
@@ -108,7 +123,13 @@ The full preset and settings reference — including `CommandPreset` for custom 
 | `sqrlly graph <config>` | Print the topology as a Mermaid diagram. |
 | `sqrlly view <config>` | Render a self-contained interactive HTML viewer. |
 
-`run` flags: `--workdir/-w <dir>`, `--dry-run`, `--preset/-p <name>` (force a named preset as default), `--resume`, `--log <path>`.
+`run` flags:
+
+- `--workdir / -w <dir>` — working directory (default `.`).
+- `--dry-run` — trace topology without executing.
+- `--preset / -p <name>` — force a named preset as the default.
+- `--resume` — continue from the last checkpoint.
+- `--log <path>` — write a JSONL event log.
 
 ## Examples
 
@@ -130,7 +151,9 @@ Each example directory ships a checked-in `view.html` (authoring view) and, wher
 
 ## Contributing
 
-The codebase is a three-layer split — `schema/` (Pydantic models) → `compile/` (YAML → LangGraph) → `runtime/` (executors, backends) — enforced at CI time by an AST import check. Tests use real subprocesses, real `git worktree`, and real backends (no mocks of external systems). See [TECHNICAL.md](https://github.com/christopherseaman/sqrlly/blob/main/TECHNICAL.md) for architecture and contributor reading order.
+- **Three-layer split** — `schema/` (Pydantic models) → `compile/` (YAML → LangGraph) → `runtime/` (executors, backends). Layer rules enforced at CI time by an AST import check.
+- **No mocks of external systems** — tests run real subprocesses, real `git worktree`, and real backends.
+- See **[TECHNICAL.md](https://github.com/christopherseaman/sqrlly/blob/main/TECHNICAL.md)** for architecture and contributor reading order.
 
 ```bash
 uv run pytest tests/ --ignore=tests/acp     # ~840 tests
