@@ -1,0 +1,97 @@
+name: Publish to PyPI
+
+# Triggered by a tag like `v0.2.0`. Builds the wheel + sdist on push of
+# the tag, then publishes to PyPI using OIDC Trusted Publishing — no
+# stored API token. PyPI must be configured with a trusted publisher
+# pointing at this repo + workflow (see SETUP at the bottom of this file).
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build distribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Build wheel + sdist
+        run: |
+          rm -rf dist
+          uv build
+
+      - name: Verify metadata with twine
+        run: uvx --from twine twine check dist/*.whl dist/*.tar.gz
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+
+    # GitHub Environment — create one named `pypi` in repo settings.
+    # Adding required reviewers there gives manual approval on every
+    # release; leaving it empty publishes automatically on every tag.
+    environment:
+      name: pypi
+      url: https://pypi.org/p/sqrlly
+
+    permissions:
+      id-token: write  # REQUIRED for PyPI OIDC Trusted Publishing
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        # No `password` or `with:` block needed — the action mints a
+        # short-lived OIDC token from GitHub and exchanges it for an
+        # upload credential at PyPI. The trusted-publisher config on
+        # PyPI binds (repo, workflow, environment) to the sqrlly
+        # project. See SETUP below.
+
+# ─────────────────────────────────────────────────────────────────────
+# SETUP (one-time, after this file is merged to main)
+#
+# 1. On pypi.org, open the sqrlly project → "Manage" → "Publishing".
+#    Add a new Trusted Publisher with:
+#      - PyPI Project Name: sqrlly
+#      - Owner:             christopherseaman
+#      - Repository name:   sqrlly
+#      - Workflow name:     publish.yml
+#      - Environment name:  pypi
+#
+# 2. On GitHub, repo Settings → Environments → "New environment" → name
+#    it `pypi`. Optional: add yourself as a required reviewer to gate
+#    every release behind manual approval.
+#
+# 3. Cut a release:
+#      # bump version in pyproject.toml, commit
+#      git tag v0.2.0
+#      git push --tags
+#    The tag push fires this workflow; build runs first, then publish
+#    requests OIDC auth from PyPI and uploads.
+#
+# Local manual uploads with a token still work — Trusted Publishing
+# coexists with token auth.
