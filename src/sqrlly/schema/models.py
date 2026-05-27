@@ -271,36 +271,20 @@ class LlmPreset(BaseModel):
 
     The ``--preset`` CLI flag overrides at run time. Resolution order:
     CLI flag > ``params.preset:`` > the preset marked ``default: true``.
+
+    The api transport (Anthropic / OpenAI / DeepSeek / custom OpenAI-
+    compatible) was removed in the 0.2 strip experiment — only the
+    local Claude Code adapter remains. The Literal fields below are
+    single-element today; restoring an additional transport means
+    extending these literals AND adding a factory builder row.
     """
     model_config = ConfigDict(extra="forbid")
 
     kind: Literal["llm"] = "llm"
-    transport: Literal["api", "acp"]
-    provider: Literal["anthropic", "openai", "deepseek", "custom"]
+    transport: Literal["acp"]
+    provider: Literal["anthropic"]
     model: str
-    # OpenAI-compatible API endpoint override (e.g. OpenRouter / Ollama /
-    # LM Studio / vLLM URL). ``api_`` prefix disambiguates from
-    # ``Settings.base_url`` which serves a different purpose (resolving
-    # relative ``execute.url`` paths to local files).
-    api_base_url: str | None = None
     default: bool = False
-
-    @model_validator(mode="after")
-    def _validate_combinations(self) -> Self:
-        if self.transport == "acp" and self.provider != "anthropic":
-            raise ValueError(
-                f"transport=acp only supports provider=anthropic "
-                f"(got provider={self.provider!r}); ACP wraps Claude Code"
-            )
-        if self.api_base_url is not None and not (
-            self.transport == "api" and self.provider == "custom"
-        ):
-            raise ValueError(
-                f"api_base_url is only meaningful when transport=api + "
-                f"provider=custom (got transport={self.transport!r}, "
-                f"provider={self.provider!r})"
-            )
-        return self
 
 
 class CommandPreset(BaseModel):

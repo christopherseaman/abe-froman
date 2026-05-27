@@ -9,10 +9,10 @@ This module provides:
 
 - ``resolve_preset_name(node, settings)`` — returns the preset name to
   use for a node (``params.preset:`` if set, else the default).
-- ``auto_detect_default_preset()`` — synthesizes a Preset from
-  environment keys when ``settings.presets`` is empty. Mirrors the
-  legacy ``auto_detect_executor`` chain: Anthropic key → DeepSeek key
-  → ACP via npx. Raises ``RuntimeError`` on miss.
+- ``auto_detect_default_preset()`` — synthesizes a Preset from the
+  local environment when ``settings.presets`` is empty. After the
+  api-transport strip the only branch left is ``npx`` on PATH (ACP).
+  Raises ``RuntimeError`` on miss.
 - ``build_preset_registry(settings, cli_override=None)`` — master
   entry point. Returns a fully-resolved ``dict[str, Preset]`` ready
   for backend instantiation. Handles empty-presets (auto-detect) and
@@ -23,7 +23,6 @@ from __future__ import annotations
 import shutil
 from typing import TYPE_CHECKING
 
-from sqrlly.runtime.secrets import resolve_secret
 from sqrlly.schema.models import LlmPreset, Preset, Settings
 
 if TYPE_CHECKING:
@@ -71,41 +70,27 @@ def resolve_preset_name(node: "Node", settings: Settings) -> str:
 
 
 def auto_detect_default_preset() -> LlmPreset:
-    """Synthesize a default LlmPreset from environment keys.
+    """Synthesize a default LlmPreset from the local environment.
 
-    Resolution order (first match wins):
+    Resolution order (single branch after the api-transport strip):
 
-      1. ``ANTHROPIC_API_KEY`` → ``LlmPreset(transport=api,
-         provider=anthropic, model=sonnet, default=True)``
-      2. ``DEEPSEEK_API_KEY`` → ``LlmPreset(transport=api,
-         provider=deepseek, model=deepseek-v4-flash, default=True)``
-      3. ``npx`` on PATH → ``LlmPreset(transport=acp, provider=anthropic,
+      1. ``npx`` on PATH → ``LlmPreset(transport=acp, provider=anthropic,
          model=sonnet, default=True)`` (assumes
          ``@zed-industries/claude-code-acp`` is installed)
-      4. Nothing → ``RuntimeError`` naming all three remediation
-         paths.
+      2. Nothing → ``RuntimeError`` with install remediation.
 
     Called as a fallback when ``settings.presets`` is empty and
     neither YAML nor CLI specified an explicit preset.
     """
-    if resolve_secret("ANTHROPIC_API_KEY"):
-        return LlmPreset(
-            transport="api", provider="anthropic", model="sonnet", default=True,
-        )
-    if resolve_secret("DEEPSEEK_API_KEY"):
-        return LlmPreset(
-            transport="api", provider="deepseek",
-            model="deepseek-v4-flash", default=True,
-        )
     if shutil.which("npx"):
         return LlmPreset(
             transport="acp", provider="anthropic", model="sonnet", default=True,
         )
     raise RuntimeError(
         "No preset declared in settings.presets and no executor "
-        "auto-detectable from environment. Set ANTHROPIC_API_KEY "
-        "(recommended), set DEEPSEEK_API_KEY, install npx + "
-        "@zed-industries/claude-code-acp, or declare an explicit "
+        "auto-detectable from environment. Install npx and "
+        "@zed-industries/claude-code-acp (`npm i -g "
+        "@zed-industries/claude-code-acp`), or declare an explicit "
         "settings.presets block."
     )
 

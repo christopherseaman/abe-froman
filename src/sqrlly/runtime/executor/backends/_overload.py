@@ -1,15 +1,10 @@
 """Shared transient-error → ``OverloadError`` mapping for SDK backends.
 
-Both ``OpenAIBackend`` and ``AnthropicBackend`` need to translate a
-provider's transient HTTP failures (rate limits, 5xx-overloads,
-connection blips) into ``OverloadError`` so the model-downgrade chain
-in ``PromptExecutor`` activates. The status-code set and the
-class-name-string fallback live here so a change to one backend's set
-surfaces alongside the other's at review time.
-
-Class-name string match (rather than ``isinstance`` against imported
-SDK exception classes) keeps the check robust to SDK version churn
-and avoids importing the SDKs at module load time.
+The ACP backend needs to translate the adapter's transient failures
+(rate limits, 5xx-overloads from the upstream Claude API) into
+``OverloadError`` so the model-downgrade chain in ``PromptExecutor``
+activates. The status-code set lives here so future backends can reuse
+the same shape if/when the api transport (or another) is restored.
 """
 from __future__ import annotations
 
@@ -17,21 +12,6 @@ from sqrlly.runtime.result import OverloadError
 
 # 429 = rate limit; 502/503/504/529 = upstream overload / gateway timeout.
 _OVERLOAD_STATUSES = frozenset({429, 502, 503, 504, 529})
-
-# Anthropic SDK exception classes that don't always carry a numeric
-# status_code but should still trigger downgrade. Verified against
-# anthropic 0.99.0; extend if a future version adds a transient-failure
-# class not covered by the status-code path.
-ANTHROPIC_OVERLOAD_NAMES = frozenset({
-    "RateLimitError",        # 429
-    "APIConnectionError",    # transient network
-    "APITimeoutError",       # request timeout
-    "InternalServerError",   # 5xx
-})
-
-# OpenAI/DeepSeek SDK exception classes that don't always carry a
-# numeric status_code but should still trigger downgrade.
-OPENAI_OVERLOAD_NAMES = frozenset({"RateLimitError", "APIConnectionError"})
 
 # ACP errors are message-shaped, not attribute-shaped — the ACP
 # adapter surfaces overloads as plain exceptions whose text carries

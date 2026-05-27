@@ -4,12 +4,11 @@ import asyncio
 import logging
 import os
 import signal
-from typing import Any
+from typing import Any, Awaitable
 
 from acp import spawn_agent_process, text_block
 from acp.interfaces import Client
 
-from sqrlly.runtime.executor.backends._lazy_client import await_with_timeout
 from sqrlly.runtime.executor.backends._overload import (
     ACP_OVERLOAD_SUBSTRINGS,
     maybe_raise_overload,
@@ -17,6 +16,14 @@ from sqrlly.runtime.executor.backends._overload import (
 from sqrlly.runtime.result import ExecutionResult
 
 logger = logging.getLogger(__name__)
+
+
+async def _await_with_timeout(coro: Awaitable[Any], timeout: float | None) -> Any:
+    """Await ``coro`` with optional timeout. ``timeout=None`` awaits
+    without bound; otherwise delegates to ``asyncio.wait_for``."""
+    if timeout is None:
+        return await coro
+    return await asyncio.wait_for(coro, timeout=timeout)
 
 
 class _ACPCallbacks(Client):
@@ -124,7 +131,7 @@ class ACPBackend:
                     session_id=self._session_id,
                     prompt=[text_block(prompt)],
                 )
-                await await_with_timeout(coro, timeout)
+                await _await_with_timeout(coro, timeout)
             except Exception as e:
                 # ACP errors are message-shaped — maybe_raise_overload
                 # checks the substrings; raises OverloadError on a hit,
