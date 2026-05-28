@@ -11,7 +11,7 @@ Source: full-repo review, 2026-05-20 (four-layer agent review).
 
 ## Low-priority / judgment calls
 
-### U1 (residual) — `file://` URLs still bypass script + workdir gates
+### 🤞 U1 (residual) — `file://` URLs still bypass script + workdir gates
 
 `runtime/url.py`. The `max_remote_fetch_bytes` size cap now applies to
 `file://` reads, but two gaps remain: `file://` still skips

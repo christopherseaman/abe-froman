@@ -45,7 +45,7 @@ Three low-priority findings from the parallel framework / DRY-KISS-YAGNI / test-
 
 - [x] **(28) Subgraph wrapper duplicates dep-join logic** — _delivered._ `make_subgraph_node` in `compile/subgraph.py` had a hand-rolled dep-join (manual `completed`/`failed` set construction + inline error-update shape). Replaced with the shared `check_dep_failed` + `all_deps_completed` helpers from `compile/nodes.py`. **Bonus bug fix**: the wrapper still carried the `if parent_id in completed_nodes: return {}` re-entry guard that was removed from `_make_execution_node` / `_make_evaluation_node` / `_make_subphase_node` in audit fix #19 — same bug, fourth location the audit missed. With the wave pattern, a `Command(goto=parent_subgraph_node)` would have silently no-op'd instead of re-invoking. Now consistent with execution-node behavior; `failed_nodes` guard kept (short-circuits hard-failed nodes, semantically distinct).
 
-- [ ] **(29) `_make_combined_eval_decide_node` is residual debt from the eval/decision split** (`compile/nodes.py`) — top-level gated nodes use the clean Eval + Decision pair, but **dynamic gated parents** stayed on the combined factory because their downstream `_make_dynamic_router` needs `completed_nodes`/`failed_nodes` already in state when it issues `Send(...)` for fan-out. Folding fan-out branch eval into the new pattern would let us delete the combined factory entirely, but requires either (a) graph-level loops over Send branches (LangGraph doesn't support) or (b) a parallel inline-Decision loop that duplicates the new node-factory logic. Defer until fan-out branch authoring patterns surface real pain.
+- [ ] 🤞 **(29) `_make_combined_eval_decide_node` is residual debt from the eval/decision split** (`compile/nodes.py`) — top-level gated nodes use the clean Eval + Decision pair, but **dynamic gated parents** stayed on the combined factory because their downstream `_make_dynamic_router` needs `completed_nodes`/`failed_nodes` already in state when it issues `Send(...)` for fan-out. Folding fan-out branch eval into the new pattern would let us delete the combined factory entirely, but requires either (a) graph-level loops over Send branches (LangGraph doesn't support) or (b) a parallel inline-Decision loop that duplicates the new node-factory logic. Defer until fan-out branch authoring patterns surface real pain.
 
 ## Post-Phase-B audit findings (2026-05-08, framework alignment + test doctrine sweep)
 
@@ -53,7 +53,7 @@ Architectural findings from the second-round agent audit. The cluster of small-w
 
 - [x] **(30) `_make_final_fan_out_node` polling barrier** — _closed as not-a-defect, 2026-05-20._ Original framing (it "fights LangGraph's scheduler", a native fan-in aggregator would replace it) was **wrong**. LangGraph 1.0.7 research: there is no native count-based "wait for N `Send` branches" barrier. Fan-out children are `Send`-dispatched and finish across *different* super-steps (variable-length inline retry loops), and the only native idiom for Send fan-in is state-reducer accumulation — which the final node already does (`child_outputs` + the manifest check). `defer=True` waits for the *whole graph*, not this fan-out, so it's the wrong tool. The hand-rolled barrier is doing the only thing possible. Revisit only if a concrete defect surfaces.
 
-- [ ] **(31) `--resume` discards the checkpointer instead of trusting it** (`cli/main.py:269-291`). Reads `channel_values` from prior checkpoint, builds a cleaned state dict, calls `cp.adelete_thread(thread_id)`, then re-streams from initial-state-like dict. Effectively replays the whole graph (the runs-counter in `test_resume_fan_out.py` still pins this: `_read_runs("a") == 2` after resume). The visible symptom of `completed_nodes` accumulating duplicates was masked by #32 (set-union reducer, 2026-05-19), but bodies still re-execute. Re-reading the design landscape post-#32: the LangGraph-native "pass thread_id to astream" pattern assumes the graph paused mid-execution (via `interrupt()`); a graph that returned terminal-with-failures has nothing to resume from natively. Fully resolving the DAG case requires picking one of three API shapes in WISHLIST #26 (skip-completed-via-prior-run channel, `--resume-from <node>`, JSONL-driven skip). Defer until that design call lands.
+- [ ] 🚨 **(31) `--resume` discards the checkpointer instead of trusting it** (`cli/main.py:269-291`). Reads `channel_values` from prior checkpoint, builds a cleaned state dict, calls `cp.adelete_thread(thread_id)`, then re-streams from initial-state-like dict. Effectively replays the whole graph (the runs-counter in `test_resume_fan_out.py` still pins this: `_read_runs("a") == 2` after resume). The visible symptom of `completed_nodes` accumulating duplicates was masked by #32 (set-union reducer, 2026-05-19), but bodies still re-execute. Re-reading the design landscape post-#32: the LangGraph-native "pass thread_id to astream" pattern assumes the graph paused mid-execution (via `interrupt()`); a graph that returned terminal-with-failures has nothing to resume from natively. Fully resolving the DAG case requires picking one of three API shapes in WISHLIST #26 (skip-completed-via-prior-run channel, `--resume-from <node>`, JSONL-driven skip). Defer until that design call lands.
 
 - [x] **(32) `completed_nodes` / `failed_nodes` use `operator.add` reducer** — _delivered, 2026-05-19._ Switched to `_merge_sets` (set-union); TypedDict annotations changed from `list[str]` to `set[str]`. Migration covered 9 source emission sites (`[node_id]` → `{node_id}`), the inline-retry-loop accumulator (`.append` → `.add`), and ~30 test assertions (`== ["p1"]` → `== {"p1"}`). The wave-pattern test lost its `dispatcher_fires == 2` assertion (now impossible to express in state since set-union dedupes); the `dispatcher::q_gamma` presence assertion is the load-bearing regression check that remains. JSONL event derivation untouched (events fire per super-step, not per state entry). Masks the visible symptom of `--resume` accumulation but doesn't fix the underlying replay logic — see #31.
 
@@ -84,7 +84,7 @@ the construct is unambiguously broken.
     structural ID-only check over a template scan: pure, zero-I/O,
     safe on every `run`. Top-level config only — subgraph configs are
     not loaded.
-  - [ ] **`{{sender_id}}` on a non-goto-reachable node** —
+  - [ ] 🤞 **`{{sender_id}}` on a non-goto-reachable node** —
     `_route_sender` is last-write-wins; a node reached by a static
     `depends_on` edge *after* an inline-route hop elsewhere can
     observe a stale `sender_id`. CLAUDE.md tells authors to guard with
@@ -106,7 +106,33 @@ they have capability-wise different shapes:
 - **ACP backend** is the agent-with-local-context shape the project
   was designed around.
 
-- [ ] **(35) `transport: cli` + ACP value reassessment** — design.
+- [ ] 🚨 **(35) `transport: cli` + ACP value reassessment** — design.
+  **Open investigation gating priority:** is `cli` *additive* (a third
+  transport alongside acp) or *replacement* (consolidate on cli, retire
+  acp)? Until we know, scope and breakage profile are unclear, which
+  lowers priority. Four questions to answer empirically (see
+  `docs/investigations/transport-context-parallelism.md` for the
+  detailed plan):
+
+  1. **`new_session()` cost:** does ACP's `new_session()` reset
+     context *in-process* (server-side state op, ~ms — think Claude
+     Code's `/clear`) or *fork a fresh process* (full cold-start)?
+     The first lets sqrlly clear context per node with no cold-start
+     hit, preserving the process-warmth advantage. The second
+     collapses ACP's edge over CLI.
+  2. **Real cold-start numbers:** audit estimates (5s CLI / 7s ACP)
+     are structural, not measured. Direct `time` runs on `claude -p`
+     and ACP `_ensure_initialized` would settle the N-node crossover.
+     Working hypothesis: actual numbers are lower than estimates.
+  3. **Per-branch ACP for real parallelism:** foreman allocating one
+     `ACPBackend` per `(preset, branch_id)` instead of per preset.
+     Worktrees are already per-branch — not blocked there. Worth
+     measuring vs CLI projection.
+  4. **Optional context retention** (`settings.context_mode:
+     isolated | shared`): pipelines (research → outline → write)
+     might genuinely benefit from accumulated conversation history.
+     If retained as an opt-in, ACP gains a user-visible
+     differentiator CLI can't trivially replicate.
 
   **`transport: cli` (agent-CLI subprocess).** Add a third transport
   shape: `subprocess.run([cli_for(provider), …print-mode flags,
@@ -211,7 +237,7 @@ than fixes to existing code.
   failure injection. The runs-counter side-channel pins exactly how
   many times each node body executes. Surprising finding: ``a``'s
   counter goes from 1 to 2 — see (26) below.
-- [ ] **(26) `--resume` semantics are underspecified for goto-driven
+- [ ] 🚨 **(26) `--resume` semantics are underspecified for goto-driven
   workflows** — _surfaced by (25); design question, not a bug._
   Today `--resume` is a bare boolean: state comes from the SQLite
   checkpoint at `<workdir>/.sqrlly-checkpoint.db`, thread_id is
@@ -684,18 +710,18 @@ unless flagged otherwise.
   is free-floating. Folding the three modes under one field makes them
   symmetric and pairs with the `schema:` work below.
 
-- [ ] **Schema enforcement at backend boundary** — `ACPBackend` and
+- [ ] 🚨 **Schema enforcement at backend boundary** — `ACPBackend` and
   stub backends populate `ExecutionResult.structured_output` when a
   Node has `schema:` set. The field exists end-to-end already; today
   no backend writes to it. Unblocks Stage 5b-style "route on producer
   output without going through an evaluate gate."
 
-- [ ] **Schema-first templates** — `{{judge.score}}` resolves against
+- [ ] 🚨 **Schema-first templates** — `{{judge.score}}` resolves against
   structured outputs; `{{judge}}` falls back to raw string. Pairs with
   schema enforcement above. Today templates are flat string
   substitution.
 
-- [ ] **Schema sources** — inline JSON schema dict OR `schema_file:`
+- [ ] 🚨 **Schema sources** — inline JSON schema dict OR `schema_file:`
   path OR `schema_class: my_module.GateScore` for Pydantic. Three
   shapes for one concept; symmetric with how `validator:` accepts
   .py/.js/.md.
