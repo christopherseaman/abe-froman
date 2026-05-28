@@ -426,6 +426,20 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
     - Make synthesis explicit: a `synthesis_node:` block with `merges_from: [...]` listing branch ids, blocking gate, pre-merge worktree
     - Enables: synthesis-gate blocking merge (if gate fails, changes never fold back); reset semantics for the escalation tiers above
 
+## Sharing readiness (surfaced 2026-05-27, post-0.3.x publish)
+
+- [ ] **`sqrlly init <dir>`** — scaffold a minimal runnable workflow
+  (one prompt node + a basic gate + a `settings.presets` block) into
+  the target directory. The current friction for someone landing via
+  `pipx install sqrlly`: the README quickstart references
+  `examples/jokes/workflow.yaml`, which doesn't exist on their disk
+  without a `git clone`. An `init` command lets them paste a single
+  shell line and have a working workflow they can edit in place. Two
+  shapes worth considering: (a) `--template jokes` etc. to scaffold
+  from the existing examples, (b) a single minimal default if no
+  template is named. ~50–100 LOC + a fixtures dir baked into the
+  wheel.
+
 ## Forward-looking — surfaced during 2026-04-18 architecture plan
 
 - [x] **Implicit Join + explicit JoinNode primitive** — _landed, Stage 4b._ Implicit join was already free via LangGraph's super-step semantics (multi-pred nodes naturally synchronize). Stage 4b added `execution: { type: join }` as the explicit form for author readability at fan-in points; dispatcher routes it to a no-op handler returning `ExecutionResult(success=True, output="")`. Composes with `evaluation:` (gates run against the empty join output) and downstream consumers (build_context reads the join's empty output like any other dep).
