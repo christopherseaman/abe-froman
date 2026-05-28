@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Callable
 
-from sqrlly.runtime.executor.backends.acp import ACPBackend
 from sqrlly.runtime.executor.backends.cli import CLIBackend
 from sqrlly.runtime.result import PromptBackend
 
@@ -11,6 +10,14 @@ if TYPE_CHECKING:
 
 
 def _build_acp(_preset: "LlmPreset") -> PromptBackend:
+    # Lazy import — the `acp` Python package is the `[acp]` optional
+    # extra. Keeping this import inside the builder means
+    # `pip install sqrlly` (cli-only) loads the factory without
+    # needing the `acp` package present. An ImportError surfaces here
+    # at call time with a clear message instead of breaking module
+    # load for every sqrlly user.
+    from sqrlly.runtime.executor.backends.acp import ACPBackend
+
     return ACPBackend(
         program="npx",
         args=("@zed-industries/claude-code-acp",),
