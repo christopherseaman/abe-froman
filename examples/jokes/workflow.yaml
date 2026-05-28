@@ -21,7 +21,7 @@ nodes:
 settings:
   presets:
     default:
-      transport: acp
+      transport: cli
       provider: anthropic
       model: "sonnet"
       default: true

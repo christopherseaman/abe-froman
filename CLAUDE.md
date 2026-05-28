@@ -52,9 +52,12 @@ See `TECHNICAL.md` for the full layered breakdown.
 ```bash
 uv sync                                      # core deps
 npm i -g @zed-industries/claude-code-acp     # for ACP backend / acp tests
+# `claude` CLI on PATH                       # for cli backend / cli tests
 
-uv run pytest tests/ --ignore=tests/acp -v   # ~860 tests, ~35s
+uv run pytest tests/ --ignore=tests/acp --ignore=tests/cli -v   # ~880 tests, ~60s
 uv run pytest tests/acp -v                   # ACP tests, ~2 min, requires npm package above
+uv run pytest tests/cli -v                   # CLI tests, ~15s, requires `claude` on PATH
+uv run pytest -m live -v                     # restored live-roundtrip (cli-only)
 uv run pytest tests/architecture/test_layers.py  # layer rule enforcement
 
 uv run sqrlly validate config.yaml
@@ -121,13 +124,15 @@ langgraph-free).
 - `executor/dispatch.py` — `DispatchExecutor` (10-row URL dispatch).
 - `executor/prompt.py` — `PromptExecutor` (template render, model
   downgrade).
-- `executor/backends/{acp,factory}.py`. After the 0.2.x api-transport
-  strip, ACP is the only LLM backend; `factory.create_backend_from_preset`
-  is a one-row lookup table that returns an `ACPBackend` instance.
+- `executor/backends/{acp,cli,factory}.py`. Two LLM backends
+  coexist: ACP (warm `claude-code-acp` adapter) and CLI
+  (subprocess-per-call `claude -p`).
+  `factory.create_backend_from_preset` is a two-row lookup table
+  keyed on `(transport, provider)`.
 - `executor/backends/_overload.py` — `maybe_raise_overload` +
-  `ACP_OVERLOAD_SUBSTRINGS`. Maps the ACP adapter's message-shaped
-  transient errors to `OverloadError` so the model-downgrade chain
-  activates.
+  `ACP_OVERLOAD_SUBSTRINGS`. Both ACP and CLI backends share the
+  same substring set because both ultimately hit the same upstream
+  Claude API; the historical name "ACP" is retained.
 
 **`src/sqrlly/cli/`** — entry point + helpers.
 - `main.py` — Click CLI (`validate` / `run` / `graph` / `view`);

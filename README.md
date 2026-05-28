@@ -23,20 +23,25 @@ pip install sqrlly             # core
 pip install "sqrlly[acp]"      # + ACP backend
 ```
 
-LLM dispatch currently goes through the local `claude-code-acp`
-adapter (also requires `npm i -g @zed-industries/claude-code-acp` on
-your PATH). The direct-API backends (Anthropic / OpenAI / DeepSeek /
-custom OpenAI-compatible endpoints) were removed in 0.2.x while the
-project consolidates around a single transport — a re-introduced
-`transport: cli` (and possibly `transport: api`) is on the roadmap.
+LLM dispatch goes through Claude Code via one of two transports:
 
-**Auth is per-CLI, not sqrlly's job.** Each LLM CLI you point sqrlly
-at handles its own credentials independently. For ACP today, the
-adapter inherits whatever session `claude` itself has — log in once
-with `claude /login` and sqrlly's runs use that session. For future
-`transport: cli` providers, each tool authenticates itself
-(`codex auth`, `gemini auth login`, etc.). sqrlly never reads or
-stores API keys for these tools.
+- `transport: acp` — the `claude-code-acp` adapter (warm process,
+  streaming chunks). Requires `npm i -g @zed-industries/claude-code-acp`.
+- `transport: cli` — `claude -p` subprocess-per-call (no warm
+  process, real `asyncio` parallelism). Requires `claude` on PATH.
+
+The direct-API backends (Anthropic / OpenAI / DeepSeek / custom
+OpenAI-compatible endpoints) were removed in 0.2.x while the project
+consolidates around Claude Code; restoring `transport: api` remains
+on the roadmap, and additional `transport: cli` providers (codex /
+gemini) are tracked in WISHLIST 36.
+
+**Auth is per-CLI, not sqrlly's job.** Each CLI you point sqrlly at
+handles its own credentials independently — log in once with
+`claude /login` and sqrlly's runs (acp OR cli) use that session.
+Future cli providers will follow the same pattern (`codex auth`,
+`gemini auth login`, etc.). sqrlly never reads or stores API keys
+for these tools.
 
 Python 3.11+. From source: `git clone` then `uv sync`.
 
@@ -68,7 +73,7 @@ nodes:
 settings:
   presets:
     default:
-      transport: acp
+      transport: cli
       provider: anthropic
       model: sonnet
       default: true
@@ -99,22 +104,29 @@ LLM and script execution is configured by **presets** under `settings.presets` �
 settings:
   presets:
     default:
-      transport: acp
+      transport: cli       # or acp — see below
       provider: anthropic
       model: sonnet
       default: true
 ```
 
+Pick a transport by what shape suits the workflow:
+
+| Transport | Invocation | Best for |
+|---|---|---|
+| `acp` | `claude-code-acp` adapter (warm process, streaming) | Workflows that want streamed chunks or MCP-via-session. |
+| `cli` | `claude -p` subprocess per call (no warm state) | Fan-out workflows — real `asyncio` parallelism per call, simpler lifecycle. |
+
+Both pair with `provider: anthropic` today and both authenticate via the local `claude` CLI session — `claude /login` once and either transport runs against it. Multiple presets can coexist in a single workflow; only one is `default: true`, others get named via `params.preset` per node.
+
 **Declare presets explicitly.** sqrlly doesn't probe your environment
 or synthesize defaults. Empty `settings.presets` is valid for
 script-only workflows; any LLM-dispatching node will fail at its call
-site with a clear "no prompt backend wired" error. For ACP, the
-adapter inherits the local `claude` CLI session — no API keys needed,
-just `npm i -g @zed-industries/claude-code-acp` and `claude /login`
-once. If the adapter or `npx` is missing at run time, the backend
-surfaces a clear error at the first prompt call (not pre-flight,
-which would forbid workflows that install the adapter as an earlier
-script node).
+site with a clear "no prompt backend wired" error. If a backend's
+toolchain is missing at run time (`npx` for acp, `claude` for cli),
+the backend surfaces a clear error at the first prompt call — never
+as a pre-flight check (a pre-flight would forbid workflows that
+install the toolchain in an earlier script node).
 
 Full reference (including `CommandPreset` for custom script interpreters): [docs/schema-reference.md](https://github.com/christopherseaman/sqrlly/blob/main/docs/schema-reference.md).
 

@@ -21,6 +21,7 @@ CI can isolate live tests.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 from pathlib import Path
 
@@ -56,10 +57,12 @@ def _stage_jokes(workdir: Path, transport: str, model: str) -> Path:
         'url: "examples/jokes/select.md"',
         'url: "jokes/select.md"',
     )
-    # Pin transport + model deterministically.
-    text = text.replace(
-        "transport: acp",
+    # Pin transport + model deterministically. The source YAML may
+    # already match `transport`; the regex is a no-op in that case.
+    text = re.sub(
+        r"transport: \w+",
         f"transport: {transport}",
+        text, count=1,
     )
     text = text.replace(
         'model: "sonnet"',

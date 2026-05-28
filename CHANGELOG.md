@@ -3,6 +3,44 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.3.0] — add `transport: cli` as a peer to `transport: acp`
+
+### Added
+
+- **`transport: "cli"`** — subprocess-per-call LLM backend invoking
+  `claude -p --model <model>` per `send_prompt`. Prompt piped on
+  stdin, stdout captured as response, exit code surfaces as
+  `RuntimeError` (or `OverloadError` on 529 / "overload" stderr).
+  Single shared file:
+  `src/sqrlly/runtime/executor/backends/cli.py`. Provider remains
+  `anthropic`; additional providers (codex, gemini, custom) are
+  tracked as WISHLIST 36.
+- **Factory dispatch row** for `("cli", "anthropic")` →
+  `CLIBackend(argv_prefix=("claude", "-p"))`.
+- **`LlmPreset.transport`** literal re-broadened to
+  `Literal["acp", "cli"]`. Coexistence is real: a single workflow
+  may declare both transports side-by-side; only the schema's
+  "exactly one default" rule constrains the pair.
+- **Tests** — `tests/unit/runtime/test_cli_backend.py` (11 cases,
+  real shell-script fakes), schema regression for
+  `transport: cli`, factory dispatch row, full E2E under
+  `tests/cli/test_cli_backend.py` (new `cli` marker; pre-flighted in
+  `tests/conftest.py`), restored
+  `tests/e2e/test_live_backend_roundtrip.py` as cli-only.
+- **Examples dogfood** — `examples/jokes/workflow.yaml` migrated to
+  `transport: cli` as the new canonical quickstart. Other examples
+  (e.g. `absurd-paper/subgraphs/*`) stay on `transport: acp` so
+  coexistence is visible in the repo.
+
+### Unchanged
+
+- `transport: acp` is fully supported with no deprecation: existing
+  workflows keep working, the ACP backend, its process-tree cleanup,
+  and its session-warm semantics are untouched. The investigation
+  (`docs/investigations/transport-context-parallelism.md`) recommended
+  Path A (CLI replaces ACP) on cost grounds, but this 0.3.0 lands cli
+  additively first so users can dogfood before a deprecation decision.
+
 ## [0.2.0] — strip `transport: api` (ACP-only release)
 
 Consolidates around a single LLM transport while the project explores

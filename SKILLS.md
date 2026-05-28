@@ -26,13 +26,15 @@ Write a YAML file with `name`, `version`, `nodes`, and `settings`.
    template reads an upstream node's output as `{{other_id}}` (full
    Jinja2 — `{% if %}`, `{% for %}`, filters all work).
 4. **Pick a backend** under `settings.presets` — one named `LlmPreset`
-   marked `default: true`:
+   marked `default: true`. Two transports drive Claude Code:
+   `transport: acp` (warm adapter, streaming) or `transport: cli`
+   (subprocess-per-call, real asyncio parallelism — pair with fan-out).
    ```yaml
    settings:
      presets:
        default:
-         transport: acp        # acp (only option after the 0.2.x strip)
-         provider: anthropic   # anthropic (only option for transport: acp)
+         transport: cli        # or acp
+         provider: anthropic   # only provider currently supported
          model: sonnet
          default: true
    ```

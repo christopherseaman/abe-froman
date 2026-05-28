@@ -91,15 +91,24 @@ defaults to `llm`, so pre-`CommandPreset` YAML still parses).
 | Field | Type | Default | Effect |
 |---|---|---|---|
 | `kind` | `"llm"` | `"llm"` | Discriminator. |
-| `transport` | `"acp"` | required | The local ACP adapter (only option after the 0.2.x api-transport strip). |
-| `provider` | `"anthropic"` | required | Which backend (only option for `transport: acp`). |
+| `transport` | `"acp" \| "cli"` | required | Invocation shape — see comparison below. |
+| `provider` | `"anthropic"` | required | Vendor / model family (only option for both transports today). |
 | `model` | `str` | required | Model id. |
 | `default` | `bool` | `false` | Exactly one `LlmPreset` must be `true`. |
 
-The api transport — direct calls to Anthropic / OpenAI / DeepSeek /
-custom OpenAI-compatible endpoints — was removed in 0.2.x while the
-project consolidates around a single transport. Re-introduction of a
-`transport: cli` (and possibly `transport: api`) is on the roadmap.
+Both supported transports drive Claude Code; the choice is invocation
+shape, not vendor:
+
+| `transport` | Implementation | Characteristics |
+|---|---|---|
+| `acp` | `claude-code-acp` adapter via the `acp` SDK; one warm process per preset, sessions reused across `send_prompt`. | Streaming chunks, MCP-via-session, lower per-call overhead once warm. |
+| `cli` | `claude -p --model <model>` subprocess per `send_prompt`; stdin carries the prompt, stdout is the response. | No warm state, real `asyncio` parallelism per call (each subprocess is independent), simpler lifecycle (`close()` is a no-op). |
+
+Both currently pair with `provider: anthropic` because both run
+Claude Code. Additional `cli` providers (codex / gemini / custom) are
+tracked as WISHLIST 36. The api transport — direct calls to
+Anthropic / OpenAI / DeepSeek / custom OpenAI-compatible endpoints —
+was removed in 0.2.x; re-introduction remains on the roadmap.
 
 ### CommandPreset (`kind: command`)
 
@@ -138,12 +147,13 @@ as the default at run time. The named preset must exist in
 
 ### Secrets
 
-The ACP adapter inherits its credentials from the local `claude` CLI
-session — no API keys are required for transport: acp. **Auth is per
-LLM CLI, not sqrlly's job**: log in to each tool with its own command
-(`claude /login`, future `codex auth`, etc.). The generic secret
-resolver (`runtime/secrets.py::resolve_secret`) is still available
-for workflow-defined values (e.g., a script node calling out to a
+Both transports inherit credentials from the local `claude` CLI
+session — no API keys are required for `transport: acp` or
+`transport: cli`. **Auth is per LLM CLI, not sqrlly's job**: log in
+to each tool with its own command (`claude /login`, future
+`codex auth`, etc.). The generic secret resolver
+(`runtime/secrets.py::resolve_secret`) is still available for
+workflow-defined values (e.g., a script node calling out to a
 third-party service); resolution order is process env →
 project-local `.env` file (discovered by walking up from CWD).
 sqrlly never reads machine-global keystores.
