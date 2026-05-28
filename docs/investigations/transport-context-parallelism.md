@@ -184,6 +184,113 @@ projection:**
 
 **Total: ~half-day to settle the priority gating WISHLIST 35.**
 
+## Findings (2026-05-27)
+
+### E1 — `new_session()` semantics
+
+Measured via `.temp/e1_new_session.py` against real `claude-code-acp`.
+
+| Metric | Result |
+|---|---|
+| Within-session history | ✅ session A asked twice, model recalled "7" |
+| Cross-session isolation | ✅ session B does not see session A's history |
+| Process identity across sessions | ✅ pid stable (1451926 → 1451926) |
+| `new_session()` cost | **~5,500 ms** (5.5 s) |
+| Initial `initialize()` cost (one-time) | ~2,600 ms |
+| Initial spawn cost (one-time) | ~1 ms (warm npx cache) |
+
+**H1 falsified.** `new_session()` is "process-warm, session-cold" — the
+same `claude` subprocess survives, but every new session pays ~5.5s of
+setup (likely re-auth + system prompt + tool init). Not a cheap state
+reset.
+
+**Implication:** ACP's claimed warm-reuse advantage was implicitly
+relying on *not* calling `new_session()` per prompt — i.e., sharing
+one session across all prompt nodes. That's correctness-broken for
+sqrlly's design (independent per-node prompts), because the model
+sees prior nodes' outputs as conversational history.
+
+### E2 — `claude -p` cold-start
+
+Three runs of `time claude -p "Reply with just the digit 7."`:
+
+| Run | Real time |
+|---|---|
+| 1 | 5.55 s |
+| 2 | 6.46 s |
+| 3 | 5.04 s |
+
+**Median ~5.5 s.** Audit's 5 s estimate was approximately right.
+
+**Convergence:** ACP `new_session()` ≈ `claude -p` cold-start ≈ 5.5 s.
+The two are within measurement noise of each other. Once you require
+context isolation (which sqrlly does — see E4), ACP and CLI have
+essentially the same per-call cost.
+
+### E3 — skipped
+
+Per-branch ACP for parallelism. Skipped — the structural argument is
+decisive without a foreman refactor:
+
+- **Per-branch ACP, N parallel branches:** each branch needs its own
+  ACPBackend (spawn + initialize + first new_session). Parallel via
+  `asyncio.gather` → wall-clock ≈ 8 s + max(model time). Operational
+  complexity: N × process-tree-management surfaces, N × conftest
+  pre-flight, N × stream-protocol lifecycle.
+- **CLI, N parallel branches:** each branch is one
+  `asyncio.create_subprocess_exec`. Parallel → wall-clock ≈ 5.5 s +
+  max(model time). Operational complexity: one `subprocess.run` per
+  call, no shared state.
+
+CLI is structurally simpler and ~2.5 s faster at the cold-start
+boundary, before any operational tax is paid. A real benchmark would
+confirm but not change the direction.
+
+### E4 — workflow shape survey
+
+Sampled `examples/pipeline_style/workflow.yaml` (script-only chain
+with `route: goto`) and `examples/absurd-paper/workflow.yaml`
+(13-node multi-stage with `depends_on` DAG). Both follow the same
+pattern: **dependencies flow via `{{dep_id}}` template substitution**,
+not via the LLM's session memory.
+
+Generalization: sqrlly's entire abstraction is "the LLM is a function
+from prompt to response." Every prompt is rendered fresh from
+templates; the orchestrator hands the LLM all relevant context per
+call. No workflow in the repo benefits from session-shared
+conversation history. The current shared-session behavior is at best
+wasteful (token bloat with no payoff) and at worst contaminating
+(unrelated upstream output bleeds into downstream prompts).
+
+**H4 result:** the `context_mode: isolated | shared` knob is YAGNI
+under the current schema. If a future workflow wants
+pipeline-with-continuity, it would be a meaningful new feature —
+independent of the transport decision.
+
+## Decision
+
+**Path A — CLI replaces ACP.** Implement `transport: cli` (WISHLIST 35).
+ACP's remaining defenses (streaming events, MCP-via-session,
+multi-vendor portability) are not used today; the cost-per-call
+advantage was illusory once isolation is required.
+
+Suggested order of operations:
+
+1. Implement `transport: cli` with `provider: anthropic` → `claude -p`.
+   Single backend file, factory entry, schema literal change. Tests
+   covering subprocess invocation + the existing
+   `tests/e2e/test_live_backend_roundtrip.py` pattern restored for
+   this single transport.
+2. Cut 0.3.0-dev with both transports coexisting; default unchanged.
+3. Migrate examples (`absurd-paper/subgraphs/*`) to `transport: cli`
+   to dogfood; tag a 0.3.0 release with cli as a peer.
+4. Decide deprecation timing for `transport: acp` after a real run
+   on a non-trivial workflow confirms cli parity.
+
+`scripts/migrate_legacy_executor_to_presets.py` will need a
+follow-on update once cli's full provider table lands (currently it
+refuses non-acp legacy executors with a `MigrateError`).
+
 ## What this does NOT settle
 
 - Multi-vendor CLI feasibility (codex / gemini print-mode syntax,
