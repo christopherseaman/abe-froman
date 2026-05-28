@@ -272,16 +272,25 @@ class LlmPreset(BaseModel):
     The ``--preset`` CLI flag overrides at run time. Resolution order:
     CLI flag > ``params.preset:`` > the preset marked ``default: true``.
 
-    The api transport (Anthropic / OpenAI / DeepSeek / custom OpenAI-
-    compatible) was removed in the 0.2 strip experiment — only the
-    local Claude Code adapter remains. The Literal fields below are
-    single-element today; restoring an additional transport means
+    Two transports are supported today, both driving Claude Code:
+
+    - ``transport: acp`` — the ``claude-code-acp`` adapter (warm
+      process, streaming chunks, MCP-capable).
+    - ``transport: cli`` — subprocess-per-call ``claude -p`` (no warm
+      state, real ``asyncio`` parallelism per call).
+
+    Both currently pair with ``provider: anthropic`` because both
+    invoke Claude Code under the hood; the transport choice determines
+    invocation shape, not vendor. The api transport (direct Anthropic /
+    OpenAI / DeepSeek) was removed in the 0.2 strip experiment.
+    Additional ``cli`` providers (codex / gemini / custom) are
+    on the roadmap (WISHLIST 36); restoring a transport means
     extending these literals AND adding a factory builder row.
     """
     model_config = ConfigDict(extra="forbid")
 
     kind: Literal["llm"] = "llm"
-    transport: Literal["acp"]
+    transport: Literal["acp", "cli"]
     provider: Literal["anthropic"]
     model: str
     default: bool = False

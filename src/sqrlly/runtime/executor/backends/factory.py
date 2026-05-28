@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Callable
 
 from sqrlly.runtime.executor.backends.acp import ACPBackend
+from sqrlly.runtime.executor.backends.cli import CLIBackend
 from sqrlly.runtime.result import PromptBackend
 
 if TYPE_CHECKING:
@@ -16,12 +17,16 @@ def _build_acp(_preset: "LlmPreset") -> PromptBackend:
     )
 
 
-# (transport, provider) → builder. Single-row table after the api-transport
-# removal — the schema validator constrains the only valid combination to
-# (acp, anthropic), so the lookup can only resolve here. Restoring an
-# additional transport means a new row + builder.
+def _build_cli(_preset: "LlmPreset") -> PromptBackend:
+    return CLIBackend(argv_prefix=("claude", "-p"))
+
+
+# (transport, provider) → builder. Restoring or adding a transport means
+# a new row + builder; the schema literal in ``LlmPreset.transport`` must
+# also list it so YAML validation accepts the value.
 _BACKEND_BUILDERS: dict[tuple[str, str], Callable[["LlmPreset"], PromptBackend]] = {
     ("acp", "anthropic"): _build_acp,
+    ("cli", "anthropic"): _build_cli,
 }
 
 
