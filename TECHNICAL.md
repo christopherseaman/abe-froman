@@ -338,15 +338,18 @@ the slot for the *declared* model.
 send_prompt(prompt, model, workdir, timeout)` and `async close()`.
 
 - `acp.py::ACPBackend` — `npx @zed-industries/claude-code-acp`.
-  See Section 9.
+  Warm process, sessions reused across `send_prompt`. See Section 9.
+- `cli.py::CLIBackend` — `claude -p --model <model>` subprocess per
+  `send_prompt` (0.3.0+). No warm state, no `_send_lock`; real
+  `asyncio` parallelism. `close()` is a no-op.
 - `factory.py::create_backend_from_preset(preset)` — `LlmPreset`
-  instance → `PromptBackend` instance via a single-row
-  `(transport, provider) → builder` table. After the api-transport
-  strip the only row is `("acp", "anthropic") → ACPBackend`; the
-  schema validator constrains presets to that combination.
-  `auto_detect_default_preset()` (in `executor/preset.py`) synthesizes
-  an ACP preset when `npx` is on `PATH` and raises `RuntimeError`
-  otherwise.
+  instance → `PromptBackend` instance via a `(transport, provider)
+  → builder` table with two rows: `("acp", "anthropic") →
+  ACPBackend` and `("cli", "anthropic") → CLIBackend`. The schema
+  validator constrains presets to those combinations. Auto-detect
+  was removed in 0.2.1 — `settings.presets` must be declared
+  explicitly; empty registry is valid for script-only workflows and
+  LLM dispatch without a wired backend fails at the call site.
 
 ### `runtime/gates.py`
 

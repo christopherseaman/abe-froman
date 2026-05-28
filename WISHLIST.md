@@ -106,7 +106,14 @@ they have capability-wise different shapes:
 - **ACP backend** is the agent-with-local-context shape the project
   was designed around.
 
-- [ ] 🚨 **(35) `transport: cli` + ACP value reassessment** — design.
+- [~] **(35) `transport: cli` + ACP value reassessment** — partial.
+  _Investigation closed + cli implementation landed in 0.3.0
+  (commits 7855731..ad12c89). See findings in
+  `docs/investigations/transport-context-parallelism.md`._ Both
+  transports coexist; ACP retirement is **deferred** pending real
+  workflow soak (current default in the jokes example is cli, acp
+  available via `--preset acp`). Original investigation note
+  retained below for context.
   **Open investigation gating priority:** is `cli` *additive* (a third
   transport alongside acp) or *replacement* (consolidate on cli, retire
   acp)? Until we know, scope and breakage profile are unclear, which
