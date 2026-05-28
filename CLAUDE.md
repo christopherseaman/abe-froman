@@ -74,6 +74,21 @@ CLI commands: `init`, `validate`, `run`, `graph`, `view`. There is no
 `scripts/migrate_legacy_executor_to_presets.py` (PEP-723; run with
 `uv run`).
 
+## Versioning
+
+Default to **patch** for every release. Bug fixes, docs, polish,
+small additions (e.g., a new CLI subcommand on the scale of `init`)
+are patches. Bumping minor (`0.x.0`) is reserved for substantial new
+features or surface changes that warrant a heads-up — the kind of
+thing a user reading the changelog should be alerted to, not folded
+into a routine update. Examples that earned minor: the
+`transport: api` strip (0.2.0), `transport: cli` addition (0.3.0).
+Examples that should have been patch but weren't: `sqrlly init`
+(shipped as 0.4.0; would now be 0.3.3).
+
+**Always confirm with the operator before doing a `minor` bump.**
+`scripts/release.sh patch` is the no-confirmation default.
+
 ## Project Layout
 
 Three-layer split (enforced by `tests/architecture/test_layers.py`):
