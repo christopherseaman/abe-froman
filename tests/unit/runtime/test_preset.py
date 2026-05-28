@@ -1,7 +1,7 @@
-"""Unit tests for the named-preset resolution + auto-detect.
+"""Unit tests for named-preset resolution.
 
-Covers `runtime/executor/preset.py` and the new
-`create_backend_from_preset` factory entry.
+Covers `runtime/executor/preset.py` and the `create_backend_from_preset`
+factory entry.
 """
 from __future__ import annotations
 
@@ -9,8 +9,6 @@ import pytest
 
 from sqrlly.runtime.executor.backends.factory import create_backend_from_preset
 from sqrlly.runtime.executor.preset import (
-    _AUTO_PRESET_NAME,
-    auto_detect_default_preset,
     build_preset_registry,
     resolve_preset_name,
 )
@@ -70,35 +68,6 @@ class TestResolvePresetName:
 
 
 # ---------------------------------------------------------------------------
-# auto_detect_default_preset
-# ---------------------------------------------------------------------------
-
-
-class TestAutoDetectDefaultPreset:
-    def test_acp_wins_when_npx_available(self, monkeypatch, tmp_path):
-        """Single remaining branch after the api strip — npx on PATH
-        synthesizes an ACP preset."""
-        monkeypatch.chdir(tmp_path)
-        # Synthesize an `npx` shim on PATH so shutil.which finds something.
-        bin_dir = tmp_path / "bin"
-        bin_dir.mkdir()
-        (bin_dir / "npx").write_text("#!/bin/sh\nexit 0\n")
-        (bin_dir / "npx").chmod(0o755)
-        monkeypatch.setenv("PATH", str(bin_dir))
-        p = auto_detect_default_preset()
-        assert p.transport == "acp"
-        assert p.provider == "anthropic"
-        assert p.model == "sonnet"
-        assert p.default is True
-
-    def test_no_npx_raises(self, monkeypatch, tmp_path):
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setenv("PATH", "/nonexistent")
-        with pytest.raises(RuntimeError, match="No preset declared"):
-            auto_detect_default_preset()
-
-
-# ---------------------------------------------------------------------------
 # build_preset_registry
 # ---------------------------------------------------------------------------
 
@@ -130,20 +99,12 @@ class TestBuildPresetRegistry:
         with pytest.raises(ValueError, match="not found in settings.presets"):
             build_preset_registry(settings, cli_override="nonexistent")
 
-    def test_empty_presets_auto_detects(self, monkeypatch, tmp_path):
-        monkeypatch.chdir(tmp_path)
-        # Synthesize npx so auto-detect resolves to the ACP branch.
-        bin_dir = tmp_path / "bin"
-        bin_dir.mkdir()
-        (bin_dir / "npx").write_text("#!/bin/sh\nexit 0\n")
-        (bin_dir / "npx").chmod(0o755)
-        monkeypatch.setenv("PATH", str(bin_dir))
-        settings = Settings()
-        registry = build_preset_registry(settings)
-        assert set(registry) == {_AUTO_PRESET_NAME}
-        assert registry[_AUTO_PRESET_NAME].default is True
-        assert registry[_AUTO_PRESET_NAME].provider == "anthropic"
-        assert registry[_AUTO_PRESET_NAME].transport == "acp"
+    def test_empty_presets_returns_empty_dict(self):
+        """sqrlly does not synthesize defaults from the environment;
+        empty presets is valid for script-only workflows. LLM dispatch
+        fails at the call site if needed."""
+        registry = build_preset_registry(Settings())
+        assert registry == {}
 
     def test_empty_presets_with_cli_override_raises(self):
         settings = Settings()

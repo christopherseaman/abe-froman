@@ -36,7 +36,7 @@ Write a YAML file with `name`, `version`, `nodes`, and `settings`.
          model: sonnet
          default: true
    ```
-   Or omit `settings.presets` entirely to auto-detect via `npx` (ACP).
+   `settings.presets` is required — there is no environment auto-detect.
 5. **Add a gate** to retry a node until its output is good enough:
    ```yaml
    evaluation:

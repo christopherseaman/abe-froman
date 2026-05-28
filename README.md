@@ -30,6 +30,14 @@ custom OpenAI-compatible endpoints) were removed in 0.2.x while the
 project consolidates around a single transport — a re-introduced
 `transport: cli` (and possibly `transport: api`) is on the roadmap.
 
+**Auth is per-CLI, not sqrlly's job.** Each LLM CLI you point sqrlly
+at handles its own credentials independently. For ACP today, the
+adapter inherits whatever session `claude` itself has — log in once
+with `claude /login` and sqrlly's runs use that session. For future
+`transport: cli` providers, each tool authenticates itself
+(`codex auth`, `gemini auth login`, etc.). sqrlly never reads or
+stores API keys for these tools.
+
 Python 3.11+. From source: `git clone` then `uv sync`.
 
 ## Quickstart
@@ -97,10 +105,16 @@ settings:
       default: true
 ```
 
-If `settings.presets` is omitted, sqrlly auto-detects by checking for
-`npx` on `PATH` and synthesizing an ACP preset against `sonnet`. The
-adapter inherits the local `claude` CLI session, so no API keys are
-required — just `npm i -g @zed-industries/claude-code-acp`.
+**Declare presets explicitly.** sqrlly doesn't probe your environment
+or synthesize defaults. Empty `settings.presets` is valid for
+script-only workflows; any LLM-dispatching node will fail at its call
+site with a clear "no prompt backend wired" error. For ACP, the
+adapter inherits the local `claude` CLI session — no API keys needed,
+just `npm i -g @zed-industries/claude-code-acp` and `claude /login`
+once. If the adapter or `npx` is missing at run time, the backend
+surfaces a clear error at the first prompt call (not pre-flight,
+which would forbid workflows that install the adapter as an earlier
+script node).
 
 Full reference (including `CommandPreset` for custom script interpreters): [docs/schema-reference.md](https://github.com/christopherseaman/sqrlly/blob/main/docs/schema-reference.md).
 

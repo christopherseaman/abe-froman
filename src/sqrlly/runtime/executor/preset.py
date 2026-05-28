@@ -1,4 +1,4 @@
-"""Named-preset resolution + auto-detect synthesis.
+"""Named-preset resolution.
 
 A workflow declares ``settings.presets:`` as a dict of named execution
 bundles; nodes reference one via ``params.preset:`` or inherit the
@@ -9,27 +9,21 @@ This module provides:
 
 - ``resolve_preset_name(node, settings)`` — returns the preset name to
   use for a node (``params.preset:`` if set, else the default).
-- ``auto_detect_default_preset()`` — synthesizes a Preset from the
-  local environment when ``settings.presets`` is empty. After the
-  api-transport strip the only branch left is ``npx`` on PATH (ACP).
-  Raises ``RuntimeError`` on miss.
 - ``build_preset_registry(settings, cli_override=None)`` — master
   entry point. Returns a fully-resolved ``dict[str, Preset]`` ready
-  for backend instantiation. Handles empty-presets (auto-detect) and
-  CLI-override-flips-default cases.
+  for backend instantiation. Handles the CLI-override-flips-default
+  case. Empty ``settings.presets`` is an error — presets must be
+  declared explicitly; sqrlly does not synthesize defaults from the
+  environment.
 """
 from __future__ import annotations
 
-import shutil
 from typing import TYPE_CHECKING
 
 from sqrlly.schema.models import LlmPreset, Preset, Settings
 
 if TYPE_CHECKING:
     from sqrlly.schema.models import Node
-    from sqrlly.schema.params import PromptParams
-
-_AUTO_PRESET_NAME = "_auto"
 
 
 def resolve_preset_name(node: "Node", settings: Settings) -> str:
@@ -69,50 +63,32 @@ def resolve_preset_name(node: "Node", settings: Settings) -> str:
     )
 
 
-def auto_detect_default_preset() -> LlmPreset:
-    """Synthesize a default LlmPreset from the local environment.
-
-    Resolution order (single branch after the api-transport strip):
-
-      1. ``npx`` on PATH → ``LlmPreset(transport=acp, provider=anthropic,
-         model=sonnet, default=True)`` (assumes
-         ``@zed-industries/claude-code-acp`` is installed)
-      2. Nothing → ``RuntimeError`` with install remediation.
-
-    Called as a fallback when ``settings.presets`` is empty and
-    neither YAML nor CLI specified an explicit preset.
-    """
-    if shutil.which("npx"):
-        return LlmPreset(
-            transport="acp", provider="anthropic", model="sonnet", default=True,
-        )
-    raise RuntimeError(
-        "No preset declared in settings.presets and no executor "
-        "auto-detectable from environment. Install npx and "
-        "@zed-industries/claude-code-acp (`npm i -g "
-        "@zed-industries/claude-code-acp`), or declare an explicit "
-        "settings.presets block."
-    )
-
-
 def build_preset_registry(
     settings: Settings, cli_override: str | None = None,
 ) -> dict[str, Preset]:
     """Return the runtime preset registry for a workflow.
 
-    Three input cases:
+    sqrlly does not synthesize defaults from the local environment.
+    An empty ``settings.presets`` returns an empty registry — valid
+    for script-only workflows; LLM-dispatching nodes will fail at the
+    call site with a clear "no prompt backend wired" message. A
+    missing CLI (e.g., ``npx`` for an ACP preset) surfaces at the
+    call site as a backend error with actionable remediation, not as
+    a pre-flight check; this keeps sqrlly out of the business of
+    probing the local toolchain and lets earlier workflow steps
+    install dependencies that later steps need.
 
-      - ``settings.presets`` non-empty + ``cli_override`` None → return
-        ``settings.presets`` as-is.
+    Input shapes:
+
+      - ``settings.presets`` empty + no ``cli_override`` → empty dict.
+      - ``settings.presets`` empty + ``cli_override`` set → raises
+        (the named override doesn't exist).
+      - ``settings.presets`` non-empty + ``cli_override`` None →
+        return ``settings.presets`` as-is (new dict; input not mutated).
       - ``settings.presets`` non-empty + ``cli_override`` set → flip
-        ``default`` to the named preset, clear it on the prior default.
-        Raises ``ValueError`` if the named preset doesn't exist.
-      - ``settings.presets`` empty → auto-detect a single default
-        preset under the name ``_auto``. ``cli_override`` is ignored
-        in this branch (no other presets to switch to); raise instead
-        of silent-no-op so the misconfiguration surfaces.
-
-    Returns a NEW dict — never mutates the input ``settings.presets``.
+        ``default`` to the named ``LlmPreset``, clear it on the prior
+        default. Raises ``ValueError`` if the named preset doesn't
+        exist or names a ``CommandPreset``.
     """
     if not settings.presets:
         if cli_override is not None:
@@ -120,7 +96,11 @@ def build_preset_registry(
                 f"--preset {cli_override!r} given but settings.presets "
                 f"is empty. Declare presets in YAML or drop the flag."
             )
-        return {_AUTO_PRESET_NAME: auto_detect_default_preset()}
+        # Empty registry is valid for script-only workflows. LLM
+        # dispatch will fail at the call site with a clear message
+        # (DispatchExecutor's "no prompt backend wired" error) if a
+        # prompt node tries to run without a declared preset.
+        return {}
 
     if cli_override is None:
         # New dict, same Preset instances. Pydantic models aren't mutated

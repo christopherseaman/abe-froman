@@ -100,7 +100,21 @@ class ACPBackend:
             self._ctx_manager = spawn_agent_process(
                 self._callbacks, self._program, *self._args
             )
-            self._conn, self._proc = await self._ctx_manager.__aenter__()
+            try:
+                self._conn, self._proc = await self._ctx_manager.__aenter__()
+            except FileNotFoundError as e:
+                # `npx` or the adapter is missing on PATH. Surface a
+                # clear, actionable message instead of the SDK's bare
+                # FileNotFoundError. Earlier workflow steps may have
+                # installed it; we only check at the call site, never
+                # pre-flight (a pre-flight would forbid valid setup
+                # workflows that install the adapter as a script node).
+                raise RuntimeError(
+                    f"ACP backend could not launch {self._program!r}: "
+                    f"{e}. Install the adapter with "
+                    f"`npm i -g @zed-industries/claude-code-acp` "
+                    f"and ensure `npx` is on PATH."
+                ) from e
             self._proc_pid = getattr(self._proc, "pid", None)
             # Best-effort: place the spawned process in its own process
             # group so the descendant tree is killable via os.killpg.

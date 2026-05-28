@@ -121,25 +121,30 @@ When any `LlmPreset` exists in `settings.presets`, exactly one must have
 `default: true` — zero or more than one is a `ValidationError`.
 Command-preset-only workflows are exempt.
 
-### Auto-detection
+### Declare presets explicitly
 
-If `settings.presets` is omitted entirely, sqrlly synthesizes a single
-`_auto` preset:
+sqrlly does not synthesize defaults from the local environment and
+does not pre-flight CLI availability. Empty `settings.presets` is
+valid for script-only workflows; any LLM-dispatching node will fail
+at its call site with a clear "no prompt backend wired" error. A
+missing adapter (`npx`, the npm package) surfaces as a backend error
+at the first prompt call, not as a pre-flight check. This keeps
+sqrlly out of the business of probing your toolchain and lets
+earlier workflow steps install dependencies that later steps need.
 
-1. `npx` on `PATH` → `LlmPreset(transport=acp, provider=anthropic, model=sonnet)`
-2. None → `RuntimeError` instructing the user to install
-   `@zed-industries/claude-code-acp` or declare presets explicitly.
-
-`sqrlly run --preset <name>` overrides which `LlmPreset` is the default
-at run time (it cannot be combined with auto-detection).
+`sqrlly run --preset <name>` overrides which `LlmPreset` is treated
+as the default at run time. The named preset must exist in
+`settings.presets`.
 
 ### Secrets
 
 The ACP adapter inherits its credentials from the local `claude` CLI
-session — no API keys are required for transport: acp. The generic
-secret resolver (`runtime/secrets.py::resolve_secret`) is still
-available for workflow-defined values (e.g. a script node calling
-out to a third-party service); resolution order is process env →
+session — no API keys are required for transport: acp. **Auth is per
+LLM CLI, not sqrlly's job**: log in to each tool with its own command
+(`claude /login`, future `codex auth`, etc.). The generic secret
+resolver (`runtime/secrets.py::resolve_secret`) is still available
+for workflow-defined values (e.g., a script node calling out to a
+third-party service); resolution order is process env →
 project-local `.env` file (discovered by walking up from CWD).
 sqrlly never reads machine-global keystores.
 

@@ -370,9 +370,10 @@ class Settings(BaseModel):
     max_remote_fetch_bytes: int = 5_000_000  # 5 MB cap
     # Named presets — workflow-level bundles of execution config.
     # Nodes reference one by name via ``params.preset:``; otherwise
-    # the preset marked ``default: true`` applies. When this dict is
-    # empty, the CLI auto-detects a default from environment keys
-    # (see ``factory.auto_detect_default_preset``).
+    # the preset marked ``default: true`` applies. Empty is valid for
+    # script-only workflows (no LLM dispatch); sqrlly does not
+    # synthesize defaults from the environment. LLM dispatch with no
+    # preset wired fails at the call site.
     presets: dict[str, Preset] = {}
 
     @model_validator(mode="after")

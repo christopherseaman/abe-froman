@@ -254,10 +254,11 @@ async def _execute_workflow(
     """Compile the graph, wire executors / checkpointer / state, then run.
 
     Backend wiring: ``build_preset_registry`` returns a fully-resolved
-    ``dict[str, Preset]`` — either the user's ``settings.presets`` with
-    ``preset_override`` applied, or a single ``_auto`` preset synthesized
-    from environment keys when YAML didn't declare any. Each preset
-    gets its own backend via ``create_backend_from_preset``.
+    ``dict[str, Preset]`` — the user's ``settings.presets`` with
+    ``preset_override`` applied. Empty ``settings.presets`` raises;
+    sqrlly does not synthesize defaults. Each preset gets its own
+    backend via ``create_backend_from_preset``; a missing CLI surfaces
+    as a backend error at the first call site, not as a pre-flight.
     """
     if dry_run:
         compiled = build_workflow_graph(config, None, logger=logger)

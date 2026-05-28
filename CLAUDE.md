@@ -58,7 +58,7 @@ uv run pytest tests/acp -v                   # ACP tests, ~2 min, requires npm p
 uv run pytest tests/architecture/test_layers.py  # layer rule enforcement
 
 uv run sqrlly validate config.yaml
-uv run sqrlly run config.yaml             # auto-detect backend (or settings.presets)
+uv run sqrlly run config.yaml             # uses settings.presets (required)
 uv run sqrlly run config.yaml -p <name>   # force a named preset from settings.presets
 uv run sqrlly run config.yaml --resume    # resume from checkpoint
 uv run sqrlly run config.yaml --log out.jsonl
@@ -132,7 +132,7 @@ langgraph-free).
 **`src/sqrlly/cli/`** — entry point + helpers.
 - `main.py` — Click CLI (`validate` / `run` / `graph` / `view`);
   wires `AsyncSqliteSaver`, `ForemanExecutor`, `thread_id`,
-  `JsonlLogger`, auto-detect.
+  `JsonlLogger`.
 - `view.py` — `view` command: self-contained HTML workflow viewer.
 - `migrate.py` — internal module (NOT a CLI command): pre-Stage-4 →
   4 → 5b YAML transforms (idempotent; preserves comments + anchors).
