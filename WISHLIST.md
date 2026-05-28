@@ -196,6 +196,32 @@ they have capability-wise different shapes:
      every retry.
   4. Revisit `transport: acp` retirement.
 
+- [ ] **(36) `transport: cli` provider expansion** — cheap future
+  wins once item 35's `provider: anthropic` (`claude -p`) lands.
+  Each is roughly a factory row + an argv builder + minimal tests;
+  most cost is in pinning the CLI's actual print-mode syntax and
+  authenticating against it. None block on schema changes.
+
+  - **`provider: openai`** → `codex exec` (or whatever the current
+    print-mode flag is — pin at impl time against the installed
+    Codex CLI). Different argv shape than `claude -p`; needs an
+    argv-builder per provider.
+  - **`provider: google`** → `gemini -p` (tentative; gemini-cli's
+    print-mode surface is still maturing as of 2026-05). Add
+    `"google"` to the `provider` literal at the same time.
+  - **`provider: custom`** + `cli_command: "<template>"` — escape
+    hatch mirroring the existing `api_base_url` constraint pattern.
+    Lets users wire `aider --message {{prompt}}`,
+    `opencode --prompt {{prompt}}`, or any in-house agent CLI
+    without us shipping per-tool code. Template tokens: `{{prompt}}`
+    on stdin OR as an argv segment; `{{model}}` if needed.
+
+  Per-provider validation: `cli_command` only valid for
+  `transport: cli` + `provider: custom`, same constraint shape as
+  `api_base_url` had when api transport existed. Auth stays per-CLI
+  (the user's `claude /login` / `codex auth` / `gemini auth login`),
+  per the README's "auth is per-CLI, not sqrlly's job" framing.
+
 ## Coverage gaps from post-Stage-5c audit (2026-05-06)
 
 Five gaps surfaced when auditing test/example coverage of recently-
