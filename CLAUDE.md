@@ -76,18 +76,27 @@ CLI commands: `init`, `validate`, `run`, `graph`, `view`. There is no
 
 ## Versioning
 
-Default to **patch** for every release. Bug fixes, docs, polish,
-small additions (e.g., a new CLI subcommand on the scale of `init`)
-are patches. Bumping minor (`0.x.0`) is reserved for substantial new
-features or surface changes that warrant a heads-up — the kind of
-thing a user reading the changelog should be alerted to, not folded
-into a routine update. Examples that earned minor: the
-`transport: api` strip (0.2.0), `transport: cli` addition (0.3.0).
-Examples that should have been patch but weren't: `sqrlly init`
-(shipped as 0.4.0; would now be 0.3.3).
+**Push to main and release are different operations.** Commits land
+on main freely as work completes and tests pass. A *release*
+(`scripts/release.sh ...`) happens only when there's something worth
+surfacing to users — typically a batch of commits since the last
+tag, not every individual push.
 
-**Always confirm with the operator before doing a `minor` bump.**
-`scripts/release.sh patch` is the no-confirmation default.
+When releasing:
+
+- Default to **patch**. Bug fixes, docs, polish, small additions
+  (e.g., a CLI subcommand on the scale of `init`) bundle into a
+  patch. Multiple commits per patch is normal.
+- **Minor** (`0.x.0`) is reserved for substantial new features or
+  surface changes that warrant a changelog heads-up — the kind of
+  thing a user tracking releases should be alerted to, not folded
+  into routine maintenance. Examples that earned minor: the
+  `transport: api` strip (0.2.0), `transport: cli` addition (0.3.0).
+- **Always confirm with the operator before a `minor` bump.** The
+  operator decides what constitutes "worth a heads-up."
+
+Mechanically: `scripts/release.sh patch` is the only no-confirmation
+default; `minor` and `major` need explicit operator approval.
 
 ## Project Layout
 
