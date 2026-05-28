@@ -69,7 +69,7 @@ uv run sqrlly graph config.yaml           # Mermaid topology
 uv run sqrlly view config.yaml            # self-contained HTML viewer
 ```
 
-CLI commands: `validate`, `run`, `graph`, `view`. There is no
+CLI commands: `init`, `validate`, `run`, `graph`, `view`. There is no
 `migrate` subcommand — legacy-YAML migration is the standalone
 `scripts/migrate_legacy_executor_to_presets.py` (PEP-723; run with
 `uv run`).
@@ -135,10 +135,13 @@ langgraph-free).
   Claude API; the historical name "ACP" is retained.
 
 **`src/sqrlly/cli/`** — entry point + helpers.
-- `main.py` — Click CLI (`validate` / `run` / `graph` / `view`);
+- `main.py` — Click CLI (`init` / `validate` / `run` / `graph` / `view`);
   wires `AsyncSqliteSaver`, `ForemanExecutor`, `thread_id`,
   `JsonlLogger`.
 - `view.py` — `view` command: self-contained HTML workflow viewer.
+- `init.py` — `init` command: scaffolds a minimal workflow
+  (`workflow.yaml` + `prompts/hello.md`) for `pipx`-installed users
+  with no repo on disk.
 - `migrate.py` — internal module (NOT a CLI command): pre-Stage-4 →
   4 → 5b YAML transforms (idempotent; preserves comments + anchors).
   The `sqrlly migrate` subcommand was removed in the preset-rework

@@ -47,7 +47,16 @@ Python 3.11+. From source: `git clone` then `uv sync`.
 
 ## Quickstart
 
-A two-node workflow — generate jokes, gate them, pick the best (`examples/jokes/`):
+Bootstrap a runnable workflow in two commands — no git clone needed:
+
+```bash
+sqrlly init my-workflow
+cd my-workflow && sqrlly run workflow.yaml
+```
+
+`sqrlly init` scaffolds `workflow.yaml` (one prompt node, CLI preset) and `prompts/hello.md` you can edit in place.
+
+For something more substantive, the shipped example is two nodes — generate jokes, gate them, pick the best (`examples/jokes/`):
 
 ```yaml
 name: "Joke Generator"
@@ -134,6 +143,7 @@ Full reference (including `CommandPreset` for custom script interpreters): [docs
 
 | Command | Purpose |
 |---|---|
+| `sqrlly init [<dir>]` | Scaffold a minimal runnable workflow into `<dir>` (default `.`). |
 | `sqrlly validate <config>` | Compile the workflow; report node count and lint warnings. |
 | `sqrlly run <config>` | Execute the workflow. |
 | `sqrlly graph <config>` | Print the topology as a Mermaid diagram. |

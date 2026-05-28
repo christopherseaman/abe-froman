@@ -3,6 +3,48 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.0] — `sqrlly init` scaffold
+
+### Added
+
+- **`sqrlly init [<dir>]`** — scaffolds a minimal runnable workflow
+  (`workflow.yaml` with one prompt node + a CLI-transport preset, plus
+  `prompts/hello.md`) into `<dir>` (default `.`). Closes the
+  `pipx install sqrlly` → "now what?" gap; users no longer need to
+  clone the repo to get a working starting point. Refuses to clobber
+  an existing `workflow.yaml`.
+
+### Changed
+
+- README's Quickstart now leads with the `sqrlly init my-workflow &&
+  cd my-workflow && sqrlly run workflow.yaml` flow (no git clone
+  required). The existing `examples/jokes/` walkthrough follows for
+  a more substantive example.
+
+## [0.3.2] — lazy ACPBackend import
+
+### Fixed
+
+- `runtime/executor/backends/factory.py` no longer imports
+  `ACPBackend` at module level, which in turn triggers
+  `from acp import ...`. The `acp` Python package was declared as the
+  `[acp]` optional extra but was effectively required at import time
+  for any sqrlly load — `pip install sqrlly` (no extras) left a
+  broken factory. The import is now lazy inside `_build_acp`, so
+  `pip install sqrlly` works fully for cli-only usage; `[acp]` is
+  only needed when an ACP preset is actually dispatched.
+
+## [0.3.1] — TECHNICAL.md + WISHLIST catch-up
+
+### Changed
+
+- `TECHNICAL.md` `runtime/executor/backends/` section reflects both
+  backends (ACP + CLI), the two-row factory table, and the
+  auto-detect removal (was 0.2.1, was still referenced as present).
+- WISHLIST 35 flipped from `[ ] 🚨` to `[~]` partial: investigation
+  closed and cli implementation shipped in 0.3.0; ACP retirement
+  deferred pending real-workflow soak.
+
 ## [0.3.0] — add `transport: cli` as a peer to `transport: acp`
 
 ### Added

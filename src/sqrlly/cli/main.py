@@ -8,6 +8,7 @@ from typing import Any
 import click
 import yaml
 
+from sqrlly.cli.init import init_command
 from sqrlly.compile.graph import build_workflow_graph
 from sqrlly.compile.lint import collect_warnings
 from sqrlly.runtime.executor.dispatch import DispatchExecutor
@@ -60,6 +61,13 @@ def _emit_warnings(config: Graph) -> None:
 def cli():
     """sqrlly — workflow orchestrator."""
     pass
+
+
+@cli.command()
+@click.argument("directory", default=".", type=click.Path())
+def init(directory: str):
+    """Scaffold a minimal runnable workflow into DIRECTORY (default `.`)."""
+    init_command(directory)
 
 
 @cli.command()
