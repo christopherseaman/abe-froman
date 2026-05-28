@@ -134,3 +134,9 @@ class TestCreateBackendFromPreset:
         preset = _preset(transport="acp", provider="anthropic", model="sonnet")
         backend = create_backend_from_preset(preset)
         assert isinstance(backend, ACPBackend)
+
+    def test_cli_returns_cli_backend(self):
+        from sqrlly.runtime.executor.backends.cli import CLIBackend
+        preset = _preset(transport="cli", provider="anthropic", model="sonnet")
+        backend = create_backend_from_preset(preset)
+        assert isinstance(backend, CLIBackend)

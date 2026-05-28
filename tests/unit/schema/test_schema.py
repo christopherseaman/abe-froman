@@ -11,6 +11,7 @@ from sqrlly.schema.models import (
     Execute,
     FanOut,
     Graph,
+    LlmPreset,
     Node,
     OutputContract,
     Route,
@@ -291,6 +292,78 @@ class TestPresetReferenceValidation:
                 },
             ],
         })
+
+
+class TestLlmPresetTransport:
+    """Schema-level coverage of ``LlmPreset.transport``.
+
+    Both ``acp`` and ``cli`` are valid; ``api`` (and any other value)
+    is rejected — the second assertion is a regression guard for the
+    0.2.x api-transport strip.
+    """
+
+    def test_cli_transport_validates(self):
+        p = LlmPreset(
+            transport="cli", provider="anthropic",
+            model="sonnet", default=True,
+        )
+        assert p.transport == "cli"
+        assert p.provider == "anthropic"
+
+    def test_acp_transport_still_validates(self):
+        """Coexistence regression — adding ``cli`` did not break ``acp``."""
+        p = LlmPreset(
+            transport="acp", provider="anthropic",
+            model="sonnet", default=True,
+        )
+        assert p.transport == "acp"
+
+    def test_api_transport_still_rejected(self):
+        """The 0.2.x strip removed ``api``; cli's restoration must not
+        leak a regression that re-accepts it."""
+        with pytest.raises(ValidationError):
+            LlmPreset(
+                transport="api", provider="anthropic",
+                model="sonnet", default=True,
+            )
+
+    def test_unknown_transport_rejected(self):
+        with pytest.raises(ValidationError):
+            LlmPreset(
+                transport="bogus", provider="anthropic",
+                model="sonnet", default=True,
+            )
+
+    def test_workflow_with_both_acp_and_cli_presets_validates(self):
+        """A single workflow may declare both transports side-by-side;
+        the schema-level constraint is only that exactly one
+        ``LlmPreset`` is ``default: true``.
+        """
+        graph = Graph.model_validate({
+            "name": "T", "version": "1.0",
+            "settings": {
+                "presets": {
+                    "warm": {
+                        "transport": "acp", "provider": "anthropic",
+                        "model": "sonnet", "default": True,
+                    },
+                    "cold": {
+                        "transport": "cli", "provider": "anthropic",
+                        "model": "haiku", "default": False,
+                    },
+                },
+            },
+            "nodes": [
+                {
+                    "id": "a", "name": "A",
+                    "execute": {
+                        "url": "t.md", "params": {"preset": "cold"},
+                    },
+                },
+            ],
+        })
+        assert graph.settings.presets["warm"].transport == "acp"
+        assert graph.settings.presets["cold"].transport == "cli"
 
 
 class TestSettingsMemoryGates:

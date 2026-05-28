@@ -86,7 +86,8 @@ testpaths = ["tests"]
 pythonpath = ["tests"]
 markers = [
     "acp: tests requiring a live ACP adapter + Claude API (may be slow/flaky)",
-    "live: tests requiring live network access (currently no in-tree consumers after the api-transport strip; reserved for future restoration)",
+    "cli: tests requiring the `claude` CLI on PATH (transport: cli; may be slow/flaky)",
+    "live: tests requiring live network access (consumed by tests/e2e/test_live_backend_roundtrip.py — cli-only after the api-transport strip)",
 ]
 
 [dependency-groups]
