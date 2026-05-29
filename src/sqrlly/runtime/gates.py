@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from sqrlly.runtime.result import EvaluationError
 from sqrlly.schema.models import Evaluation, OutputContract
 
 
@@ -137,10 +138,12 @@ def _parse_evaluation_output(
 
     Accepts: bare float (script gates only), JSON with "score", full
     feedback JSON, or multi-dimension JSON (numeric fields extracted as
-    dimension scores). Malformed or score-less output yields `score=0.0`
-    with diagnostic feedback — a broken validator fails its gate rather
-    than crashing the run (see `run_evaluation_script` for the matching
-    non-zero-exit handling). Scores are clamped to [0, 1].
+    dimension scores). Output that yields **no parseable score**
+    (unparseable, not an object, non-numeric/missing "score") raises
+    `EvaluationError` — a validator that can't produce a verdict halts
+    the run loudly rather than masquerading as a 0.0 quality result.
+    A valid score (including 0.0) is a real verdict and is returned,
+    clamped to [0, 1].
     """
     stripped = raw.strip()
     if allow_bare_float:
@@ -152,15 +155,15 @@ def _parse_evaluation_output(
     try:
         data = json.loads(stripped)
     except (json.JSONDecodeError, TypeError):
-        return EvaluationResult(
-            score=0.0,
-            feedback=f"gate returned unparseable response: {stripped[:200]!r}",
+        raise EvaluationError(
+            f"gate returned unparseable response (no numeric score): "
+            f"{stripped[:200]!r}"
         )
 
     if not isinstance(data, dict):
-        return EvaluationResult(
-            score=0.0,
-            feedback="gate response missing or non-numeric 'score' field",
+        raise EvaluationError(
+            f"gate response must be a bare score or JSON object with a "
+            f"'score' field, got {type(data).__name__}: {stripped[:200]!r}"
         )
 
     dim_scores: dict[str, float] = {}
@@ -183,14 +186,13 @@ def _parse_evaluation_output(
         try:
             score = float(data["score"])
         except (TypeError, ValueError):
-            return EvaluationResult(
-                score=0.0,
-                feedback="gate response missing or non-numeric 'score' field",
+            raise EvaluationError(
+                f"gate response has a non-numeric 'score': {data['score']!r}"
             )
     elif require_score and not dim_scores:
-        return EvaluationResult(
-            score=0.0,
-            feedback="gate response missing or non-numeric 'score' field",
+        raise EvaluationError(
+            "gate response is missing a 'score' field (and no numeric "
+            f"dimension fields to derive one): {stripped[:200]!r}"
         )
     elif dim_scores:
         # Multi-dim gate without an explicit top-level `score`: the
@@ -274,16 +276,15 @@ async def run_evaluation_script(
         )
         stdout, stderr = await proc.communicate(input=node_output.encode())
     except (FileNotFoundError, OSError) as e:
-        return EvaluationResult(
-            score=0.0,
-            feedback=f"validator script not found or unexecutable: {validator_path} ({e})",
+        raise EvaluationError(
+            f"validator script not found or unexecutable: {validator_path} ({e})"
         )
 
     if proc.returncode != 0:
         snippet = stderr.decode(errors="replace").strip()[:200]
-        return EvaluationResult(
-            score=0.0,
-            feedback=f"validator exited with code {proc.returncode}: {snippet}",
+        raise EvaluationError(
+            f"validator '{validator_path}' exited with code "
+            f"{proc.returncode}: {snippet}"
         )
 
     return _parse_evaluation_output(

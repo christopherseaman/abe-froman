@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from sqrlly.runtime.result import ManifestError
 from sqrlly.runtime.state import WorkflowState
 from sqrlly.schema.models import Node
 
@@ -83,16 +84,33 @@ def _read_manifest(state: WorkflowState, node: Node) -> list[dict]:
         pass
 
     if node.fan_out and node.fan_out.manifest_path:
-        manifest_file = (
-            Path(state.get("workdir", ".")) / node.fan_out.manifest_path
-        )
+        path = node.fan_out.manifest_path
+        manifest_file = Path(state.get("workdir", ".")) / path
+        # A declared manifest_path that can't be read is an author error
+        # (typo / missing file / bad JSON) — halt loudly rather than
+        # silently fanning out over zero items. (An empty-but-valid
+        # manifest still returns [] below and routes to no_items.)
         try:
-            data = json.loads(manifest_file.read_text())
-            if isinstance(data, dict) and "items" in data:
-                return _normalize_items(data["items"])
-            if isinstance(data, list):
-                return _normalize_items(data)
-        except (FileNotFoundError, json.JSONDecodeError):
-            pass
+            raw = manifest_file.read_text()
+        except (FileNotFoundError, OSError) as e:
+            raise ManifestError(
+                f"fan-out '{node.id}': manifest_path {path!r} could not be "
+                f"read under {state.get('workdir', '.')!r} ({e})"
+            )
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as e:
+            raise ManifestError(
+                f"fan-out '{node.id}': manifest_path {path!r} is not valid "
+                f"JSON ({e})"
+            )
+        if isinstance(data, dict) and "items" in data:
+            return _normalize_items(data["items"])
+        if isinstance(data, list):
+            return _normalize_items(data)
+        raise ManifestError(
+            f"fan-out '{node.id}': manifest_path {path!r} must be a JSON "
+            f"array or object with an 'items' array, got {type(data).__name__}"
+        )
 
     return []

@@ -5,6 +5,7 @@ import pytest
 
 from sqrlly.compile.graph import build_workflow_graph
 from sqrlly.runtime.gates import EvaluationResult, run_evaluation
+from sqrlly.runtime.result import EvaluationError
 from sqrlly.runtime.state import make_initial_state
 from sqrlly.runtime.executor.dispatch import DispatchExecutor
 from sqrlly.schema.models import Evaluation
@@ -111,26 +112,30 @@ class TestGateEvaluation:
         assert result.score == 0.75
 
     @pytest.mark.asyncio
-    async def test_py_validator_exception_returns_zero(self, tmp_path):
+    async def test_py_validator_exception_halts(self, tmp_path):
+        """A validator that crashes (non-zero exit) can't produce a
+        verdict → loud halt, not a silent 0.0 masquerading as low quality."""
         script = tmp_path / "validator.py"
         script.write_text("raise Exception('fail')")
         gate = Evaluation(validator=str(script), threshold=0.8)
-        result = await run_evaluation(gate, "p1", workdir=str(tmp_path))
-        assert result.score == 0.0
+        with pytest.raises(EvaluationError, match="exited with code"):
+            await run_evaluation(gate, "p1", workdir=str(tmp_path))
 
     @pytest.mark.asyncio
-    async def test_py_validator_garbage_output_returns_zero(self, tmp_path):
+    async def test_py_validator_garbage_output_halts(self, tmp_path):
         script = tmp_path / "validator.py"
         script.write_text("print('not a number')")
         gate = Evaluation(validator=str(script), threshold=0.8)
-        result = await run_evaluation(gate, "p1", workdir=str(tmp_path))
-        assert result.score == 0.0
+        with pytest.raises(EvaluationError, match="unparseable"):
+            await run_evaluation(gate, "p1", workdir=str(tmp_path))
 
     @pytest.mark.asyncio
-    async def test_nonexistent_py_validator_returns_zero(self):
+    async def test_nonexistent_py_validator_halts(self):
+        # `python <missing>.py` spawns then exits non-zero ("can't open
+        # file"), so this surfaces via the exit-code branch.
         gate = Evaluation(validator="/tmp/does_not_exist_12345.py", threshold=0.8)
-        result = await run_evaluation(gate, "p1")
-        assert result.score == 0.0
+        with pytest.raises(EvaluationError, match="exited with code"):
+            await run_evaluation(gate, "p1")
 
     @pytest.mark.asyncio
     async def test_py_validator_score_above_one_is_clamped(self, tmp_path):
@@ -288,8 +293,10 @@ class TestGateJSValidator:
     @pytest.mark.asyncio
     async def test_js_validator_not_found(self):
         gate = Evaluation(validator="/tmp/does_not_exist_99999.js", threshold=0.8)
-        result = await run_evaluation(gate, "p1")
-        assert result.score == 0.0
+        # `node <missing>.js` exits non-zero (or, if node is absent,
+        # the spawn fails) — either way a loud EvaluationError, not 0.0.
+        with pytest.raises(EvaluationError):
+            await run_evaluation(gate, "p1")
 
 
 class TestGateEnvironment:
@@ -389,8 +396,8 @@ class TestGateEnvironment:
         script = tmp_path / "exit1.py"
         script.write_text("import sys; sys.exit(1)")
         gate = Evaluation(validator=str(script), threshold=0.8)
-        result = await run_evaluation(gate, "p1", workdir=str(tmp_path))
-        assert result.score == 0.0
+        with pytest.raises(EvaluationError, match="exited with code 1"):
+            await run_evaluation(gate, "p1", workdir=str(tmp_path))
 
 
 # ---------------------------------------------------------------------------
@@ -499,43 +506,39 @@ class TestScriptGateStructuredFeedback:
         assert result.pass_criteria_unmet == []
 
     @pytest.mark.asyncio
-    async def test_garbage_output_populates_feedback(self, tmp_path):
-        """Loud failure on unparseable validator output — feedback explains why."""
+    async def test_garbage_output_halts(self, tmp_path):
+        """Unparseable validator output → loud halt naming the response."""
         script = tmp_path / "validator.py"
         script.write_text("print('not a number')")
         gate = Evaluation(validator=str(script), threshold=0.8)
-        result = await run_evaluation(gate, "p1", workdir=str(tmp_path))
-        assert result.score == 0.0
-        assert result.feedback is not None
-        assert "unparseable" in result.feedback
-        assert "not a number" in result.feedback
+        with pytest.raises(EvaluationError, match="unparseable"):
+            await run_evaluation(gate, "p1", workdir=str(tmp_path))
 
     @pytest.mark.asyncio
-    async def test_missing_score_field_populates_feedback(self, tmp_path):
-        """JSON without `score` key surfaces a diagnostic in feedback."""
+    async def test_missing_score_field_halts(self, tmp_path):
+        """JSON without a `score` key can't yield a verdict → loud halt."""
         script = tmp_path / "validator.py"
         script.write_text(
             'import json; print(json.dumps({"feedback": "ok"}))'
         )
         gate = Evaluation(validator=str(script), threshold=0.8)
-        result = await run_evaluation(gate, "p1", workdir=str(tmp_path))
-        assert result.score == 0.0
-        assert "score" in result.feedback
+        with pytest.raises(EvaluationError, match="missing a 'score'"):
+            await run_evaluation(gate, "p1", workdir=str(tmp_path))
 
     @pytest.mark.asyncio
-    async def test_nonexistent_validator_populates_feedback(self):
-        """Missing validator script surfaces a clear path in feedback."""
+    async def test_nonexistent_validator_halts(self):
+        """Missing validator script → loud halt naming the path."""
         gate = Evaluation(
             validator="/tmp/sqrlly_does_not_exist_99999.py", threshold=0.8
         )
-        result = await run_evaluation(gate, "p1")
-        assert result.score == 0.0
-        assert result.feedback is not None
-        assert "/tmp/sqrlly_does_not_exist_99999.py" in result.feedback
+        with pytest.raises(
+            EvaluationError, match="/tmp/sqrlly_does_not_exist_99999.py"
+        ):
+            await run_evaluation(gate, "p1")
 
     @pytest.mark.asyncio
-    async def test_nonzero_exit_captures_stderr(self, tmp_path):
-        """Validator exiting non-zero surfaces stderr snippet in feedback."""
+    async def test_nonzero_exit_halts_with_stderr(self, tmp_path):
+        """Validator exiting non-zero → loud halt carrying the stderr."""
         script = tmp_path / "validator.py"
         script.write_text(
             'import sys\n'
@@ -543,10 +546,8 @@ class TestScriptGateStructuredFeedback:
             'sys.exit(2)\n'
         )
         gate = Evaluation(validator=str(script), threshold=0.8)
-        result = await run_evaluation(gate, "p1", workdir=str(tmp_path))
-        assert result.score == 0.0
-        assert "code 2" in result.feedback
-        assert "validator went boom" in result.feedback
+        with pytest.raises(EvaluationError, match="code 2.*validator went boom"):
+            await run_evaluation(gate, "p1", workdir=str(tmp_path))
 
 
 # ---------------------------------------------------------------------------
@@ -593,38 +594,34 @@ class TestGateOutputParser:
     def test_bare_float_rejected_for_llm(self):
         from sqrlly.runtime.gates import _parse_evaluation_output
 
-        result = _parse_evaluation_output("0.85")
-        assert result.score == 0.0
-        assert "score" in result.feedback
+        # No allow_bare_float → "0.85" parses as a JSON number (not an
+        # object with a score) → loud halt.
+        with pytest.raises(EvaluationError, match="must be a bare score"):
+            _parse_evaluation_output("0.85")
 
     def test_malformed_json_loud_failure(self):
         from sqrlly.runtime.gates import _parse_evaluation_output
 
-        result = _parse_evaluation_output("this is not json at all")
-        assert result.score == 0.0
-        assert result.feedback is not None
-        assert "unparseable" in result.feedback
+        with pytest.raises(EvaluationError, match="unparseable"):
+            _parse_evaluation_output("this is not json at all")
 
     def test_missing_score_loud_failure(self):
         from sqrlly.runtime.gates import _parse_evaluation_output
 
-        result = _parse_evaluation_output(json.dumps({"feedback": "ok"}))
-        assert result.score == 0.0
-        assert "missing" in result.feedback and "score" in result.feedback
+        with pytest.raises(EvaluationError, match="missing a 'score'"):
+            _parse_evaluation_output(json.dumps({"feedback": "ok"}))
 
     def test_non_numeric_score_loud_failure(self):
         from sqrlly.runtime.gates import _parse_evaluation_output
 
-        result = _parse_evaluation_output(json.dumps({"score": "high"}))
-        assert result.score == 0.0
-        assert "score" in result.feedback
+        with pytest.raises(EvaluationError, match="non-numeric 'score'"):
+            _parse_evaluation_output(json.dumps({"score": "high"}))
 
     def test_non_dict_top_level_loud_failure(self):
         from sqrlly.runtime.gates import _parse_evaluation_output
 
-        result = _parse_evaluation_output(json.dumps([1, 2, 3]))
-        assert result.score == 0.0
-        assert "score" in result.feedback
+        with pytest.raises(EvaluationError, match="must be a bare score"):
+            _parse_evaluation_output(json.dumps([1, 2, 3]))
 
 
 class TestMultiDimensionParser:

@@ -5,6 +5,7 @@ import json
 import pytest
 
 from sqrlly.compile._manifest import _read_manifest
+from sqrlly.runtime.result import ManifestError
 from sqrlly.runtime.state import make_initial_state
 from sqrlly.schema.models import Execute, FanOut, Node, FanOutTemplate
 
@@ -77,19 +78,38 @@ class TestReadManifestFromDisk:
         result = _read_manifest(state, node)
         assert result == [{"id": "y"}]
 
-    def test_disk_file_not_found(self, tmp_path):
+    def test_disk_file_not_found_halts(self, tmp_path):
+        """A declared manifest_path that doesn't exist is an author error
+        — halt loudly rather than silently fanning out over zero items."""
         state = make_initial_state(workdir=str(tmp_path))
         node = _phase_with_dynamic(manifest_path="missing.json")
-        result = _read_manifest(state, node)
-        assert result == []
+        with pytest.raises(ManifestError, match="could not be read"):
+            _read_manifest(state, node)
 
-    def test_disk_bad_json(self, tmp_path):
+    def test_disk_bad_json_halts(self, tmp_path):
         manifest = tmp_path / "manifest.json"
         manifest.write_text("not valid json{{{")
         state = make_initial_state(workdir=str(tmp_path))
         node = _phase_with_dynamic(manifest_path="manifest.json")
-        result = _read_manifest(state, node)
-        assert result == []
+        with pytest.raises(ManifestError, match="not valid JSON"):
+            _read_manifest(state, node)
+
+    def test_disk_wrong_structure_halts(self, tmp_path):
+        manifest = tmp_path / "manifest.json"
+        manifest.write_text(json.dumps({"not_items": 1}))
+        state = make_initial_state(workdir=str(tmp_path))
+        node = _phase_with_dynamic(manifest_path="manifest.json")
+        with pytest.raises(ManifestError, match="must be a JSON array"):
+            _read_manifest(state, node)
+
+    def test_disk_empty_list_is_ok(self, tmp_path):
+        """A valid but empty manifest is NOT an error — it returns []
+        and the router sends it to no_items (with a warning)."""
+        manifest = tmp_path / "manifest.json"
+        manifest.write_text(json.dumps([]))
+        state = make_initial_state(workdir=str(tmp_path))
+        node = _phase_with_dynamic(manifest_path="manifest.json")
+        assert _read_manifest(state, node) == []
 
 
 # ---------------------------------------------------------------------------
@@ -143,3 +163,20 @@ class TestNormalizeItems:
         state = make_initial_state(node_outputs={"p1": json.dumps([["nested"]])})
         with pytest.raises(ValueError, match="must be an object or scalar"):
             _read_manifest(state, _phase_with_dynamic())
+
+
+class TestEmptyManifestRouting:
+    def test_router_warns_and_routes_to_no_items(self, caplog):
+        """An empty (but valid) manifest is not silent: the dynamic
+        router logs a warning and routes to the no_items target(s)."""
+        import logging
+
+        from sqrlly.compile.graph import _make_dynamic_router
+
+        node = _phase_with_dynamic()  # fan_out, no manifest_path
+        router = _make_dynamic_router(node, no_items_targets=["after"])
+        state = make_initial_state(node_outputs={"p1": ""})  # no manifest
+        with caplog.at_level(logging.WARNING):
+            result = router(state)
+        assert result == ["after"]
+        assert any("zero items" in r.message for r in caplog.records)

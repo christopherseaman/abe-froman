@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from graphlib import CycleError, TopologicalSorter
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -237,6 +238,11 @@ def _make_dynamic_router(node: Node, no_items_targets: list[str]):
 
         items = _read_manifest(state, node)
         if not items:
+            logging.getLogger(__name__).warning(
+                "fan-out %r: manifest resolved to zero items — routing to "
+                "no-items target(s) %s instead of fanning out.",
+                node.id, no_items_targets,
+            )
             return no_items_targets
 
         return [

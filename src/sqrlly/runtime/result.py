@@ -27,6 +27,20 @@ class OverloadError(Exception):
     pass
 
 
+class EvaluationError(RuntimeError):
+    """A gate validator could not produce a score — it failed to run
+    (missing / non-zero exit) or emitted output with no parseable score.
+    Distinct from a low-quality verdict (a valid score below threshold):
+    a broken validator halts the run loudly rather than masquerading as
+    a 0.0 quality result."""
+
+
+class ManifestError(RuntimeError):
+    """A fan-out node's declared ``manifest_path`` could not be read
+    (file missing or invalid JSON). Halts loudly rather than silently
+    fanning out over zero items."""
+
+
 @runtime_checkable
 class NodeExecutor(Protocol):
     async def execute(
