@@ -264,6 +264,14 @@ reproduce a "local files only" policy.
 A per-compile cache keyed by canonical URL fetches each URL at most once
 per `build_workflow_graph` call.
 
+> **Remote execution scope.** Only remote **prompt** templates
+> (`.md` / `.txt` / `.prompt`) are fetched-and-run today. Remote
+> **script** and **binary** execution is not yet wired — a non-`file://`
+> URL on a script/binary node halts with a clear error ("Remote script
+> execution not yet wired … use `file://`"). `allow_remote_scripts`
+> gates the *fetch* path in preparation for that, but execution still
+> requires a local path.
+
 ---
 
 ## Evaluation

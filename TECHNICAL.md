@@ -424,6 +424,13 @@ Per-prefix `url_headers` with `${VAR}` env expansion (via
 `_expand_vars`) attach auth headers. Missing env var raises
 `ValueError` (config error, not network error).
 
+**Remote execution scope.** Only remote *prompt* templates are
+fetched-and-run (`_dispatch_prompt` → `fetch_url`). `_dispatch_script`
+and `_dispatch_binary` still require `file://` and halt on a non-`file`
+scheme ("Remote script execution not yet wired"). `allow_remote_scripts`
+gates the fetch in preparation, but remote script/binary *execution* is
+not yet implemented.
+
 ### Per-compile fetch cache
 
 `_RemoteFetchCache` is one dict per `DispatchExecutor`. A single

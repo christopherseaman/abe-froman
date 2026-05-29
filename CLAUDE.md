@@ -235,6 +235,13 @@ mapping (we're testing our wrapping code, not the SDK).
   `Command(goto=...)`, so a routed node's branch targets appear as
   unconnected nodes (no edges). Inherent to the routing implementation;
   the diagram shows static topology only. Flagged in SKILLS.md.
+- **Remote script/binary execution not wired** — `base_url` /
+  `http(s)://` urls fetch-and-run for *prompt* nodes
+  (`_dispatch_prompt` → `fetch_url`), but `_dispatch_script` /
+  `_dispatch_binary` still require `file://` and halt on a remote scheme
+  ("Remote script execution not yet wired"). `allow_remote_scripts`
+  gates the fetch in preparation only. Documented in
+  `docs/schema-reference.md`, `TECHNICAL.md`, and `SKILLS.md`.
 - **Per-model backpressure under downgrade** — Foreman acquires the
   semaphore for the node's *original* model. If `PromptExecutor`
   downgrades opus → sonnet mid-call (on `OverloadError`), the sonnet
