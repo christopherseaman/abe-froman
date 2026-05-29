@@ -179,61 +179,85 @@ class TestRenderingOutput:
 
 
 class TestSquirrelScene:
-    def test_frame_returns_consistent_width_string(self):
-        s = SquirrelScene()
-        # Repeated calls should produce strings of similar visual length.
-        frames = [s.frame(pile_count=0, stash_count=3) for _ in range(24)]
-        widths = {len(f) for f in frames}
-        # Within ±2 characters across a cycle (squirrel position varies).
-        assert max(widths) - min(widths) <= 2
-
     def test_frame_contains_tree_glyph(self):
         f = SquirrelScene().frame(pile_count=0, stash_count=2)
         assert "🌳" in f
 
     def test_pile_grows_with_completed_count(self):
-        # Two fresh scenes at the same tick — squirrel position
-        # identical; only the pile count differs, so the total `●`
-        # count is a reliable comparison.
+        """Block-element pile glyph index scales with pile_count."""
         f0 = SquirrelScene().frame(pile_count=0, stash_count=0)
+        f1 = SquirrelScene().frame(pile_count=1, stash_count=0)
         f3 = SquirrelScene().frame(pile_count=3, stash_count=0)
-        assert f3.count("●") == f0.count("●") + 3
+        # 0 nodes → no pile glyph; 1 → ▁; 3 → ▃
+        assert "▁" not in f0
+        assert "▁" in f1
+        assert "▃" in f3
 
-    def test_squirrel_walks(self):
-        """Successive frames at the same state should show the squirrel
-        in different positions (clock-driven aliveness)."""
-        s = SquirrelScene()
-        # Sample 4 frames at a steady state — squirrel positions should
-        # not be identical across all of them.
-        frames = [s.frame(pile_count=2, stash_count=2) for _ in range(4)]
-        assert len(set(frames)) > 1
+    def test_pile_overflow_shows_plus_badge(self):
+        """Pile counts beyond the glyph table fall through to '+N'."""
+        f = SquirrelScene().frame(pile_count=20, stash_count=0)
+        assert "+" in f  # overflow badge
 
-    def test_carrying_state_on_return_trip(self):
+    def test_squirrel_glyph_appears(self):
+        """The right-facing squirrel glyph (🬢🭠) appears during the
+        going-right half of the cycle."""
         s = SquirrelScene()
-        # Tick through one full cycle and look at the right-facing vs
-        # left-facing characters in the strip. The "going_left" frames
-        # should show ●< (carrying), the "going_right" frames >○ (empty).
-        going_right_frames = []
-        going_left_frames = []
+        seen_right = False
         for _ in range(24):
-            f = s.frame(pile_count=0, stash_count=2)
-            if ">○" in f:
-                going_right_frames.append(f)
-            if "●<" in f:
-                going_left_frames.append(f)
-        assert len(going_right_frames) > 0
-        assert len(going_left_frames) > 0
+            f = s.frame(pile_count=0, stash_count=0)
+            if "🬢🭠" in f:
+                seen_right = True
+        assert seen_right
 
-    def test_no_carrying_when_stash_empty(self):
-        """If the stash is empty, the squirrel has nothing to carry —
-        the left-facing frame should still show the empty form."""
+    def test_squirrel_changes_direction(self):
+        """Both right (🬢🭠) and left (🭠🬢) forms appear within a cycle."""
         s = SquirrelScene()
-        seen_loaded = False
+        seen_right = seen_left = False
         for _ in range(24):
-            f = s.frame(pile_count=5, stash_count=0)
-            if "●<" in f:
-                seen_loaded = True
-        assert not seen_loaded
+            f = s.frame(pile_count=0, stash_count=0)
+            if "🬢🭠" in f:
+                seen_right = True
+            if "🭠🬢" in f:
+                seen_left = True
+        assert seen_right and seen_left
+
+    def test_falling_dots_appear_when_stash_present(self):
+        """When stash > 0, fall-state glyphs (⠁/⠂/⠄/⡀) populate
+        the walkway over time."""
+        s = SquirrelScene()
+        seen_fall = set()
+        for _ in range(24):
+            f = s.frame(pile_count=0, stash_count=3)
+            for g in ("⠁", "⠂", "⠄", "⡀"):
+                if g in f:
+                    seen_fall.add(g)
+        # At least the spawned glyph (⠁) and landed glyph (⡀) should show.
+        assert "⠁" in seen_fall
+        assert "⡀" in seen_fall
+
+    def test_squirrel_consumes_landed_dots(self):
+        """Run a cycle and confirm that landed-dot count fluctuates —
+        i.e., dots get consumed and re-spawned rather than monotonically
+        accumulating."""
+        s = SquirrelScene()
+        landed_counts = []
+        for _ in range(48):  # two full cycles
+            f = s.frame(pile_count=0, stash_count=3)
+            landed_counts.append(f.count("⡀"))
+        # If consumption never happened, count would monotonically
+        # rise. Expect at least one decrease somewhere.
+        decreases = sum(
+            1 for a, b in zip(landed_counts, landed_counts[1:]) if b < a
+        )
+        assert decreases >= 1
+
+    def test_no_dots_when_stash_zero(self):
+        """An empty stash leaves the walkway free of falling nuts."""
+        s = SquirrelScene()
+        for _ in range(24):
+            f = s.frame(pile_count=2, stash_count=0)
+            for g in ("⠁", "⠂", "⠄", "⡀"):
+                assert g not in f
 
 
 class TestTeeLogger:

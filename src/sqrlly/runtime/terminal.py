@@ -45,72 +45,104 @@ class BrailleSpinner:
 
 
 class SquirrelScene:
-    """A walking squirrel ferrying nuts between a stash and a pile.
+    """A walking squirrel gathering nuts that fall and stack on a pile.
 
-    The squirrel walks back and forth on a fixed-width walkway between
-    a `stash` of loose nuts (right — pending/running nodes) and a
-    `pile` on the left (completed nodes). Walking is clock-driven —
-    the squirrel keeps moving regardless of workflow activity, so a
-    long-running node still shows life. Pile and stash sizes are
-    event-driven, set fresh on each frame from the renderer's state.
+    Layout: ``🌳 [pile] [walkway with falling nuts and walking squirrel]``
 
-    The squirrel "carries" a nut on the return trip (visualized as
-    holding a nut glyph), enriching the metaphor without complicating
-    the state machine.
+    Each walkway cell is a per-column state machine:
+
+    - ``None`` — empty
+    - ``0``  — ``⠁`` (top dot, just spawned, falling)
+    - ``1``  — ``⠂``
+    - ``2``  — ``⠄``
+    - ``3``  — ``⡀`` (landed, available to be eaten)
+
+    The squirrel walks back and forth on the walkway; landed nuts under
+    or just-ahead of it are consumed (set back to ``None``). New
+    fallers spawn into empty cells, keeping walkway density roughly
+    proportional to ``stash_count``. Walking is clock-driven aliveness
+    — the squirrel keeps moving regardless of workflow activity. The
+    pile size is event-driven (set fresh each frame from the
+    renderer's `completed_nodes` count) and rendered as a vertically
+    filling block-element glyph (``▁`` → ``█``).
     """
 
-    _CYCLE = 24            # ticks per round trip (~2.4s at 100ms tick)
-    _WALKWAY = 14          # visible walkway cell width
-    _PILE_MAX = 8          # pile cap before falling back to "●●●●●●●●+N"
-    _STASH_MAX = 5         # stash cap
+    _CYCLE = 24            # ticks per round trip
+    _WALKWAY = 16          # walkway cell width
+    _PILE_MAX = 8          # last block-glyph index; overflows show "+N"
 
     _TREE = "🌳"
-    _NUT = "●"
-    _SQ_R = ">○"           # right-facing squirrel without nut
-    _SQ_L = "○<"           # left-facing squirrel
-    _SQ_R_NUT = ">●"       # right-facing squirrel carrying a nut
-    _SQ_L_NUT = "●<"       # left-facing squirrel carrying a nut
+    _SQ_R = "🬢🭠"           # right-facing squirrel glyph pair
+    _SQ_L = "🭠🬢"           # left-facing (mirrored ordering)
+    _FALL = ["⠁", "⠂", "⠄", "⡀"]   # in-place fall progression
+    _PILE_GLYPHS = ["", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"]
 
     def __init__(self) -> None:
         self._tick = 0
+        # Per-column nut state. None = empty; 0..3 = falling/landed.
+        self._dots: list[int | None] = [None] * self._WALKWAY
+
+    def _squirrel_position(self, going_right: bool) -> int:
+        half = self._CYCLE // 2
+        cycle_pos = self._tick % self._CYCLE
+        if going_right:
+            pos = (cycle_pos * (self._WALKWAY - 1)) // max(half - 1, 1)
+        else:
+            pos = ((self._CYCLE - 1 - cycle_pos) * (self._WALKWAY - 1)) // max(half - 1, 1)
+        return max(0, min(pos, self._WALKWAY - 2))
 
     def frame(self, *, pile_count: int, stash_count: int) -> str:
-        self._tick = (self._tick + 1) % self._CYCLE
-        half = self._CYCLE // 2
-        going_right = self._tick < half
+        self._tick += 1
+        going_right = (self._tick % self._CYCLE) < (self._CYCLE // 2)
+        sq_pos = self._squirrel_position(going_right)
 
-        # Position 0..WALKWAY-1 → walking right; back down → walking left.
-        if going_right:
-            pos = (self._tick * (self._WALKWAY - 1)) // (half - 1)
-        else:
-            pos = ((self._CYCLE - 1 - self._tick) * (self._WALKWAY - 1)) // (half - 1)
-        pos = max(0, min(pos, self._WALKWAY - 2))  # leave room for 2-char squirrel
+        # 1. Advance any in-flight fall (0/1/2 → next state); landed (3) stays.
+        for i, d in enumerate(self._dots):
+            if d is not None and d < 3:
+                self._dots[i] = d + 1
 
-        # Squirrel carries a nut on the return trip (going_left + stash > 0).
-        carrying = (not going_right) and stash_count > 0
-        if going_right:
-            squirrel = self._SQ_R
-        else:
-            squirrel = self._SQ_L_NUT if carrying else self._SQ_L
+        # 2. The squirrel consumes landed dots beneath it (2-cell footprint).
+        for offset in (0, 1):
+            p = sq_pos + offset
+            if 0 <= p < self._WALKWAY and self._dots[p] == 3:
+                self._dots[p] = None
 
-        walkway_chars = list(" " * self._WALKWAY)
-        walkway_chars[pos] = squirrel[0]
-        walkway_chars[pos + 1] = squirrel[1]
-        walkway = "".join(walkway_chars)
+        # 3. Keep walkway density proportional to stash. Spawn one
+        #    falling nut per tick when on-screen count is below
+        #    the desired population. Skip cells the squirrel is in
+        #    so a new nut doesn't visually overlay the squirrel.
+        on_screen = sum(1 for d in self._dots if d is not None)
+        desired = min(stash_count, self._WALKWAY - 3)
+        if on_screen < desired:
+            empties = [
+                i for i, d in enumerate(self._dots)
+                if d is None and not (sq_pos <= i <= sq_pos + 1)
+            ]
+            if empties:
+                # Deterministic empty-cell choice from the tick — avoids
+                # importing `random` and keeps frame output reproducible
+                # for tests.
+                self._dots[empties[self._tick % len(empties)]] = 0
 
-        # Pile (left of tree side). Capped visual + suffix on overflow.
-        if pile_count <= self._PILE_MAX:
-            pile = self._NUT * pile_count
-        else:
-            pile = self._NUT * self._PILE_MAX + f"+{pile_count - self._PILE_MAX}"
-        pile = pile.ljust(self._PILE_MAX)
+        # 4. Render the walkway cells.
+        cells = [" "] * self._WALKWAY
+        for i, d in enumerate(self._dots):
+            if d is not None:
+                cells[i] = self._FALL[d]
+        sq_glyph = self._SQ_R if going_right else self._SQ_L
+        cells[sq_pos] = sq_glyph[0]
+        if sq_pos + 1 < self._WALKWAY:
+            cells[sq_pos + 1] = sq_glyph[1]
+        walkway = "".join(cells)
 
-        # Stash (right of walkway).
-        stash = self._NUT * min(stash_count, self._STASH_MAX)
-        if stash_count > self._STASH_MAX:
-            stash += f"+{stash_count - self._STASH_MAX}"
+        # 5. Pile: single block-element cell scaled by completed count;
+        #    overflow shows "+N" badge.
+        idx = min(pile_count, len(self._PILE_GLYPHS) - 1)
+        pile = self._PILE_GLYPHS[idx]
+        if pile_count > len(self._PILE_GLYPHS) - 1:
+            pile += f"+{pile_count - (len(self._PILE_GLYPHS) - 1)}"
 
-        return f"{self._TREE} {pile} {walkway} {stash}"
+        return f"{self._TREE}{pile} {walkway}"
 
 
 # Per-node status icons. ASCII fallbacks would be nicer for legacy
@@ -302,7 +334,12 @@ class TerminalRenderer:
             # Move cursor up and clear from there to end of screen.
             self._stream.write(f"\033[{self._last_lines_drawn}A\033[J")
 
-        self._stream.write("\n".join(lines))
+        # Trailing newline so the cursor lands one row below the last
+        # rendered line. `_last_lines_drawn = len(lines)` then matches
+        # the number of rows we need to move up next time — without the
+        # trailing newline the cursor stays on the last row and we'd
+        # over-shoot by one each cycle, scrolling the output up.
+        self._stream.write("\n".join(lines) + "\n")
         self._stream.flush()
         self._last_lines_drawn = len(lines)
 

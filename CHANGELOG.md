@@ -3,6 +3,28 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.4] — squirrel scene rebuild + cursor-positioning fix
+
+### Fixed
+
+- **Live renderer scrolled up the screen** instead of redrawing in
+  place. `"\n".join(lines)` left the cursor on the last row with N-1
+  newlines; the next render's `ESC[N A` moved up one too many, so
+  each cycle leaked a row at the top. Now writes a trailing newline
+  so the cursor lands one row below the last line and `_last_lines_drawn`
+  matches the move-up count exactly.
+
+### Changed
+
+- **`SquirrelScene` rebuilt** to match the intended visual model:
+  - Squirrel glyph swapped to `🬢🭠` (right) / `🭠🬢` (left).
+  - Walkway is a per-column state machine. Each cell is either empty,
+    mid-fall (`⠁ → ⠂ → ⠄`), or landed (`⡀`). The squirrel consumes
+    landed nuts under its 2-cell footprint as it walks. New fallers
+    spawn into empty cells to keep walkway density ~ `stash_count`.
+  - Pile compressed to a single vertically-filling cell using block
+    elements (`▁▂▃▄▅▆▇█`), with `+N` badge on overflow.
+
 ## [0.4.3] — walking-squirrel aliveness scene
 
 ### Added
