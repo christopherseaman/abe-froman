@@ -3,6 +3,20 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.11] — mascot is now a hamster (Blink renders it full-width)
+
+### Changed
+
+- **Mascot swapped from squirrel 🐿 to hamster 🐹.** The squirrel
+  emoji (U+1F43F) sits in a one-codepoint gap in Blink's terminal
+  (react-hterm) wide-character table — its rodent range ends at
+  U+1F43E and the next entry is U+1F440, so Blink boxes the squirrel
+  at one cell while the font paints two, overdrawing the right half
+  (the "half squirrel"). U+1F439 (hamster) is inside Blink's covered
+  range, so it gets a proper two-cell box. The 0.4.10 width fix was
+  correct for the renderer but couldn't compensate for the terminal's
+  own table gap. `MascotScene` / `_MASCOT` renamed accordingly.
+
 ## [0.4.10] — emoji width fix (squirrel no longer clipped in half)
 
 ### Fixed
