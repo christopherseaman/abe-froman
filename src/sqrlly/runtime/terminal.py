@@ -69,6 +69,8 @@ class SquirrelScene:
     """
 
     _WALKWAY = 40
+    _SPAWN_INTERVAL = 4    # ticks between spawns (4 × 100ms = 2.5 dots/s)
+    _DOTS_CAP = 6          # max concurrent nuts on the walkway
 
     _TREE = "🌳"
     _SQ_L = "🬢🭠"           # left-facing squirrel glyph pair
@@ -124,10 +126,12 @@ class SquirrelScene:
         # target == sq_pos → consume happens below; no movement.
 
     def frame(self, *, pile_count: int, stash_count: int) -> str:
-        # `pile_count` is accepted for interface stability; the scene
-        # no longer surfaces completion progress (the per-node grid
-        # does). It may earn a use later.
-        del pile_count
+        # `pile_count` and `stash_count` are accepted for interface
+        # stability; the scene is purely ambient flavor now. Spawn
+        # rate is constant (independent of workflow size), so a
+        # one-node workflow gets the same lively scene as a many-node
+        # one.
+        del pile_count, stash_count
 
         self._tick += 1
 
@@ -136,10 +140,11 @@ class SquirrelScene:
             if d is not None and d < 3:
                 self._dots[i] = d + 1
 
-        # 2. Spawn new fallers pseudorandomly until walkway population
-        #    matches stash_count. Reproducible: seeded RNG keyed on tick.
+        # 2. Spawn one new faller every SPAWN_INTERVAL ticks, capped
+        #    at DOTS_CAP concurrent on the walkway. Position chosen
+        #    pseudorandomly via a tick-seeded RNG (reproducible).
         on_screen = sum(1 for d in self._dots if d is not None)
-        if stash_count > 0 and on_screen < min(stash_count, self._WALKWAY - 2):
+        if self._tick % self._SPAWN_INTERVAL == 0 and on_screen < self._DOTS_CAP:
             empties = [
                 i for i, d in enumerate(self._dots)
                 if d is None and not (self._sq_pos <= i <= self._sq_pos + 1)

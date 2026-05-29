@@ -3,6 +3,18 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.7] — constant-rate dot spawn (decouple from workflow size)
+
+### Changed
+
+- **Dots spawn at a constant rate** — one every 4 ticks (~2.5/s),
+  capped at 6 concurrent on the walkway. The previous stash-gated
+  rate meant single-node workflows only ever saw one dot; the scene
+  is purely ambient flavor, not a literal per-node nut counter, so
+  the cap is now decoupled from workflow size.
+- `pile_count` and `stash_count` both kept in `SquirrelScene.frame()`
+  for interface stability but neither now affects output.
+
 ## [0.4.6] — scene gets its own line, wider walkway, direction tiebreaker
 
 ### Changed

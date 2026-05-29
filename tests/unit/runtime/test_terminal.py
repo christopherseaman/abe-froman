@@ -208,26 +208,31 @@ class TestSquirrelScene:
                 seen_left = True
         assert seen_right and seen_left
 
-    def test_dots_appear_when_stash_present(self):
-        """When stash > 0, fall-state glyphs (⠁/⠂/⠄/⡀) populate
-        the walkway over time."""
+    def test_dots_appear_during_run(self):
+        """Dots spawn at a constant rate during a run, regardless of
+        stash_count — the scene is ambient flavor, not a literal
+        per-node nut counter."""
         s = SquirrelScene()
         seen_fall = set()
         for _ in range(24):
-            f = s.frame(pile_count=0, stash_count=3)
+            f = s.frame(pile_count=0, stash_count=0)   # stash=0 must not gate
             for g in ("⠁", "⠂", "⠄", "⡀"):
                 if g in f:
                     seen_fall.add(g)
         assert "⠁" in seen_fall    # at least one freshly spawned
         assert "⡀" in seen_fall    # at least one landed
 
-    def test_no_dots_when_stash_zero(self):
-        """An empty stash leaves the walkway free of falling nuts."""
+    def test_dot_count_capped(self):
+        """Concurrent dots cap at DOTS_CAP — squirrel can't catch up
+        in tests so the cap is the natural ceiling."""
         s = SquirrelScene()
-        for _ in range(12):
-            f = s.frame(pile_count=2, stash_count=0)
-            for g in ("⠁", "⠂", "⠄", "⡀"):
-                assert g not in f
+        max_dots = 0
+        for _ in range(120):
+            f = s.frame(pile_count=0, stash_count=0)
+            # Total nut glyphs in frame (any state)
+            total = sum(f.count(g) for g in ("⠁", "⠂", "⠄", "⡀"))
+            max_dots = max(max_dots, total)
+        assert max_dots <= SquirrelScene._DOTS_CAP
 
     def test_squirrel_seeks_landed_dots(self):
         """When a dot lands at a specific column, the squirrel moves
