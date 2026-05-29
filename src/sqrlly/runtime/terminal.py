@@ -30,10 +30,19 @@ from sqrlly.schema.models import Graph
 
 def _char_width(ch: str) -> int:
     """Terminal columns a character occupies: 0 for combining marks and
-    variation selectors, 2 for East-Asian Wide/Fullwidth (incl. most
-    emoji), 1 otherwise."""
+    variation selectors (incl. U+FE0F), 2 for emoji and East-Asian
+    Wide/Fullwidth, 1 otherwise.
+
+    `east_asian_width` alone is unreliable for emoji — pictographs like
+    🐿 (U+1F43F) and 🌳 (U+1F333) report Neutral yet every terminal
+    draws them double-width. Counting the emoji blocks explicitly keeps
+    width accounting in step with what the terminal actually renders;
+    a mismatch pushes the right half of a glyph off the screen edge."""
     if unicodedata.combining(ch) or unicodedata.category(ch) in ("Mn", "Cf"):
         return 0
+    o = ord(ch)
+    if 0x1F300 <= o <= 0x1FAFF or 0x2600 <= o <= 0x27BF:
+        return 2
     return 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
 
 
@@ -258,9 +267,11 @@ class TerminalRenderer:
 
         # Render state
         self._spinner_idx = 0           # per-node braille tick (running indicator)
-        # Walkway fits the terminal at startup ("🌳 " = 3 cols of margin),
-        # so the scene line doesn't wrap on narrow screens (e.g. phone SSH).
-        scene_walkway = min(SquirrelScene._WALKWAY, self._term_width() - 3)
+        # Walkway fits the terminal at startup ("🌳 " = 3 cols of margin
+        # + 1 trailing col so a double-width squirrel at the right end
+        # never touches the last column, which some terminals wrap), so
+        # the scene line doesn't wrap on narrow screens (e.g. phone SSH).
+        scene_walkway = min(SquirrelScene._WALKWAY, self._term_width() - 4)
         self._scene = SquirrelScene(walkway=scene_walkway)
         self._tick_task: asyncio.Task | None = None
         self._last_lines_drawn = 0

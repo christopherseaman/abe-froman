@@ -258,6 +258,13 @@ class TestSquirrelScene:
         )
         assert decreases >= 1
 
+    def test_emoji_glyphs_count_as_two_columns(self):
+        """Regression: the terminal draws 🐿️ and 🌳 double-width. If
+        width accounting reports 1, the squirrel's right half runs off
+        the screen edge and only the left half renders."""
+        assert _display_width(SquirrelScene._SQUIRREL) == 2
+        assert _display_width(SquirrelScene._TREE) == 2
+
     def test_scene_respects_custom_walkway(self):
         """Walkway sizes to the value passed (renderer feeds it the
         terminal width); scene line stays within tree-margin + walkway."""
