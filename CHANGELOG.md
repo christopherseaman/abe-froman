@@ -3,6 +3,27 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.15] — fail loud: broken gates + unreadable manifests halt
+
+Follow-up to the agent audit — never fail silently. **Behavior change:**
+two previously-silent paths now halt loudly.
+
+### Changed
+
+- **A gate validator that can't produce a score halts the run** instead
+  of recording `score=0.0`. Raises `EvaluationError` (caught by the CLI
+  → clean `Error:` message, non-zero exit) when the validator is
+  missing, exits non-zero, or emits output with no parseable score. A
+  valid score — including a legitimate `0.0` — is still a normal
+  verdict, so quality gates are unaffected; only *broken* validators
+  change behavior.
+- **A declared `fan_out.manifest_path` that is missing or invalid JSON
+  halts** (`ManifestError`) rather than silently fanning out over zero
+  items. An empty-but-valid manifest is not an error: it logs a warning
+  and routes to the existing `no_items` target(s).
+
+New exceptions live in `runtime/result.py`.
+
 ## [0.4.14] — skill-doc gaps + gate/fan-out robustness (from agent audit)
 
 A sub-agent driving sqrlly with only the installed skill surfaced these.
