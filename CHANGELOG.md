@@ -3,6 +3,27 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.13] — `sqrlly init --skill` + install/skill docs
+
+### Added
+
+- **`sqrlly init --skill`** installs the agent skill doc into a working
+  repo at `.agents/skills/sqrlly/SKILL.md` so a coding agent
+  auto-discovers how to author and run workflows. Repo-aware (writes at
+  the git top-level even when invoked from a subdirectory) and reports
+  the path written. The skill text is the repo-root `SKILLS.md`,
+  `force-include`d into the wheel as `sqrlly/_skill.md` — single source,
+  so pipx/pip installs with no repo on disk get the exact same doc.
+
+### Changed
+
+- **SKILLS.md** gained a Prerequisites section (install one-liner +
+  per-transport backend/auth — `claude` on PATH + `claude /login` for
+  `cli`, the npm adapter for `acp`) and a `sqrlly init` bootstrap tip.
+- **README** documents `uv add` / `uvx` install paths alongside
+  pip/pipx, labels the base install "CLI backend" (was the vague
+  "core"), and points agent users at `sqrlly init --skill`.
+
 ## [0.4.12] — block-art squirrel mascot with restored left/right facing
 
 ### Changed
