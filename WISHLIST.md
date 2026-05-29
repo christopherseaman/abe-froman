@@ -428,17 +428,61 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
 
 ## Sharing readiness (surfaced 2026-05-27, post-0.3.x publish)
 
-- [ ] **`sqrlly init <dir>`** — scaffold a minimal runnable workflow
-  (one prompt node + a basic gate + a `settings.presets` block) into
-  the target directory. The current friction for someone landing via
-  `pipx install sqrlly`: the README quickstart references
-  `examples/jokes/workflow.yaml`, which doesn't exist on their disk
-  without a `git clone`. An `init` command lets them paste a single
-  shell line and have a working workflow they can edit in place. Two
-  shapes worth considering: (a) `--template jokes` etc. to scaffold
-  from the existing examples, (b) a single minimal default if no
-  template is named. ~50–100 LOC + a fixtures dir baked into the
-  wheel.
+- [x] **`sqrlly init <dir>`** — _delivered 0.4.0._ Scaffolds
+  `workflow.yaml` + `prompts/hello.md` with a CLI-transport default
+  preset. Embedded strings in `cli/init.py`; refuses to clobber an
+  existing workflow.yaml. README's Quickstart leads with the init
+  flow. Future: `--template <name>` for richer starting points (jokes,
+  pipeline, fan-out).
+
+- [ ] **Live terminal workflow state + aliveness indicator** —
+  surface node-level events to the terminal as `sqrlly run`
+  proceeds. Today the run is mostly silent until completion (or
+  produces sparse per-line output); a user can't tell whether
+  anything's making progress vs. the workflow is hung.
+
+  The JSONL event stream already emits everything needed
+  (`workflow_start`, `node_completed`, `gate_evaluated`,
+  `node_retried`, `node_failed`, `workflow_end`); the missing piece
+  is a terminal renderer subscribing to the same source as
+  `JsonlLogger`. **Workflow events, not LLM-token streaming** — sqrlly
+  does not surface per-model-token output and has no plans to.
+
+  Shape:
+  - A per-node status line ("waiting / running / passed / retrying /
+    failed") updated in place via TTY ANSI escapes.
+  - A small aliveness indicator (animated unicode glyph, ~100ms tick
+    — something like the Symbols-for-Legacy-Computing blocks) so the
+    user can see the workflow is alive vs. hung.
+  - TTY-aware: skip animation when stdout is piped or redirected;
+    fall through to plain per-line output for log-friendly capture.
+  - Honors a possible `--quiet` / `--verbose` flag; the existing
+    silent default could become opt-out.
+
+  Implementation sketch: new `runtime/terminal.py` with a class
+  subscribing to the same event source `JsonlLogger` already
+  consumes. ~150–250 LOC including TTY detection + color via
+  `click.style`. No backend-layer changes; the contract between
+  `PromptBackend.send_prompt` and its callers stays as-is.
+
+- [ ] **ASCII box-art workflow viz (`sqrlly graph --ascii`)** —
+  terminal-renderable alternative to the current Mermaid output for
+  SSH sessions, PR-description snapshots, and environments where the
+  HTML viewer isn't reachable.
+
+  Topology shapes vary — linear chains, DAGs with `depends_on`,
+  route ladders, fan-out parents with branches, subgraph references.
+  Simple cases (linear, small DAG) render cleanly; complex cases
+  (deep nesting + fan-out) may degrade to a less-useful tall layout.
+
+  Implementation options:
+  - (a) custom renderer in `compile/graph.py::draw_ascii()` — full
+    control, scope-bounded
+  - (b) shell out to `graph-easy` (Perl; common but not universal)
+  - (c) generate via `graphviz` → ASCII export
+
+  Lower priority than live progress above; complementary —
+  progress shows runtime state, viz shows topology.
 
 ## Forward-looking — surfaced during 2026-04-18 architecture plan
 
