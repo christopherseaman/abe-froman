@@ -3,6 +3,27 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.5] — foraging squirrel: glyphs corrected + pile dropped
+
+### Changed
+
+- **Squirrel glyphs corrected** — `🬢🭠` is left-facing, `🭕🬖` is
+  right-facing (had been swapped).
+- **Pile representation dropped from the scene.** Completion progress
+  reads from the per-node status grid below; doubling it up in the
+  header was redundant. The scene becomes pure flavor + aliveness.
+- **Squirrel now seeks the nearest landed nut** instead of walking
+  fixed back-and-forth — direction is determined by where work has
+  fallen, making movement feel purposeful. When no dots are present
+  the squirrel wiggles in place so the aliveness contract still
+  holds.
+- **Pseudorandom spawn positions** along the walkway via a
+  tick-seeded RNG (reproducible for tests). Replaces the
+  modulo-empties spacing of 0.4.4.
+
+`pile_count` is still accepted in `SquirrelScene.frame()` for
+interface stability but no longer affects output.
+
 ## [0.4.4] — squirrel scene rebuild + cursor-positioning fix
 
 ### Fixed

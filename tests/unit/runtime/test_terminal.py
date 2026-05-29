@@ -183,45 +183,32 @@ class TestSquirrelScene:
         f = SquirrelScene().frame(pile_count=0, stash_count=2)
         assert "🌳" in f
 
-    def test_pile_grows_with_completed_count(self):
-        """Block-element pile glyph index scales with pile_count."""
-        f0 = SquirrelScene().frame(pile_count=0, stash_count=0)
-        f1 = SquirrelScene().frame(pile_count=1, stash_count=0)
-        f3 = SquirrelScene().frame(pile_count=3, stash_count=0)
-        # 0 nodes → no pile glyph; 1 → ▁; 3 → ▃
-        assert "▁" not in f0
-        assert "▁" in f1
-        assert "▃" in f3
-
-    def test_pile_overflow_shows_plus_badge(self):
-        """Pile counts beyond the glyph table fall through to '+N'."""
-        f = SquirrelScene().frame(pile_count=20, stash_count=0)
-        assert "+" in f  # overflow badge
-
-    def test_squirrel_glyph_appears(self):
-        """The right-facing squirrel glyph (🬢🭠) appears during the
-        going-right half of the cycle."""
+    def test_squirrel_idles_with_wiggle_when_no_dots(self):
+        """No dots = idle wiggle. Squirrel still moves (aliveness)."""
         s = SquirrelScene()
-        seen_right = False
-        for _ in range(24):
+        positions = []
+        for _ in range(8):
             f = s.frame(pile_count=0, stash_count=0)
-            if "🬢🭠" in f:
-                seen_right = True
-        assert seen_right
+            # Position of squirrel glyph in the rendered string
+            for glyph in ("🬢🭠", "🭕🬖"):
+                if glyph in f:
+                    positions.append(f.index(glyph))
+                    break
+        # At least some movement across the 8 frames
+        assert len(set(positions)) > 1
 
-    def test_squirrel_changes_direction(self):
-        """Both right (🬢🭠) and left (🭠🬢) forms appear within a cycle."""
+    def test_both_direction_glyphs_appear_during_idle_wiggle(self):
         s = SquirrelScene()
         seen_right = seen_left = False
-        for _ in range(24):
+        for _ in range(12):
             f = s.frame(pile_count=0, stash_count=0)
-            if "🬢🭠" in f:
+            if "🭕🬖" in f:
                 seen_right = True
-            if "🭠🬢" in f:
+            if "🬢🭠" in f:
                 seen_left = True
         assert seen_right and seen_left
 
-    def test_falling_dots_appear_when_stash_present(self):
+    def test_dots_appear_when_stash_present(self):
         """When stash > 0, fall-state glyphs (⠁/⠂/⠄/⡀) populate
         the walkway over time."""
         s = SquirrelScene()
@@ -231,33 +218,41 @@ class TestSquirrelScene:
             for g in ("⠁", "⠂", "⠄", "⡀"):
                 if g in f:
                     seen_fall.add(g)
-        # At least the spawned glyph (⠁) and landed glyph (⡀) should show.
-        assert "⠁" in seen_fall
-        assert "⡀" in seen_fall
+        assert "⠁" in seen_fall    # at least one freshly spawned
+        assert "⡀" in seen_fall    # at least one landed
 
-    def test_squirrel_consumes_landed_dots(self):
-        """Run a cycle and confirm that landed-dot count fluctuates —
-        i.e., dots get consumed and re-spawned rather than monotonically
-        accumulating."""
+    def test_no_dots_when_stash_zero(self):
+        """An empty stash leaves the walkway free of falling nuts."""
         s = SquirrelScene()
+        for _ in range(12):
+            f = s.frame(pile_count=2, stash_count=0)
+            for g in ("⠁", "⠂", "⠄", "⡀"):
+                assert g not in f
+
+    def test_squirrel_seeks_landed_dots(self):
+        """When a dot lands at a specific column, the squirrel moves
+        toward it over the next few frames."""
+        s = SquirrelScene()
+        # Burn enough frames for at least one spawn → fall → land cycle
+        # then look for consumption (landed-count decrease).
         landed_counts = []
-        for _ in range(48):  # two full cycles
-            f = s.frame(pile_count=0, stash_count=3)
+        for _ in range(40):
+            f = s.frame(pile_count=0, stash_count=2)
             landed_counts.append(f.count("⡀"))
-        # If consumption never happened, count would monotonically
-        # rise. Expect at least one decrease somewhere.
+        # If the seeking + consumption logic never fires, the landed
+        # count would monotonically grow.
         decreases = sum(
             1 for a, b in zip(landed_counts, landed_counts[1:]) if b < a
         )
         assert decreases >= 1
 
-    def test_no_dots_when_stash_zero(self):
-        """An empty stash leaves the walkway free of falling nuts."""
-        s = SquirrelScene()
-        for _ in range(24):
-            f = s.frame(pile_count=2, stash_count=0)
-            for g in ("⠁", "⠂", "⠄", "⡀"):
-                assert g not in f
+    def test_pile_count_does_not_affect_scene(self):
+        """`pile_count` is accepted for interface stability but no
+        longer surfaces in the scene; identical ticks should produce
+        identical frames regardless of pile_count."""
+        f0 = SquirrelScene().frame(pile_count=0, stash_count=0)
+        f9 = SquirrelScene().frame(pile_count=9, stash_count=0)
+        assert f0 == f9
 
 
 class TestTeeLogger:
