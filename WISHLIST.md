@@ -453,7 +453,17 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
     failed") updated in place via TTY ANSI escapes.
   - A small aliveness indicator (animated unicode glyph, ~100ms tick
     — something like the Symbols-for-Legacy-Computing blocks) so the
-    user can see the workflow is alive vs. hung.
+    user can see the workflow is alive vs. hung. **Themed candidate:**
+    a sqrlly-aligned mini-scene — a squirrel walking between a pile
+    of nuts (completed nodes) and loose nuts (pending), ferrying one
+    at a time; bonus a tree on the side that drops fresh nuts when
+    new work enters the queue. Pile size could double as a progress
+    indicator (`pile == completed_nodes`). Animation frames tied to
+    *real events* (node enters running → squirrel walks out;
+    completes → returns to pile) rather than a clock tick give the
+    indicator structural meaning beyond aliveness. Frame design,
+    character choices, and "tree" feasibility are bikeshedding — to
+    revisit at impl time.
   - TTY-aware: skip animation when stdout is piped or redirected;
     fall through to plain per-line output for log-friendly capture.
   - Honors a possible `--quiet` / `--verbose` flag; the existing
