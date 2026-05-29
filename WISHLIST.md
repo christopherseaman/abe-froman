@@ -435,11 +435,16 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
   flow. Future: `--template <name>` for richer starting points (jokes,
   pipeline, fan-out).
 
-- [ ] **Live terminal workflow state + aliveness indicator** —
-  surface node-level events to the terminal as `sqrlly run`
-  proceeds. Today the run is mostly silent until completion (or
-  produces sparse per-line output); a user can't tell whether
-  anything's making progress vs. the workflow is hung.
+- [x] **Live terminal workflow state + aliveness indicator** —
+  _delivered 0.4.2 (renderer scaffold) + 0.4.3 (squirrel scene)._
+  `runtime/terminal.py::TerminalRenderer` + `SquirrelScene`. Auto-
+  enables on TTY; `--quiet` to suppress. Per-node status grid plus a
+  walking-squirrel header scene with pile/stash sized from event
+  state. Known limitation: route-only workflows (no `depends_on`)
+  show all nodes as "running" from start — heuristic uses
+  `depends_on` only. Future work to track route-based flow.
+
+  Original spec retained below as the design source-of-truth.
 
   The JSONL event stream already emits everything needed
   (`workflow_start`, `node_completed`, `gate_evaluated`,

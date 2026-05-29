@@ -13,7 +13,7 @@ from types import MethodType
 
 import pytest
 
-from sqrlly.runtime.terminal import TeeLogger, TerminalRenderer
+from sqrlly.runtime.terminal import SquirrelScene, TeeLogger, TerminalRenderer
 from sqrlly.schema.models import (
     Execute,
     LlmPreset,
@@ -176,6 +176,64 @@ class TestRenderingOutput:
         assert "passed" in out
         assert "running" in out  # beta after alpha completes
         assert "T" in out  # workflow name in header
+
+
+class TestSquirrelScene:
+    def test_frame_returns_consistent_width_string(self):
+        s = SquirrelScene()
+        # Repeated calls should produce strings of similar visual length.
+        frames = [s.frame(pile_count=0, stash_count=3) for _ in range(24)]
+        widths = {len(f) for f in frames}
+        # Within ±2 characters across a cycle (squirrel position varies).
+        assert max(widths) - min(widths) <= 2
+
+    def test_frame_contains_tree_glyph(self):
+        f = SquirrelScene().frame(pile_count=0, stash_count=2)
+        assert "🌳" in f
+
+    def test_pile_grows_with_completed_count(self):
+        # Two fresh scenes at the same tick — squirrel position
+        # identical; only the pile count differs, so the total `●`
+        # count is a reliable comparison.
+        f0 = SquirrelScene().frame(pile_count=0, stash_count=0)
+        f3 = SquirrelScene().frame(pile_count=3, stash_count=0)
+        assert f3.count("●") == f0.count("●") + 3
+
+    def test_squirrel_walks(self):
+        """Successive frames at the same state should show the squirrel
+        in different positions (clock-driven aliveness)."""
+        s = SquirrelScene()
+        # Sample 4 frames at a steady state — squirrel positions should
+        # not be identical across all of them.
+        frames = [s.frame(pile_count=2, stash_count=2) for _ in range(4)]
+        assert len(set(frames)) > 1
+
+    def test_carrying_state_on_return_trip(self):
+        s = SquirrelScene()
+        # Tick through one full cycle and look at the right-facing vs
+        # left-facing characters in the strip. The "going_left" frames
+        # should show ●< (carrying), the "going_right" frames >○ (empty).
+        going_right_frames = []
+        going_left_frames = []
+        for _ in range(24):
+            f = s.frame(pile_count=0, stash_count=2)
+            if ">○" in f:
+                going_right_frames.append(f)
+            if "●<" in f:
+                going_left_frames.append(f)
+        assert len(going_right_frames) > 0
+        assert len(going_left_frames) > 0
+
+    def test_no_carrying_when_stash_empty(self):
+        """If the stash is empty, the squirrel has nothing to carry —
+        the left-facing frame should still show the empty form."""
+        s = SquirrelScene()
+        seen_loaded = False
+        for _ in range(24):
+            f = s.frame(pile_count=5, stash_count=0)
+            if "●<" in f:
+                seen_loaded = True
+        assert not seen_loaded
 
 
 class TestTeeLogger:

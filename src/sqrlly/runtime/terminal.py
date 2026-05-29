@@ -32,6 +32,87 @@ _SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
 _TICK_SECONDS = 0.1
 
+
+class BrailleSpinner:
+    """A simple rotating braille spinner. Aliveness only; no state."""
+
+    def __init__(self) -> None:
+        self._idx = 0
+
+    def frame(self, *, pile_count: int, stash_count: int) -> str:
+        self._idx = (self._idx + 1) % len(_SPINNER_FRAMES)
+        return _SPINNER_FRAMES[self._idx]
+
+
+class SquirrelScene:
+    """A walking squirrel ferrying nuts between a stash and a pile.
+
+    The squirrel walks back and forth on a fixed-width walkway between
+    a `stash` of loose nuts (right — pending/running nodes) and a
+    `pile` on the left (completed nodes). Walking is clock-driven —
+    the squirrel keeps moving regardless of workflow activity, so a
+    long-running node still shows life. Pile and stash sizes are
+    event-driven, set fresh on each frame from the renderer's state.
+
+    The squirrel "carries" a nut on the return trip (visualized as
+    holding a nut glyph), enriching the metaphor without complicating
+    the state machine.
+    """
+
+    _CYCLE = 24            # ticks per round trip (~2.4s at 100ms tick)
+    _WALKWAY = 14          # visible walkway cell width
+    _PILE_MAX = 8          # pile cap before falling back to "●●●●●●●●+N"
+    _STASH_MAX = 5         # stash cap
+
+    _TREE = "🌳"
+    _NUT = "●"
+    _SQ_R = ">○"           # right-facing squirrel without nut
+    _SQ_L = "○<"           # left-facing squirrel
+    _SQ_R_NUT = ">●"       # right-facing squirrel carrying a nut
+    _SQ_L_NUT = "●<"       # left-facing squirrel carrying a nut
+
+    def __init__(self) -> None:
+        self._tick = 0
+
+    def frame(self, *, pile_count: int, stash_count: int) -> str:
+        self._tick = (self._tick + 1) % self._CYCLE
+        half = self._CYCLE // 2
+        going_right = self._tick < half
+
+        # Position 0..WALKWAY-1 → walking right; back down → walking left.
+        if going_right:
+            pos = (self._tick * (self._WALKWAY - 1)) // (half - 1)
+        else:
+            pos = ((self._CYCLE - 1 - self._tick) * (self._WALKWAY - 1)) // (half - 1)
+        pos = max(0, min(pos, self._WALKWAY - 2))  # leave room for 2-char squirrel
+
+        # Squirrel carries a nut on the return trip (going_left + stash > 0).
+        carrying = (not going_right) and stash_count > 0
+        if going_right:
+            squirrel = self._SQ_R
+        else:
+            squirrel = self._SQ_L_NUT if carrying else self._SQ_L
+
+        walkway_chars = list(" " * self._WALKWAY)
+        walkway_chars[pos] = squirrel[0]
+        walkway_chars[pos + 1] = squirrel[1]
+        walkway = "".join(walkway_chars)
+
+        # Pile (left of tree side). Capped visual + suffix on overflow.
+        if pile_count <= self._PILE_MAX:
+            pile = self._NUT * pile_count
+        else:
+            pile = self._NUT * self._PILE_MAX + f"+{pile_count - self._PILE_MAX}"
+        pile = pile.ljust(self._PILE_MAX)
+
+        # Stash (right of walkway).
+        stash = self._NUT * min(stash_count, self._STASH_MAX)
+        if stash_count > self._STASH_MAX:
+            stash += f"+{stash_count - self._STASH_MAX}"
+
+        return f"{self._TREE} {pile} {walkway} {stash}"
+
+
 # Per-node status icons. ASCII fallbacks would be nicer for legacy
 # terminals; defer that polish to a future iteration.
 _ICONS: dict[str, str] = {
@@ -80,7 +161,8 @@ class TerminalRenderer:
         self._end_state: str | None = None  # None | "done" | "failed"
 
         # Render state
-        self._spinner_idx = 0
+        self._spinner_idx = 0           # per-node braille tick (running indicator)
+        self._scene = SquirrelScene()   # header aliveness scene
         self._tick_task: asyncio.Task | None = None
         self._last_lines_drawn = 0
         self._closed = False
@@ -176,16 +258,18 @@ class TerminalRenderer:
             return "running"
         return "waiting"
 
-    def _header_line(self, spinner: str) -> str:
+    def _header_line(self) -> str:
         if self._end_state == "done":
             elapsed = (self._ended_at or 0) - (self._started_at or 0)
             return f"sqrlly · {self._config.name}  done in {elapsed:.1f}s"
         if self._end_state == "failed":
             return f"sqrlly · {self._config.name}  failed"
-        return (
-            f"sqrlly · {self._config.name} "
-            f"({len(self._node_ids)} nodes)  {spinner}"
-        )
+        # Live: name + walking squirrel scene tied to current state.
+        pile = len(self._completed)
+        failed = len(self._failed)
+        stash = max(0, len(self._node_ids) - pile - failed)
+        scene = self._scene.frame(pile_count=pile, stash_count=stash)
+        return f"sqrlly · {self._config.name}  {scene}"
 
     def _node_line(self, node_id: str, spinner: str) -> str:
         status = self._node_status(node_id)
@@ -211,7 +295,7 @@ class TerminalRenderer:
         if not self._enabled:
             return
         spinner = _SPINNER_FRAMES[self._spinner_idx]
-        lines = [self._header_line(spinner), ""]
+        lines = [self._header_line(), ""]
         lines.extend(self._node_line(n, spinner) for n in self._node_ids)
 
         if self._last_lines_drawn > 0:

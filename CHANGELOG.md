@@ -3,6 +3,24 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.3] — walking-squirrel aliveness scene
+
+### Added
+
+- **`SquirrelScene`** in `runtime/terminal.py` — replaces the simple
+  braille spinner in the live renderer's header. A squirrel walks
+  back and forth on a fixed-width walkway between a pile of nuts (on
+  the left, sized by completed nodes) and a stash (on the right,
+  sized by pending/running nodes). The walking is clock-driven
+  aliveness (~100 ms tick) so a long node still shows motion; the
+  pile/stash sizes are event-driven from workflow state. On the
+  return trip the squirrel carries a nut (visualized as `●<`),
+  enriching the metaphor without complicating the state machine.
+
+The per-node tick spinner (braille) and overall renderer architecture
+are unchanged — `SquirrelScene` is a pluggable replacement for the
+header glyph behind the existing interface.
+
 ## [0.4.2] — live terminal renderer
 
 ### Added
