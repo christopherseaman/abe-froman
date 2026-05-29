@@ -8,21 +8,18 @@ to state correctly and the TTY/non-TTY branches do the right thing.
 """
 from __future__ import annotations
 
+import re
 from io import StringIO
 from types import MethodType
 
 import pytest
 
-import re
-
 from sqrlly.runtime.terminal import (
-    SquirrelScene,
+    MascotScene,
     TeeLogger,
     TerminalRenderer,
     _display_width,
 )
-
-_ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 from sqrlly.schema.models import (
     Execute,
     LlmPreset,
@@ -30,6 +27,8 @@ from sqrlly.schema.models import (
     Node,
     Settings,
 )
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 
 def _config(node_specs: list[tuple[str, list[str]]]) -> Graph:
@@ -187,28 +186,28 @@ class TestRenderingOutput:
         assert "T" in out  # workflow name in header
 
 
-class TestSquirrelScene:
+class TestMascotScene:
     def test_frame_contains_tree_glyph(self):
-        f = SquirrelScene().frame(pile_count=0, stash_count=2)
+        f = MascotScene().frame(pile_count=0, stash_count=2)
         assert "🌳" in f
 
-    def test_squirrel_idles_with_wiggle_when_no_dots(self):
-        """No dots = idle wiggle. Squirrel still moves (aliveness)."""
-        s = SquirrelScene()
+    def test_mascot_idles_with_wiggle_when_no_dots(self):
+        """No dots = idle wiggle. Mascot still moves (aliveness)."""
+        s = MascotScene()
         positions = []
         for _ in range(8):
             f = s.frame(pile_count=0, stash_count=0)
-            assert SquirrelScene._SQUIRREL in f
-            positions.append(f.index(SquirrelScene._SQUIRREL))
+            assert MascotScene._MASCOT in f
+            positions.append(f.index(MascotScene._MASCOT))
         # At least some movement across the 8 frames
         assert len(set(positions)) > 1
 
-    def test_squirrel_moves_both_directions_during_idle_wiggle(self):
+    def test_mascot_moves_both_directions_during_idle_wiggle(self):
         """The emoji mascot is single-facing, but the idle wiggle still
         moves it left AND right (position deltas of both signs)."""
-        s = SquirrelScene()
+        s = MascotScene()
         positions = [
-            s.frame(pile_count=0, stash_count=0).index(SquirrelScene._SQUIRREL)
+            s.frame(pile_count=0, stash_count=0).index(MascotScene._MASCOT)
             for _ in range(12)
         ]
         deltas = [b - a for a, b in zip(positions, positions[1:])]
@@ -219,7 +218,7 @@ class TestSquirrelScene:
         """Dots spawn at a constant rate during a run, regardless of
         stash_count — the scene is ambient flavor, not a literal
         per-node nut counter."""
-        s = SquirrelScene()
+        s = MascotScene()
         seen_fall = set()
         for _ in range(24):
             f = s.frame(pile_count=0, stash_count=0)   # stash=0 must not gate
@@ -230,21 +229,21 @@ class TestSquirrelScene:
         assert "⡀" in seen_fall    # at least one landed
 
     def test_dot_count_capped(self):
-        """Concurrent dots cap at DOTS_CAP — squirrel can't catch up
+        """Concurrent dots cap at DOTS_CAP — mascot can't catch up
         in tests so the cap is the natural ceiling."""
-        s = SquirrelScene()
+        s = MascotScene()
         max_dots = 0
         for _ in range(120):
             f = s.frame(pile_count=0, stash_count=0)
             # Total nut glyphs in frame (any state)
             total = sum(f.count(g) for g in ("⠁", "⠂", "⠄", "⡀"))
             max_dots = max(max_dots, total)
-        assert max_dots <= SquirrelScene._DOTS_CAP
+        assert max_dots <= MascotScene._DOTS_CAP
 
-    def test_squirrel_seeks_landed_dots(self):
-        """When a dot lands at a specific column, the squirrel moves
+    def test_mascot_seeks_landed_dots(self):
+        """When a dot lands at a specific column, the mascot moves
         toward it over the next few frames."""
-        s = SquirrelScene()
+        s = MascotScene()
         # Burn enough frames for at least one spawn → fall → land cycle
         # then look for consumption (landed-count decrease).
         landed_counts = []
@@ -259,30 +258,30 @@ class TestSquirrelScene:
         assert decreases >= 1
 
     def test_emoji_glyphs_count_as_two_columns(self):
-        """Regression: the terminal draws 🐿️ and 🌳 double-width. If
-        width accounting reports 1, the squirrel's right half runs off
+        """Regression: the terminal draws 🐹 and 🌳 double-width. If
+        width accounting reports 1, the mascot's right half runs off
         the screen edge and only the left half renders."""
-        assert _display_width(SquirrelScene._SQUIRREL) == 2
-        assert _display_width(SquirrelScene._TREE) == 2
+        assert _display_width(MascotScene._MASCOT) == 2
+        assert _display_width(MascotScene._TREE) == 2
 
     def test_scene_respects_custom_walkway(self):
         """Walkway sizes to the value passed (renderer feeds it the
         terminal width); scene line stays within tree-margin + walkway."""
-        s = SquirrelScene(walkway=12)
+        s = MascotScene(walkway=12)
         assert s._walkway == 12
         f = s.frame(pile_count=0, stash_count=2)
         assert _display_width(f) <= 3 + 12   # "🌳 " margin + 12 cells
 
     def test_walkway_has_a_floor(self):
         """Absurdly narrow requests clamp to the minimum, never 0/negative."""
-        assert SquirrelScene(walkway=2)._walkway == SquirrelScene._MIN_WALKWAY
+        assert MascotScene(walkway=2)._walkway == MascotScene._MIN_WALKWAY
 
     def test_pile_count_does_not_affect_scene(self):
         """`pile_count` is accepted for interface stability but no
         longer surfaces in the scene; identical ticks should produce
         identical frames regardless of pile_count."""
-        f0 = SquirrelScene().frame(pile_count=0, stash_count=0)
-        f9 = SquirrelScene().frame(pile_count=9, stash_count=0)
+        f0 = MascotScene().frame(pile_count=0, stash_count=0)
+        f9 = MascotScene().frame(pile_count=9, stash_count=0)
         assert f0 == f9
 
 

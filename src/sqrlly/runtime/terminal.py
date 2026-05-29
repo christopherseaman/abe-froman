@@ -34,10 +34,10 @@ def _char_width(ch: str) -> int:
     Wide/Fullwidth, 1 otherwise.
 
     `east_asian_width` alone is unreliable for emoji — pictographs like
-    🐿 (U+1F43F) and 🌳 (U+1F333) report Neutral yet every terminal
-    draws them double-width. Counting the emoji blocks explicitly keeps
-    width accounting in step with what the terminal actually renders;
-    a mismatch pushes the right half of a glyph off the screen edge."""
+    🐹 (U+1F439) and 🌳 (U+1F333) report Neutral yet terminals draw them
+    double-width. Counting the emoji blocks explicitly keeps width
+    accounting in step with what the terminal actually renders; a
+    mismatch pushes the right half of a glyph off the screen edge."""
     if unicodedata.combining(ch) or unicodedata.category(ch) in ("Mn", "Cf"):
         return 0
     o = ord(ch)
@@ -85,10 +85,10 @@ class BrailleSpinner:
         return _SPINNER_FRAMES[self._idx]
 
 
-class SquirrelScene:
-    """A foraging squirrel under a tree, gathering falling nuts.
+class MascotScene:
+    """A foraging mascot (a hamster) under a tree, gathering falling nuts.
 
-    Layout: ``🌳 [walkway with falling nuts and a seeking squirrel]``
+    Layout: ``🌳 [walkway with falling nuts and a seeking mascot]``
 
     Each walkway cell is a per-column state machine:
 
@@ -100,10 +100,11 @@ class SquirrelScene:
 
     Nuts fall into pseudorandom walkway cells at a rate proportional to
     ``stash_count`` — `(tick, position)` is seeded so the spawn pattern
-    is reproducible for tests. The squirrel moves one cell per tick
+    is reproducible for tests. The mascot moves one cell per tick
     toward the nearest landed nut; when none exists it wiggles in
-    place so the aliveness contract still holds. Direction (left vs.
-    right glyph) follows the most recent movement step.
+    place so the aliveness contract still holds. The emoji is
+    single-facing, so the tracked direction only drives the seeking
+    tiebreaker below, not the glyph.
 
     The pile concept is gone — completion progress is read from the
     per-node status grid below the scene, not duplicated in the header.
@@ -115,8 +116,13 @@ class SquirrelScene:
     _DOTS_CAP = 6          # max concurrent nuts on the walkway
 
     _TREE = "🌳"
-    _SQUIRREL = "🐿️"        # only Unicode squirrel that renders in Nerd Fonts
-                            # (via OS emoji fallback); single-facing, 2 cells wide
+    # Hamster, not the squirrel 🐿 (U+1F43F): Blink's terminal (react-hterm)
+    # has a one-codepoint gap in its wide-char table exactly at 0x1F43F
+    # (its rodent range ends at 0x1F43E, the next entry is 0x1F440), so it
+    # boxes the squirrel at 1 cell while the font paints 2 → the right half
+    # gets overdrawn. 🐹 (U+1F439) is inside the covered range, so it gets a
+    # proper 2-cell box everywhere. Single-facing, 2 cells wide.
+    _MASCOT = "🐹"
     _FALL = ["⠁", "⠂", "⠄", "⡀"]   # in-place fall progression
 
     def __init__(self, walkway: int | None = None) -> None:
@@ -127,12 +133,12 @@ class SquirrelScene:
         self._facing_right = True
 
     def _nearest_landed(self) -> int | None:
-        """Index of the nearest landed nut to the squirrel's position,
+        """Index of the nearest landed nut to the mascot's position,
         or None if no nuts are landed.
 
-        Direction the squirrel is currently facing acts as a tiebreaker:
+        Direction the mascot is currently moving acts as a tiebreaker:
         among equally-distant nuts, the one in the facing direction
-        wins. Means a moving squirrel doesn't reverse course unless
+        wins. Means a moving mascot doesn't reverse course unless
         the nut behind it is strictly closer.
         """
         landed = [i for i, d in enumerate(self._dots) if d == 3]
@@ -153,7 +159,7 @@ class SquirrelScene:
         """Move one cell toward `target`, or wiggle when target is None."""
         if target is None:
             # Idle wiggle: oscillate left/right every few ticks. Keeps
-            # the squirrel visibly alive when nothing has fallen yet.
+            # the mascot visibly alive when nothing has fallen yet.
             wiggle = 1 if (self._tick // 3) % 2 == 0 else -1
             new_pos = self._sq_pos + wiggle
             if 0 <= new_pos <= self._walkway - 2:
@@ -197,10 +203,10 @@ class SquirrelScene:
                 rng = random.Random(self._tick * 1009)
                 self._dots[rng.choice(empties)] = 0
 
-        # 3. Move squirrel toward nearest landed nut (or wiggle).
+        # 3. Move mascot toward nearest landed nut (or wiggle).
         self._step_toward(self._nearest_landed())
 
-        # 4. Consume any landed dot under the squirrel's 2-cell footprint.
+        # 4. Consume any landed dot under the mascot's 2-cell footprint.
         for offset in (0, 1):
             p = self._sq_pos + offset
             if 0 <= p < self._walkway and self._dots[p] == 3:
@@ -211,7 +217,7 @@ class SquirrelScene:
         for i, d in enumerate(self._dots):
             if d is not None:
                 cells[i] = self._FALL[d]
-        cells[self._sq_pos] = self._SQUIRREL
+        cells[self._sq_pos] = self._MASCOT
         if self._sq_pos + 1 < self._walkway:
             cells[self._sq_pos + 1] = ""   # emoji spans 2 cols; drop the slot
 
@@ -268,11 +274,11 @@ class TerminalRenderer:
         # Render state
         self._spinner_idx = 0           # per-node braille tick (running indicator)
         # Walkway fits the terminal at startup ("🌳 " = 3 cols of margin
-        # + 1 trailing col so a double-width squirrel at the right end
+        # + 1 trailing col so a double-width mascot at the right end
         # never touches the last column, which some terminals wrap), so
         # the scene line doesn't wrap on narrow screens (e.g. phone SSH).
-        scene_walkway = min(SquirrelScene._WALKWAY, self._term_width() - 4)
-        self._scene = SquirrelScene(walkway=scene_walkway)
+        scene_walkway = min(MascotScene._WALKWAY, self._term_width() - 4)
+        self._scene = MascotScene(walkway=scene_walkway)
         self._tick_task: asyncio.Task | None = None
         self._last_lines_drawn = 0
         self._closed = False
@@ -382,7 +388,7 @@ class TerminalRenderer:
 
     def _scene_line(self) -> str:
         """The aliveness scene on its own line. Empty after end_state
-        is reached so the squirrel doesn't continue acting after the
+        is reached so the mascot doesn't continue acting after the
         workflow stopped — line count stays stable for redraw."""
         if self._end_state is not None:
             return ""
