@@ -189,24 +189,22 @@ class TestSquirrelScene:
         positions = []
         for _ in range(8):
             f = s.frame(pile_count=0, stash_count=0)
-            # Position of squirrel glyph in the rendered string
-            for glyph in ("🬢🭠", "🭕🬖"):
-                if glyph in f:
-                    positions.append(f.index(glyph))
-                    break
+            assert SquirrelScene._SQUIRREL in f
+            positions.append(f.index(SquirrelScene._SQUIRREL))
         # At least some movement across the 8 frames
         assert len(set(positions)) > 1
 
-    def test_both_direction_glyphs_appear_during_idle_wiggle(self):
+    def test_squirrel_moves_both_directions_during_idle_wiggle(self):
+        """The emoji mascot is single-facing, but the idle wiggle still
+        moves it left AND right (position deltas of both signs)."""
         s = SquirrelScene()
-        seen_right = seen_left = False
-        for _ in range(12):
-            f = s.frame(pile_count=0, stash_count=0)
-            if "🭕🬖" in f:
-                seen_right = True
-            if "🬢🭠" in f:
-                seen_left = True
-        assert seen_right and seen_left
+        positions = [
+            s.frame(pile_count=0, stash_count=0).index(SquirrelScene._SQUIRREL)
+            for _ in range(12)
+        ]
+        deltas = [b - a for a, b in zip(positions, positions[1:])]
+        assert any(d > 0 for d in deltas)   # moved right at some point
+        assert any(d < 0 for d in deltas)   # moved left at some point
 
     def test_dots_appear_during_run(self):
         """Dots spawn at a constant rate during a run, regardless of

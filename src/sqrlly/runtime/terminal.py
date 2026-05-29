@@ -73,8 +73,8 @@ class SquirrelScene:
     _DOTS_CAP = 6          # max concurrent nuts on the walkway
 
     _TREE = "🌳"
-    _SQ_L = "🬢🭠"           # left-facing squirrel glyph pair
-    _SQ_R = "🭕🬖"           # right-facing squirrel glyph pair
+    _SQUIRREL = "🐿️"        # only Unicode squirrel that renders in Nerd Fonts
+                            # (via OS emoji fallback); single-facing, 2 cells wide
     _FALL = ["⠁", "⠂", "⠄", "⡀"]   # in-place fall progression
 
     def __init__(self) -> None:
@@ -168,10 +168,9 @@ class SquirrelScene:
         for i, d in enumerate(self._dots):
             if d is not None:
                 cells[i] = self._FALL[d]
-        sq_glyph = self._SQ_R if self._facing_right else self._SQ_L
-        cells[self._sq_pos] = sq_glyph[0]
+        cells[self._sq_pos] = self._SQUIRREL
         if self._sq_pos + 1 < self._WALKWAY:
-            cells[self._sq_pos + 1] = sq_glyph[1]
+            cells[self._sq_pos + 1] = ""   # emoji spans 2 cols; drop the slot
 
         return f"{self._TREE} {''.join(cells)}"
 
