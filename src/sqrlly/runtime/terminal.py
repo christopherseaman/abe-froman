@@ -68,7 +68,7 @@ class SquirrelScene:
     per-node status grid below the scene, not duplicated in the header.
     """
 
-    _WALKWAY = 18
+    _WALKWAY = 40
 
     _TREE = "🌳"
     _SQ_L = "🬢🭠"           # left-facing squirrel glyph pair
@@ -83,11 +83,26 @@ class SquirrelScene:
 
     def _nearest_landed(self) -> int | None:
         """Index of the nearest landed nut to the squirrel's position,
-        or None if no nuts are landed."""
+        or None if no nuts are landed.
+
+        Direction the squirrel is currently facing acts as a tiebreaker:
+        among equally-distant nuts, the one in the facing direction
+        wins. Means a moving squirrel doesn't reverse course unless
+        the nut behind it is strictly closer.
+        """
         landed = [i for i, d in enumerate(self._dots) if d == 3]
         if not landed:
             return None
-        return min(landed, key=lambda i: abs(i - self._sq_pos))
+
+        def key(i: int) -> tuple[int, int]:
+            dist = abs(i - self._sq_pos)
+            if self._facing_right:
+                same_dir_tier = 0 if i >= self._sq_pos else 1
+            else:
+                same_dir_tier = 0 if i <= self._sq_pos else 1
+            return (dist, same_dir_tier)
+
+        return min(landed, key=key)
 
     def _step_toward(self, target: int | None) -> None:
         """Move one cell toward `target`, or wiggle when target is None."""
@@ -307,12 +322,18 @@ class TerminalRenderer:
             return f"sqrlly · {self._config.name}  done in {elapsed:.1f}s"
         if self._end_state == "failed":
             return f"sqrlly · {self._config.name}  failed"
-        # Live: name + walking squirrel scene tied to current state.
+        return f"sqrlly · {self._config.name}"
+
+    def _scene_line(self) -> str:
+        """The aliveness scene on its own line. Empty after end_state
+        is reached so the squirrel doesn't continue acting after the
+        workflow stopped — line count stays stable for redraw."""
+        if self._end_state is not None:
+            return ""
         pile = len(self._completed)
         failed = len(self._failed)
         stash = max(0, len(self._node_ids) - pile - failed)
-        scene = self._scene.frame(pile_count=pile, stash_count=stash)
-        return f"sqrlly · {self._config.name}  {scene}"
+        return self._scene.frame(pile_count=pile, stash_count=stash)
 
     def _node_line(self, node_id: str, spinner: str) -> str:
         status = self._node_status(node_id)
@@ -338,7 +359,7 @@ class TerminalRenderer:
         if not self._enabled:
             return
         spinner = _SPINNER_FRAMES[self._spinner_idx]
-        lines = [self._header_line(), ""]
+        lines = [self._header_line(), self._scene_line(), ""]
         lines.extend(self._node_line(n, spinner) for n in self._node_ids)
 
         if self._last_lines_drawn > 0:

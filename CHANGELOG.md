@@ -3,6 +3,23 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.6] — scene gets its own line, wider walkway, direction tiebreaker
+
+### Changed
+
+- **Scene moved to its own line** — workflow name on the header line,
+  walking-squirrel scene immediately below, blank, then per-node
+  grid. Reads cleaner and gives the scene room to breathe.
+- **Walkway widened to 40 cells** (was 18). More room for the
+  squirrel to roam and more dots visible at once.
+- **Direction tiebreaker on seeking** — when two landed nuts are
+  equally distant from the squirrel, the one in its current facing
+  direction wins. A moving squirrel doesn't reverse course unless a
+  nut behind it is strictly closer.
+- **Scene line goes blank after `workflow_end`** so the squirrel
+  doesn't continue acting after the workflow has stopped; line count
+  stays stable for redraw.
+
 ## [0.4.5] — foraging squirrel: glyphs corrected + pile dropped
 
 ### Changed
