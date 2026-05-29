@@ -13,7 +13,16 @@ from types import MethodType
 
 import pytest
 
-from sqrlly.runtime.terminal import SquirrelScene, TeeLogger, TerminalRenderer
+import re
+
+from sqrlly.runtime.terminal import (
+    SquirrelScene,
+    TeeLogger,
+    TerminalRenderer,
+    _display_width,
+)
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 from sqrlly.schema.models import (
     Execute,
     LlmPreset,
@@ -249,6 +258,18 @@ class TestSquirrelScene:
         )
         assert decreases >= 1
 
+    def test_scene_respects_custom_walkway(self):
+        """Walkway sizes to the value passed (renderer feeds it the
+        terminal width); scene line stays within tree-margin + walkway."""
+        s = SquirrelScene(walkway=12)
+        assert s._walkway == 12
+        f = s.frame(pile_count=0, stash_count=2)
+        assert _display_width(f) <= 3 + 12   # "🌳 " margin + 12 cells
+
+    def test_walkway_has_a_floor(self):
+        """Absurdly narrow requests clamp to the minimum, never 0/negative."""
+        assert SquirrelScene(walkway=2)._walkway == SquirrelScene._MIN_WALKWAY
+
     def test_pile_count_does_not_affect_scene(self):
         """`pile_count` is accepted for interface stability but no
         longer surfaces in the scene; identical ticks should produce
@@ -256,6 +277,29 @@ class TestSquirrelScene:
         f0 = SquirrelScene().frame(pile_count=0, stash_count=0)
         f9 = SquirrelScene().frame(pile_count=9, stash_count=0)
         assert f0 == f9
+
+
+class TestNarrowTerminal:
+    def test_render_clips_every_line_to_terminal_width(self):
+        """Regression: on a narrow terminal no rendered line may exceed
+        the width. A wider line wraps to a second physical row, which
+        desyncs the cursor-up redraw count and scrolls the display down
+        every tick (observed over phone SSH)."""
+        stream = _tty(StringIO())
+        r = TerminalRenderer(
+            _config([("a_very_long_node_identifier_indeed", [])]),
+            stream=stream,
+        )
+        r._term_width = lambda: 24   # simulate a phone-width terminal
+        r.emit({"event": "workflow_start",
+                "workflow": "A Rather Long Workflow Name", "version": "0.1"})
+        for _ in range(3):
+            r._render()
+        printed = [
+            _ANSI.sub("", ln) for ln in stream.getvalue().split("\n")
+        ]
+        assert any(printed)  # something was drawn
+        assert all(_display_width(p) <= 24 for p in printed)
 
 
 class TestTeeLogger:

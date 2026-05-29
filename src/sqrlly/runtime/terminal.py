@@ -18,12 +18,44 @@ with a `JsonlLogger` via `TeeLogger`).
 from __future__ import annotations
 
 import asyncio
+import shutil
 import sys
 import time
+import unicodedata
 from typing import IO, Any
 
 from sqrlly.runtime.logging import _emit_update_events
 from sqrlly.schema.models import Graph
+
+
+def _char_width(ch: str) -> int:
+    """Terminal columns a character occupies: 0 for combining marks and
+    variation selectors, 2 for East-Asian Wide/Fullwidth (incl. most
+    emoji), 1 otherwise."""
+    if unicodedata.combining(ch) or unicodedata.category(ch) in ("Mn", "Cf"):
+        return 0
+    return 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+
+
+def _display_width(s: str) -> int:
+    return sum(_char_width(c) for c in s)
+
+
+def _clip(s: str, width: int) -> str:
+    """Truncate ``s`` so its display width never exceeds ``width`` —
+    keeps each rendered line on a single physical row so the
+    cursor-up redraw count stays accurate on narrow terminals."""
+    if width <= 0:
+        return ""
+    out: list[str] = []
+    used = 0
+    for ch in s:
+        cw = _char_width(ch)
+        if used + cw > width:
+            break
+        out.append(ch)
+        used += cw
+    return "".join(out)
 
 # Braille spinner — well-supported in modern terminals, low visual
 # noise, 10 frames at 100ms → 1Hz overall rotation that reads as
@@ -68,7 +100,8 @@ class SquirrelScene:
     per-node status grid below the scene, not duplicated in the header.
     """
 
-    _WALKWAY = 40
+    _WALKWAY = 40         # default; shrinks to fit narrow terminals
+    _MIN_WALKWAY = 8
     _SPAWN_INTERVAL = 4    # ticks between spawns (4 × 100ms = 2.5 dots/s)
     _DOTS_CAP = 6          # max concurrent nuts on the walkway
 
@@ -77,10 +110,11 @@ class SquirrelScene:
                             # (via OS emoji fallback); single-facing, 2 cells wide
     _FALL = ["⠁", "⠂", "⠄", "⡀"]   # in-place fall progression
 
-    def __init__(self) -> None:
+    def __init__(self, walkway: int | None = None) -> None:
+        self._walkway = max(self._MIN_WALKWAY, walkway or self._WALKWAY)
         self._tick = 0
-        self._dots: list[int | None] = [None] * self._WALKWAY
-        self._sq_pos = self._WALKWAY // 2
+        self._dots: list[int | None] = [None] * self._walkway
+        self._sq_pos = self._walkway // 2
         self._facing_right = True
 
     def _nearest_landed(self) -> int | None:
@@ -113,12 +147,12 @@ class SquirrelScene:
             # the squirrel visibly alive when nothing has fallen yet.
             wiggle = 1 if (self._tick // 3) % 2 == 0 else -1
             new_pos = self._sq_pos + wiggle
-            if 0 <= new_pos <= self._WALKWAY - 2:
+            if 0 <= new_pos <= self._walkway - 2:
                 self._sq_pos = new_pos
                 self._facing_right = wiggle > 0
             return
         if target > self._sq_pos:
-            self._sq_pos = min(self._sq_pos + 1, self._WALKWAY - 2)
+            self._sq_pos = min(self._sq_pos + 1, self._walkway - 2)
             self._facing_right = True
         elif target < self._sq_pos:
             self._sq_pos = max(self._sq_pos - 1, 0)
@@ -160,16 +194,16 @@ class SquirrelScene:
         # 4. Consume any landed dot under the squirrel's 2-cell footprint.
         for offset in (0, 1):
             p = self._sq_pos + offset
-            if 0 <= p < self._WALKWAY and self._dots[p] == 3:
+            if 0 <= p < self._walkway and self._dots[p] == 3:
                 self._dots[p] = None
 
         # 5. Render walkway.
-        cells = [" "] * self._WALKWAY
+        cells = [" "] * self._walkway
         for i, d in enumerate(self._dots):
             if d is not None:
                 cells[i] = self._FALL[d]
         cells[self._sq_pos] = self._SQUIRREL
-        if self._sq_pos + 1 < self._WALKWAY:
+        if self._sq_pos + 1 < self._walkway:
             cells[self._sq_pos + 1] = ""   # emoji spans 2 cols; drop the slot
 
         return f"{self._TREE} {''.join(cells)}"
@@ -224,10 +258,17 @@ class TerminalRenderer:
 
         # Render state
         self._spinner_idx = 0           # per-node braille tick (running indicator)
-        self._scene = SquirrelScene()   # header aliveness scene
+        # Walkway fits the terminal at startup ("🌳 " = 3 cols of margin),
+        # so the scene line doesn't wrap on narrow screens (e.g. phone SSH).
+        scene_walkway = min(SquirrelScene._WALKWAY, self._term_width() - 3)
+        self._scene = SquirrelScene(walkway=scene_walkway)
         self._tick_task: asyncio.Task | None = None
         self._last_lines_drawn = 0
         self._closed = False
+
+    @staticmethod
+    def _term_width() -> int:
+        return shutil.get_terminal_size(fallback=(80, 24)).columns
 
     # ---- Logger interface (matches JsonlLogger) ----
 
@@ -365,6 +406,12 @@ class TerminalRenderer:
         spinner = _SPINNER_FRAMES[self._spinner_idx]
         lines = [self._header_line(), self._scene_line(), ""]
         lines.extend(self._node_line(n, spinner) for n in self._node_ids)
+
+        # Clip to terminal width so no logical line wraps to a second
+        # physical row — otherwise the cursor-up count below under-shoots
+        # on narrow terminals and the display scrolls down each redraw.
+        width = self._term_width()
+        lines = [_clip(ln, width) for ln in lines]
 
         if self._last_lines_drawn > 0:
             # Move cursor up and clear from there to end of screen.
