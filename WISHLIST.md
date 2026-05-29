@@ -451,19 +451,20 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
   Shape:
   - A per-node status line ("waiting / running / passed / retrying /
     failed") updated in place via TTY ANSI escapes.
-  - A small aliveness indicator (animated unicode glyph, ~100ms tick
-    — something like the Symbols-for-Legacy-Computing blocks) so the
-    user can see the workflow is alive vs. hung. **Themed candidate:**
-    a sqrlly-aligned mini-scene — a squirrel walking between a pile
-    of nuts (completed nodes) and loose nuts (pending), ferrying one
-    at a time; bonus a tree on the side that drops fresh nuts when
-    new work enters the queue. Pile size could double as a progress
-    indicator (`pile == completed_nodes`). Animation frames tied to
-    *real events* (node enters running → squirrel walks out;
-    completes → returns to pile) rather than a clock tick give the
-    indicator structural meaning beyond aliveness. Frame design,
-    character choices, and "tree" feasibility are bikeshedding — to
-    revisit at impl time.
+  - A small aliveness indicator: a clock-driven animation
+    (~100 ms tick) running continuously so a long node — a slow
+    model call, a stuck subprocess — still shows motion. **Themed
+    candidate:** a sqrlly-aligned mini-scene of a squirrel walking
+    between a pile of nuts (left) and loose nuts (right). The
+    *squirrel's walk* is clock-driven aliveness — back and forth
+    independent of events. *Event-driven overlays* on the same scene
+    carry structural meaning: a nut falls into the loose pile when a
+    node enters waiting/running, gets added to the left pile on
+    `node_completed`, gets eaten/dropped on `node_failed`. Bonus a
+    tree on the side that drops fresh nuts as new work is queued —
+    bikeshedding territory. The split matters: **aliveness keeps
+    ticking regardless of workflow activity; the rest of the scene
+    reflects actual state.**
   - TTY-aware: skip animation when stdout is piped or redirected;
     fall through to plain per-line output for log-friendly capture.
   - Honors a possible `--quiet` / `--verbose` flag; the existing
