@@ -3,6 +3,32 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.16] — gate parser tolerates LLM JSON wrapping + skill-doc fixes
+
+Second agent-audit pass.
+
+### Fixed
+
+- **LLM gate output is no longer falsely rejected.** The 0.4.15
+  fail-loud change halted on a validator response wrapped in a
+  ` ```json ` code fence or preceded by a reasoning preamble — exactly
+  what LLM gates emit by default. `_parse_evaluation_output` now
+  unwraps a code fence / extracts the embedded JSON object before
+  parsing; genuinely score-less output still halts loudly.
+- **Dimension-failure summary** rendered `accuracy=0.40>=0.8` (reads as
+  a false claim); now `accuracy=0.40 (min 0.8)`.
+
+### Changed
+
+- **SKILLS.md corrections:** `fan_out.final_nodes` shown as inline node
+  definitions (was bare ids — a copy-paste validation error); documented
+  `dimensions`, `output_contract`, `timeout`, and the gate output
+  contract; clarified that in a git repo paths resolve from the repo
+  root (set `--workdir` to the root, not a subdir); documented
+  `base_url` + remote prompt URLs (gated by `allow_remote_urls` /
+  `allowed_url_hosts`; remote scripts/binaries unsupported); corrected
+  the `--log` event field description (`node`, not `node_id`).
+
 ## [0.4.15] — fail loud: broken gates + unreadable manifests halt
 
 Follow-up to the agent audit — never fail silently. **Behavior change:**

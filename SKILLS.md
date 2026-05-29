@@ -67,10 +67,30 @@ write a YAML file with `name`, `version`, `nodes`, and `settings`.
      threshold: 0.8
      blocking: true
      max_retries: 3
+     # dimensions:               # optional multi-criteria gate
+     #   - field: accuracy
+     #     threshold: 0.8
+     #   - field: clarity
+     #     threshold: 0.7
    ```
-   A script gate reads the node output on stdin and prints a score
-   (`0.85`) or a JSON object (`{"score": 0.6, "feedback": "..."}`).
-6. **Branch** with a `route:` block — an unconditional `goto:`, or a
+   The validator's **output contract**: print to stdout a bare number
+   (`0.85`) or a JSON object (`{"score": 0.6, "feedback": "..."}`); a
+   script gate reads the node output on stdin, exits 0. With
+   `dimensions`, the JSON carries one numeric field per dimension
+   (`{"accuracy": 0.9, "clarity": 0.6}`) and each is checked against its
+   own threshold. LLM (`.md`) gates return the same JSON — a surrounding
+   ``` code fence or reasoning preamble is tolerated. A validator that
+   **can't produce a score** (crashes, exits non-zero, or emits no
+   parseable score) halts the run loudly — distinct from a valid score
+   below threshold.
+6. **Node options** (any node): `timeout: 30` (seconds; the node is
+   killed and fails if it overruns) and `output_contract:` to assert a
+   node wrote files —
+   ```yaml
+   output_contract:
+     required_files: ["out/report.md"]   # node fails if missing after it runs
+   ```
+7. **Branch** with a `route:` block — an unconditional `goto:`, or a
    `cases:` / `else:` ladder of `when:` predicates:
    ```yaml
    route:
@@ -87,7 +107,7 @@ write a YAML file with `name`, `version`, `nodes`, and `settings`.
    dependency id (bound to its output), `state` (the full state dict),
    and `history` / `evals` (evaluation records); plus functions
    `passed(id)`, `score(id)`, and `scores(id)`.
-7. **Parallelize** with a `fan_out:` block — one branch per manifest
+8. **Parallelize** with a `fan_out:` block — one branch per manifest
    item, joined by `final_nodes`:
    ```yaml
    fan_out:
@@ -96,13 +116,21 @@ write a YAML file with `name`, `version`, `nodes`, and `settings`.
        execute:
          url: prompts/item.md     # rendered once per item
        # evaluation: ...          # optional: gate each branch
-     final_nodes: [summarize]     # run once after all branches join
+     final_nodes:                 # inline nodes; run once after all branches join
+       - id: summarize
+         name: Summarize
+         execute:
+           url: prompts/summarize.md
    ```
-   Each manifest item is a JSON **object**; its fields become template
-   variables (`{{id}}`, `{{name}}`, …). A bare string item is treated
-   as `{"id": "<string>"}`. The manifest may instead be produced at
-   run time as this node's JSON output, with `manifest_path` as the
-   static fallback.
+   `final_nodes` is a list of **inline node definitions** (each needs
+   `id` / `name` / `execute`), not a list of references to top-level
+   node ids. Each manifest item is a JSON **object**; its fields become
+   template variables (`{{id}}`, `{{name}}`, …). A bare string item is
+   treated as `{"id": "<string>"}`. The manifest may instead be produced
+   at run time as this node's JSON output, with `manifest_path` as the
+   static fallback (a *declared* manifest_path that's missing or invalid
+   JSON halts the run; an empty-but-valid manifest warns and skips the
+   fan-out).
 
 Do not guess field names. Every model is `extra="forbid"` — a typo'd
 key is a hard validation error. The exhaustive field reference is
@@ -123,13 +151,22 @@ node count plus advisory warnings. It does **not** check that every
 `execute.url` / `validator` file exists on disk — those surface at run
 time. `run` executes the workflow.
 
-**File resolution / git.** `execute.url` and `validator` paths resolve
-relative to `--workdir` (default the current directory). When the
+**File resolution / git.** Relative `execute.url` / `validator` paths
+resolve against `--workdir` (default the current directory). When the
 workdir is a git repo, runs execute inside a fresh git worktree of
-`HEAD`, so **commit your workflow and the files it references first**,
-and run from the repo root (a repo with no commits can't create a
-worktree). Outside a git repo, worktree isolation is off and paths
+`HEAD`, so paths resolve from the **repo root** — **commit your
+workflow and the files it references first**, set `--workdir` to the
+repo root (not a subdirectory), and write urls repo-root-relative
+(`examples/x/prompt.md`). A repo with no commits can't create a
+worktree. Outside a git repo, worktree isolation is off and paths
 resolve directly under `--workdir`.
+
+**Remote sources.** `settings.base_url` sets the base for relative
+urls — including an `http(s)://` base, which fetches **prompt
+templates** over the network (gated by `allow_remote_urls`,
+`allowed_url_hosts`, `url_headers`, `max_remote_fetch_bytes`). Remote
+**scripts/binaries** are not supported (they fail with a clear error;
+use `file://` paths for those).
 
 `run` flags: `--workdir/-w <dir>`, `--dry-run` (trace topology without
 executing), `--preset/-p <name>` (force a named preset as the default),
@@ -145,10 +182,13 @@ edges, so branch targets may appear as unconnected nodes.
 
 - Read the `--log` JSONL stream — events: `workflow_start`,
   `node_completed`, `node_failed`, `gate_evaluated`, `node_retried`,
-  `workflow_end`. Subgraph events are prefixed `parent::child`.
+  `workflow_end`. The node id is the `node` field (not `node_id`).
+  Subgraph events are prefixed `parent::child`. Note: events carry
+  status/score, not the node's full output text — capture that from the
+  node itself if you need it.
 - A failed `run` exits non-zero and lists the failed nodes.
 - A node that keeps retrying is failing its gate — inspect the
-  `gate_evaluated` events for the score and feedback.
+  `gate_evaluated` events for the `score` (and per-dimension `scores`).
 - `--dry-run` traces topology without calling backends or running
   scripts; use it to confirm the graph shape before a real run.
 - `--resume` restarts from the last checkpoint at
