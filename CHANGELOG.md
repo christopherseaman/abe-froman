@@ -3,6 +3,19 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.12] — block-art squirrel mascot with restored left/right facing
+
+### Changed
+
+- **Mascot is now a two-glyph block-art squirrel** (`▪▛` facing left,
+  `▜▪` facing right) instead of the hamster emoji. Built from Block
+  Elements (U+25AA + U+259B/U+259C) — each a deterministic 1-cell
+  glyph present in every font and outside Blink's wide-char table, so
+  the pair always occupies exactly 2 cells with no emoji-width
+  clipping. Two glyphs also restore the left/right facing (lost when
+  the mascot was a single-facing emoji): the squirrel now faces the
+  direction it moves.
+
 ## [0.4.11] — mascot is now a hamster (Blink renders it full-width)
 
 ### Changed
