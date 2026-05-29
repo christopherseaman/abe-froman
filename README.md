@@ -20,7 +20,7 @@ uvx sqrlly --help               # run once, no install
 As a project dependency:
 
 ```bash
-uv add sqrlly                   # core          (or: pip install sqrlly)
+uv add sqrlly                   # CLI backend    (or: pip install sqrlly)
 uv add "sqrlly[acp]"            # + ACP backend  (or: pip install "sqrlly[acp]")
 ```
 
