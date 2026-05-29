@@ -3,6 +3,19 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.10] — emoji width fix (squirrel no longer clipped in half)
+
+### Fixed
+
+- **Squirrel renders in full** — width accounting leaned on
+  `unicodedata.east_asian_width`, which reports the emoji glyphs
+  (🐿 U+1F43F, 🌳 U+1F333) as Neutral even though terminals draw them
+  double-width. The one-column under-count let the squirrel's right
+  half run off the screen edge, so only its left half showed.
+  `_char_width` now counts the emoji blocks as 2, and the walkway
+  leaves a one-column right margin so a double-width squirrel never
+  touches the last column (which some terminals wrap).
+
 ## [0.4.9] — narrow-terminal redraw fix + CI on Node 24
 
 ### Fixed
