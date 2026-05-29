@@ -605,6 +605,43 @@ class TestGateOutputParser:
         with pytest.raises(EvaluationError, match="unparseable"):
             _parse_evaluation_output("this is not json at all")
 
+    def test_fenced_json_is_unwrapped(self):
+        """LLM gates emit ```json fences by default — unwrap, don't halt."""
+        from sqrlly.runtime.gates import _parse_evaluation_output
+
+        raw = '```json\n{"score": 0.9, "feedback": "good"}\n```'
+        result = _parse_evaluation_output(raw)
+        assert result.score == 0.9
+        assert result.feedback == "good"
+
+    def test_unlabeled_fence_is_unwrapped(self):
+        from sqrlly.runtime.gates import _parse_evaluation_output
+
+        result = _parse_evaluation_output('```\n{"score": 0.4}\n```')
+        assert result.score == 0.4
+
+    def test_preamble_then_json_is_extracted(self):
+        """A reasoning preamble before the JSON object still parses."""
+        from sqrlly.runtime.gates import _parse_evaluation_output
+
+        raw = 'Here is my assessment of the output:\n{"score": 0.7}'
+        result = _parse_evaluation_output(raw)
+        assert result.score == 0.7
+
+    def test_fenced_with_preamble_is_extracted(self):
+        from sqrlly.runtime.gates import _parse_evaluation_output
+
+        raw = 'Let me evaluate.\n```json\n{"score": 0.55}\n```\nDone.'
+        result = _parse_evaluation_output(raw)
+        assert result.score == 0.55
+
+    def test_genuine_garbage_still_halts(self):
+        """Tolerance must not mask truly score-less output."""
+        from sqrlly.runtime.gates import _parse_evaluation_output
+
+        with pytest.raises(EvaluationError, match="unparseable"):
+            _parse_evaluation_output("the output looks great to me!")
+
     def test_missing_score_loud_failure(self):
         from sqrlly.runtime.gates import _parse_evaluation_output
 

@@ -2,12 +2,31 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from sqrlly.runtime.result import EvaluationError
+
+_CODE_FENCE_RE = re.compile(r"```(?:json|JSON)?\s*\n?(.*?)\n?```", re.DOTALL)
+
+
+def _extract_json(text: str) -> str:
+    """Pull a JSON object out of common LLM wrappings so a verdict still
+    parses: a Markdown code fence (```json … ```), or a JSON object
+    embedded in a reasoning preamble (first ``{`` … last ``}``). Returns
+    the candidate substring, or the original text when neither applies
+    (then the caller's ``json.loads`` decides — genuine garbage still
+    raises ``EvaluationError``)."""
+    fence = _CODE_FENCE_RE.search(text)
+    if fence:
+        return fence.group(1).strip()
+    start, end = text.find("{"), text.rfind("}")
+    if 0 <= start < end:
+        return text[start : end + 1]
+    return text
 from sqrlly.schema.models import Evaluation, OutputContract
 
 
@@ -138,7 +157,9 @@ def _parse_evaluation_output(
 
     Accepts: bare float (script gates only), JSON with "score", full
     feedback JSON, or multi-dimension JSON (numeric fields extracted as
-    dimension scores). Output that yields **no parseable score**
+    dimension scores). JSON wrapped in a ``` code fence or embedded in
+    a reasoning preamble is unwrapped first (LLM gates emit this by
+    default). Output that yields **no parseable score**
     (unparseable, not an object, non-numeric/missing "score") raises
     `EvaluationError` — a validator that can't produce a verdict halts
     the run loudly rather than masquerading as a 0.0 quality result.
@@ -152,8 +173,11 @@ def _parse_evaluation_output(
         except ValueError:
             pass
 
+    # Tolerate the common LLM wrappings (```json fences, reasoning
+    # preamble) before declaring the output unparseable — otherwise a
+    # legitimate verdict would trip the loud-halt path.
     try:
-        data = json.loads(stripped)
+        data = json.loads(_extract_json(stripped))
     except (json.JSONDecodeError, TypeError):
         raise EvaluationError(
             f"gate returned unparseable response (no numeric score): "
