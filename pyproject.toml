@@ -53,6 +53,12 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/sqrlly"]
 
+# Ship the agent skill doc inside the wheel so `sqrlly init --skill`
+# can install it for pipx/pip users with no repo on disk. Single
+# source: the repo-root SKILLS.md, copied to sqrlly/_skill.md at build.
+[tool.hatch.build.targets.wheel.force-include]
+"SKILLS.md" = "sqrlly/_skill.md"
+
 [tool.hatch.build.targets.sdist]
 # `.sqrlly/` is the foreman worktree pool — gitignored, but each
 # worktree carries a tracked `.env.example` that the `!.env.example`

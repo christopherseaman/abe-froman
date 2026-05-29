@@ -8,7 +8,7 @@ from typing import Any
 import click
 import yaml
 
-from sqrlly.cli.init import init_command
+from sqrlly.cli.init import init_command, init_skill
 from sqrlly.compile.graph import build_workflow_graph
 from sqrlly.compile.lint import collect_warnings
 from sqrlly.runtime.executor.dispatch import DispatchExecutor
@@ -65,9 +65,21 @@ def cli():
 
 @cli.command()
 @click.argument("directory", default=".", type=click.Path())
-def init(directory: str):
-    """Scaffold a minimal runnable workflow into DIRECTORY (default `.`)."""
-    init_command(directory)
+@click.option(
+    "--skill", is_flag=True,
+    help="Install the agent skill into <repo>/.agents/skills/sqrlly/ "
+         "instead of scaffolding a workflow.",
+)
+def init(directory: str, skill: bool):
+    """Scaffold a minimal runnable workflow into DIRECTORY (default `.`).
+
+    With --skill, install the sqrlly agent skill into the working repo
+    (repo-aware) so a coding agent auto-discovers it.
+    """
+    if skill:
+        init_skill(directory)
+    else:
+        init_command(directory)
 
 
 @cli.command()

@@ -1,15 +1,23 @@
-"""Tests for `sqrlly init` — workflow scaffolding."""
+"""Tests for `sqrlly init` — workflow scaffolding + skill install."""
 from __future__ import annotations
+
+import subprocess
+from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
 
+from sqrlly.cli.init import _load_skill_doc
 from sqrlly.cli.main import cli
 
 
 @pytest.fixture
 def runner() -> CliRunner:
     return CliRunner()
+
+
+def _git_init(path: Path) -> None:
+    subprocess.run(["git", "init", "-q", str(path)], check=True)
 
 
 class TestInit:
@@ -70,3 +78,60 @@ class TestInit:
         assert "sqrlly validate workflow.yaml" in result.output
         assert "sqrlly run workflow.yaml" in result.output
         assert f"cd {target}" in result.output
+
+
+class TestInitSkill:
+    def test_load_skill_doc_returns_real_doc(self):
+        """Loader resolves the canonical skill text (frontmatter + the
+        Prerequisites section we ship), via the source-tree fallback in
+        tests or the packaged resource in a wheel."""
+        doc = _load_skill_doc()
+        assert doc.startswith("---")
+        assert "name: sqrlly" in doc
+        assert "## Prerequisites" in doc
+
+    def test_skill_installs_to_agents_dir_and_reports_path(self, runner, tmp_path):
+        target = tmp_path / "proj"
+        target.mkdir()
+        result = runner.invoke(cli, ["init", "--skill", str(target)])
+        assert result.exit_code == 0
+        installed = target / ".agents" / "skills" / "sqrlly" / "SKILL.md"
+        assert installed.exists()
+        # Reports the path it wrote.
+        assert "Installed sqrlly skill" in result.output
+        assert str(installed.resolve()) in result.output
+        # Content is the canonical skill doc.
+        assert installed.read_text() == _load_skill_doc()
+
+    def test_skill_is_repo_aware_climbs_to_git_root(self, runner, tmp_path):
+        """Invoked against a subdirectory of a git repo, the skill lands
+        at the repo root's .agents/, not the subdirectory."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _git_init(repo)
+        sub = repo / "src" / "deep"
+        sub.mkdir(parents=True)
+        result = runner.invoke(cli, ["init", "--skill", str(sub)])
+        assert result.exit_code == 0
+        assert (repo / ".agents" / "skills" / "sqrlly" / "SKILL.md").exists()
+        assert not (sub / ".agents").exists()
+
+    def test_skill_refreshes_on_rerun(self, runner, tmp_path):
+        """Re-running overwrites (installs the current version) rather
+        than refusing — the skill install is idempotent."""
+        target = tmp_path / "proj"
+        target.mkdir()
+        installed = target / ".agents" / "skills" / "sqrlly" / "SKILL.md"
+        runner.invoke(cli, ["init", "--skill", str(target)])
+        installed.write_text("stale\n")
+        result = runner.invoke(cli, ["init", "--skill", str(target)])
+        assert result.exit_code == 0
+        assert installed.read_text() == _load_skill_doc()
+
+    def test_plain_init_still_scaffolds_workflow(self, runner, tmp_path):
+        """--skill is opt-in; bare init is unchanged."""
+        target = tmp_path / "wf"
+        result = runner.invoke(cli, ["init", str(target)])
+        assert result.exit_code == 0
+        assert (target / "workflow.yaml").exists()
+        assert not (target / ".agents").exists()
