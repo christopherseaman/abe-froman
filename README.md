@@ -14,13 +14,14 @@ For CLI use (recommended — isolated venv, doesn't touch your project's environ
 
 ```bash
 pipx install sqrlly             # or: uv tool install sqrlly
+uvx sqrlly --help               # run once, no install
 ```
 
 As a project dependency:
 
 ```bash
-pip install sqrlly             # core
-pip install "sqrlly[acp]"      # + ACP backend
+uv add sqrlly                   # core          (or: pip install sqrlly)
+uv add "sqrlly[acp]"            # + ACP backend  (or: pip install "sqrlly[acp]")
 ```
 
 LLM dispatch goes through Claude Code via one of two transports:
