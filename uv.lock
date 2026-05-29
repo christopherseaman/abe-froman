@@ -845,7 +845,7 @@ wheels = [
 
 [[package]]
 name = "sqrlly"
-version = "0.4.12"
+version = "0.4.13"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
