@@ -31,6 +31,15 @@ from sqrlly.schema.models import (
 _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 
+def _mascot_index(frame: str) -> int:
+    """Left-cell index of the 2-glyph mascot, whichever way it faces."""
+    for pair in (MascotScene._MASCOT_L, MascotScene._MASCOT_R):
+        i = frame.find(pair)
+        if i != -1:
+            return i
+    return -1
+
+
 def _config(node_specs: list[tuple[str, list[str]]]) -> Graph:
     """Helper: build a Graph from a list of (id, depends_on) tuples."""
     return Graph(
@@ -197,22 +206,27 @@ class TestMascotScene:
         positions = []
         for _ in range(8):
             f = s.frame(pile_count=0, stash_count=0)
-            assert MascotScene._MASCOT in f
-            positions.append(f.index(MascotScene._MASCOT))
+            i = _mascot_index(f)
+            assert i != -1
+            positions.append(i)
         # At least some movement across the 8 frames
         assert len(set(positions)) > 1
 
-    def test_mascot_moves_both_directions_during_idle_wiggle(self):
-        """The emoji mascot is single-facing, but the idle wiggle still
-        moves it left AND right (position deltas of both signs)."""
+    def test_mascot_faces_and_moves_both_directions_during_idle_wiggle(self):
+        """Idle wiggle moves the mascot left AND right, and the glyph
+        flips to the matching facing pair — the restored two-facing
+        block-art mascot."""
         s = MascotScene()
-        positions = [
-            s.frame(pile_count=0, stash_count=0).index(MascotScene._MASCOT)
-            for _ in range(12)
-        ]
+        positions, seen_left, seen_right = [], False, False
+        for _ in range(12):
+            f = s.frame(pile_count=0, stash_count=0)
+            positions.append(_mascot_index(f))
+            seen_left |= MascotScene._MASCOT_L in f
+            seen_right |= MascotScene._MASCOT_R in f
         deltas = [b - a for a, b in zip(positions, positions[1:])]
         assert any(d > 0 for d in deltas)   # moved right at some point
         assert any(d < 0 for d in deltas)   # moved left at some point
+        assert seen_left and seen_right     # both facing pairs drawn
 
     def test_dots_appear_during_run(self):
         """Dots spawn at a constant rate during a run, regardless of
@@ -257,11 +271,12 @@ class TestMascotScene:
         )
         assert decreases >= 1
 
-    def test_emoji_glyphs_count_as_two_columns(self):
-        """Regression: the terminal draws 🐹 and 🌳 double-width. If
-        width accounting reports 1, the mascot's right half runs off
-        the screen edge and only the left half renders."""
-        assert _display_width(MascotScene._MASCOT) == 2
+    def test_mascot_and_tree_occupy_two_cells(self):
+        """Each facing pair is two 1-col block glyphs (= 2 cells); the
+        tree emoji is one 2-col glyph. Both must measure 2 so the grid
+        layout and the clip math line up."""
+        assert _display_width(MascotScene._MASCOT_L) == 2
+        assert _display_width(MascotScene._MASCOT_R) == 2
         assert _display_width(MascotScene._TREE) == 2
 
     def test_scene_respects_custom_walkway(self):

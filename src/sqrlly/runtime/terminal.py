@@ -86,9 +86,9 @@ class BrailleSpinner:
 
 
 class MascotScene:
-    """A foraging mascot (a hamster) under a tree, gathering falling nuts.
+    """A foraging squirrel (block-art) under a tree, gathering falling nuts.
 
-    Layout: ``🌳 [walkway with falling nuts and a seeking mascot]``
+    Layout: ``🌳 [walkway with falling nuts and a seeking squirrel]``
 
     Each walkway cell is a per-column state machine:
 
@@ -102,9 +102,9 @@ class MascotScene:
     ``stash_count`` — `(tick, position)` is seeded so the spawn pattern
     is reproducible for tests. The mascot moves one cell per tick
     toward the nearest landed nut; when none exists it wiggles in
-    place so the aliveness contract still holds. The emoji is
-    single-facing, so the tracked direction only drives the seeking
-    tiebreaker below, not the glyph.
+    place so the aliveness contract still holds. The tracked direction
+    drives both the seeking tiebreaker below and which facing pair
+    (_MASCOT_L / _MASCOT_R) is drawn.
 
     The pile concept is gone — completion progress is read from the
     per-node status grid below the scene, not duplicated in the header.
@@ -116,13 +116,15 @@ class MascotScene:
     _DOTS_CAP = 6          # max concurrent nuts on the walkway
 
     _TREE = "🌳"
-    # Hamster, not the squirrel 🐿 (U+1F43F): Blink's terminal (react-hterm)
-    # has a one-codepoint gap in its wide-char table exactly at 0x1F43F
-    # (its rodent range ends at 0x1F43E, the next entry is 0x1F440), so it
-    # boxes the squirrel at 1 cell while the font paints 2 → the right half
-    # gets overdrawn. 🐹 (U+1F439) is inside the covered range, so it gets a
-    # proper 2-cell box everywhere. Single-facing, 2 cells wide.
-    _MASCOT = "🐹"
+    # Squirrel built from two Block-Elements glyphs (U+25AA small square +
+    # U+259B/U+259C quadrants), NOT the 🐿 emoji. Each glyph is a
+    # deterministic 1-cell character present in every font, so the pair
+    # always occupies exactly 2 cells — sidestepping the emoji-width
+    # disagreement that clipped the emoji in Blink (whose wide-char table
+    # omits the squirrel codepoint U+1F43F). Two glyphs also restore a
+    # distinct left/right facing.
+    _MASCOT_L = "▪▛"   # facing left:  body, tail rising behind on the right
+    _MASCOT_R = "▜▪"   # facing right: mirror of the left pair
     _FALL = ["⠁", "⠂", "⠄", "⡀"]   # in-place fall progression
 
     def __init__(self, walkway: int | None = None) -> None:
@@ -217,9 +219,10 @@ class MascotScene:
         for i, d in enumerate(self._dots):
             if d is not None:
                 cells[i] = self._FALL[d]
-        cells[self._sq_pos] = self._MASCOT
+        pair = self._MASCOT_R if self._facing_right else self._MASCOT_L
+        cells[self._sq_pos] = pair[0]
         if self._sq_pos + 1 < self._walkway:
-            cells[self._sq_pos + 1] = ""   # emoji spans 2 cols; drop the slot
+            cells[self._sq_pos + 1] = pair[1]
 
         return f"{self._TREE} {''.join(cells)}"
 
@@ -274,9 +277,8 @@ class TerminalRenderer:
         # Render state
         self._spinner_idx = 0           # per-node braille tick (running indicator)
         # Walkway fits the terminal at startup ("🌳 " = 3 cols of margin
-        # + 1 trailing col so a double-width mascot at the right end
-        # never touches the last column, which some terminals wrap), so
-        # the scene line doesn't wrap on narrow screens (e.g. phone SSH).
+        # + 1 trailing col of breathing room), so the scene line doesn't
+        # wrap on narrow screens (e.g. phone SSH).
         scene_walkway = min(MascotScene._WALKWAY, self._term_width() - 4)
         self._scene = MascotScene(walkway=scene_walkway)
         self._tick_task: asyncio.Task | None = None
