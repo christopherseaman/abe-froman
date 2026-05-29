@@ -3,6 +3,25 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.9] — narrow-terminal redraw fix + CI on Node 24
+
+### Fixed
+
+- **Live renderer no longer scrolls on narrow terminals** — the
+  cursor-up redraw moved up by the logical line count, assuming one
+  line per physical row. On a narrow terminal (e.g. phone SSH) the
+  wide scene line wrapped to a second row, so each tick under-shot
+  and marched the display down the screen. `_render()` now clips
+  every line to the terminal width, and the squirrel walkway sizes
+  to the terminal at startup (`min(40, width-3)`, floored at 8) so
+  the mascot stays visible instead of being clipped off.
+
+### Changed
+
+- **CI runs on Node 24** — bumped `actions/checkout`,
+  `actions/upload-artifact`, and `actions/download-artifact` to `@v5`
+  to clear the Node 20 deprecation warning in the publish workflow.
+
 ## [0.4.8] — Nerd Font-safe mascot + opus 4.8 reference output
 
 ### Fixed
