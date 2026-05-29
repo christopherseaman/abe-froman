@@ -31,6 +31,35 @@ def find_terminal_nodes(config: "Graph") -> list[str]:
     return [n.id for n in config.nodes if n.id not in depended_on]
 
 
+def _normalize_items(items: object) -> list[dict]:
+    """Coerce a manifest's items into a list of objects.
+
+    A bare scalar item (string / number / bool) becomes
+    ``{"id": str(item)}`` so a manifest like ``["alpha", "beta"]`` fans
+    out with ``{{id}}`` bound per branch — rather than crashing on
+    ``item.get("id")``. A non-list manifest, or an item that is neither
+    object nor scalar (a nested list / null), is an author error and
+    raises.
+    """
+    if not isinstance(items, list):
+        raise ValueError(
+            "fan-out manifest must be a JSON array (or {\"items\": [...]}), "
+            f"got {type(items).__name__}"
+        )
+    out: list[dict] = []
+    for i, item in enumerate(items):
+        if isinstance(item, dict):
+            out.append(item)
+        elif isinstance(item, (str, int, float, bool)):
+            out.append({"id": str(item)})
+        else:
+            raise ValueError(
+                f"fan-out manifest item {i} must be an object or scalar, "
+                f"got {type(item).__name__}: {item!r}"
+            )
+    return out
+
+
 def _read_manifest(state: WorkflowState, node: Node) -> list[dict]:
     """Resolve the manifest a fan-out parent dispatches over.
 
@@ -40,14 +69,16 @@ def _read_manifest(state: WorkflowState, node: Node) -> list[dict]:
     on-disk path declared in ``fan_out.manifest_path`` (canonical for
     static manifests checked into the repo). Returns ``[]`` on miss
     so the conditional-edge router can route to ``no_items`` cleanly.
+    Items are normalized via :func:`_normalize_items` (scalars coerced
+    to ``{"id": ...}``).
     """
     output = state.get("node_outputs", {}).get(node.id, "")
     try:
         data = json.loads(output)
         if isinstance(data, dict) and "items" in data:
-            return data["items"]
+            return _normalize_items(data["items"])
         if isinstance(data, list):
-            return data
+            return _normalize_items(data)
     except (json.JSONDecodeError, TypeError):
         pass
 
@@ -58,9 +89,9 @@ def _read_manifest(state: WorkflowState, node: Node) -> list[dict]:
         try:
             data = json.loads(manifest_file.read_text())
             if isinstance(data, dict) and "items" in data:
-                return data["items"]
+                return _normalize_items(data["items"])
             if isinstance(data, list):
-                return data
+                return _normalize_items(data)
         except (FileNotFoundError, json.JSONDecodeError):
             pass
 

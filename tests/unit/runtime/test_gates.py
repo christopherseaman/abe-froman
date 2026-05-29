@@ -132,6 +132,24 @@ class TestGateEvaluation:
         result = await run_evaluation(gate, "p1")
         assert result.score == 0.0
 
+    @pytest.mark.asyncio
+    async def test_py_validator_score_above_one_is_clamped(self, tmp_path):
+        """A mis-scaled gate (prints 5.0) must not yield score>1 — that
+        would skip threshold checks and skew score(id) route predicates."""
+        script = tmp_path / "validator.py"
+        script.write_text("print('5.0')")
+        gate = Evaluation(validator=str(script), threshold=0.8)
+        result = await run_evaluation(gate, "p1", workdir=str(tmp_path))
+        assert result.score == 1.0
+
+    @pytest.mark.asyncio
+    async def test_py_validator_negative_score_is_clamped(self, tmp_path):
+        script = tmp_path / "validator.py"
+        script.write_text("print('-2.5')")
+        gate = Evaluation(validator=str(script), threshold=0.8)
+        result = await run_evaluation(gate, "p1", workdir=str(tmp_path))
+        assert result.score == 0.0
+
 # ---------------------------------------------------------------------------
 # Node-level: gate pass/fail with stdin-inspecting validators in full graph
 # ---------------------------------------------------------------------------

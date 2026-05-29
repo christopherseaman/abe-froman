@@ -115,3 +115,31 @@ class TestReadManifestEdgeCases:
         node = _phase_with_dynamic(manifest_path="manifest.json")
         result = _read_manifest(state, node)
         assert result == [{"id": "output"}]
+
+
+class TestNormalizeItems:
+    def test_scalar_items_coerced_to_id_objects_from_output(self):
+        """`["alpha","beta"]` must fan out as {"id": ...} objects, not
+        crash later on item.get("id")."""
+        state = make_initial_state(node_outputs={"p1": json.dumps(["alpha", "beta"])})
+        result = _read_manifest(state, _phase_with_dynamic())
+        assert result == [{"id": "alpha"}, {"id": "beta"}]
+
+    def test_scalar_items_coerced_from_disk(self, tmp_path):
+        (tmp_path / "manifest.json").write_text(json.dumps([1, 2]))
+        state = make_initial_state(workdir=str(tmp_path))
+        node = _phase_with_dynamic(manifest_path="manifest.json")
+        assert _read_manifest(state, node) == [{"id": "1"}, {"id": "2"}]
+
+    def test_objects_pass_through_unchanged(self):
+        state = make_initial_state(
+            node_outputs={"p1": json.dumps([{"id": "a", "topic": "x"}])}
+        )
+        assert _read_manifest(state, _phase_with_dynamic()) == [
+            {"id": "a", "topic": "x"}
+        ]
+
+    def test_nested_list_item_raises(self):
+        state = make_initial_state(node_outputs={"p1": json.dumps([["nested"]])})
+        with pytest.raises(ValueError, match="must be an object or scalar"):
+            _read_manifest(state, _phase_with_dynamic())

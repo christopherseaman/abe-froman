@@ -439,8 +439,9 @@ async def _execute_workflow(
     help=(
         "Force a specific named preset as the default for this run. "
         "Must exist in settings.presets. Without this flag, the YAML's "
-        "default: true preset applies (or auto-detection synthesizes "
-        "one when settings.presets is empty)."
+        "default: true preset applies; if settings.presets is empty, "
+        "only script/binary/subgraph nodes can run (LLM nodes have no "
+        "backend)."
     ),
 )
 @click.option(

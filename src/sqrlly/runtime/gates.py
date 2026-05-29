@@ -102,6 +102,10 @@ def build_eval_preamble(
     return "\n\n".join(lines)
 
 
+def _clamp01(x: float) -> float:
+    return 0.0 if x < 0.0 else 1.0 if x > 1.0 else x
+
+
 @dataclass
 class EvaluationResult:
     score: float
@@ -110,6 +114,14 @@ class EvaluationResult:
     feedback: str | None = None
     pass_criteria_met: list[str] = field(default_factory=list)
     pass_criteria_unmet: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        # The overall score is contractually in [0, 1]; clamp so a
+        # mis-scaled gate (e.g. printing 5.0 or -1) can't skip threshold
+        # checks or skew `{{evals.x.score}}` / score(id) route predicates.
+        # `scores` (per-dimension) is left as-is — it can hold arbitrary
+        # numeric fields the gate emits, not only [0, 1] quality scores.
+        self.score = _clamp01(self.score)
 
 
 _NON_SCORE_KEYS = frozenset(
@@ -125,7 +137,10 @@ def _parse_evaluation_output(
 
     Accepts: bare float (script gates only), JSON with "score", full
     feedback JSON, or multi-dimension JSON (numeric fields extracted as
-    dimension scores). Loud failure on malformed output.
+    dimension scores). Malformed or score-less output yields `score=0.0`
+    with diagnostic feedback — a broken validator fails its gate rather
+    than crashing the run (see `run_evaluation_script` for the matching
+    non-zero-exit handling). Scores are clamped to [0, 1].
     """
     stripped = raw.strip()
     if allow_bare_float:
