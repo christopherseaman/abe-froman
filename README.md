@@ -156,6 +156,9 @@ Full reference (including `CommandPreset` for custom script interpreters): [docs
 - `--preset / -p <name>` — force a named preset as the default.
 - `--resume` — continue from the last checkpoint.
 - `--log <path>` — write a JSONL event log.
+- `--quiet / -q` — suppress the live terminal renderer (use in CI / piped runs).
+
+`run` shows a live per-node status grid + a clock-driven aliveness spinner when stdout is a TTY. Non-TTY runs (piped, redirected, CI) fall through to the plain summary output automatically. Workflow events only — no LLM-token streaming.
 
 ## Examples
 

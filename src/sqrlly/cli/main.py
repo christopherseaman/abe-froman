@@ -166,6 +166,7 @@ async def _run_async(
     preset_override: str | None,
     resume: bool,
     log_file: str | None,
+    quiet: bool = False,
 ) -> dict:
     """Inner async runner — wires checkpointer, executor, and state.
 
@@ -174,14 +175,36 @@ async def _run_async(
     same JSONL, prefixed with the parent node id). The runner itself
     only handles the outer state stream; CLI owns workflow_start /
     workflow_end / close().
+
+    Two subscribers may attach to the event stream:
+      - `JsonlLogger` when `--log <path>` is set
+      - `TerminalRenderer` when stdout is a TTY and `--quiet` not set
+    `TeeLogger` fans events to both when both are present.
     """
+    import sys
+
     from sqrlly.runtime.logging import JsonlLogger
+    from sqrlly.runtime.terminal import TeeLogger, TerminalRenderer
 
     thread_id = _thread_id_for(config, workdir)
 
-    logger: JsonlLogger | None = None
+    subs: list[Any] = []
+    jsonl: JsonlLogger | None = None
     if log_file is not None:
-        logger = JsonlLogger(log_file)
+        jsonl = JsonlLogger(log_file)
+        subs.append(jsonl)
+    if not quiet and not dry_run and sys.stdout.isatty():
+        subs.append(TerminalRenderer(config))
+
+    logger: Any | None
+    if len(subs) == 0:
+        logger = None
+    elif len(subs) == 1:
+        logger = subs[0]
+    else:
+        logger = TeeLogger(*subs)
+
+    if logger is not None:
         logger.emit({
             "event": "workflow_start",
             "workflow": config.name,
@@ -367,10 +390,16 @@ async def _execute_workflow(
                 settings=config.settings,
             )
         else:
-            click.echo(
-                "Note: workdir is not a git repo — running without worktree "
-                "isolation (foreman disabled)."
-            )
+            # Only surface in non-interactive contexts. When the live
+            # renderer owns stdout, any mid-run write (even on stderr)
+            # collides with the cursor-managed grid.
+            import sys
+            if not sys.stdout.isatty():
+                click.echo(
+                    "Note: workdir is not a git repo — running without "
+                    "worktree isolation (foreman disabled).",
+                    err=True,
+                )
             executor_obj = dispatch
 
         compiled = build_workflow_graph(
@@ -406,6 +435,10 @@ async def _execute_workflow(
     "--resume", is_flag=True, help="Resume from the last checkpoint"
 )
 @click.option("--log", "log_file", type=click.Path(), help="JSONL log output file")
+@click.option(
+    "--quiet", "-q", is_flag=True,
+    help="Suppress the live terminal renderer (useful in CI/piped runs).",
+)
 def run(
     config_file: str,
     workdir: str,
@@ -413,6 +446,7 @@ def run(
     preset: str | None,
     resume: bool,
     log_file: str | None,
+    quiet: bool,
 ):
     """Run a workflow from a configuration file."""
     try:
@@ -423,27 +457,36 @@ def run(
     _emit_warnings(config)
 
     result = asyncio.run(
-        _run_async(config, workdir, dry_run, preset, resume, log_file)
+        _run_async(config, workdir, dry_run, preset, resume, log_file, quiet)
     )
 
     completed = result.get("completed_nodes", set())
     failed = result.get("failed_nodes", set())
     errors = result.get("errors", [])
 
-    if dry_run:
-        click.echo(f"Dry run completed: {len(completed)} nodes traced")
-    else:
-        click.echo(f"Completed: {len(completed)} nodes")
+    # When the live renderer was active, it already shows per-node
+    # status + a "done in Xs" header — skip the redundant summary
+    # block. Errors still surface so failures aren't hidden.
+    import sys
+    renderer_active = (
+        not quiet
+        and not dry_run
+        and sys.stdout.isatty()
+    )
 
-    if completed:
-        click.echo(f"  Nodes: {', '.join(sorted(completed))}")
-
-    if failed:
-        click.echo(f"  Failed: {', '.join(sorted(failed))}")
+    if not renderer_active:
+        if dry_run:
+            click.echo(f"Dry run completed: {len(completed)} nodes traced")
+        else:
+            click.echo(f"Completed: {len(completed)} nodes")
+        if completed:
+            click.echo(f"  Nodes: {', '.join(sorted(completed))}")
+        if failed:
+            click.echo(f"  Failed: {', '.join(sorted(failed))}")
 
     if errors:
         for err in errors:
-            click.echo(f"  Error in {err['node']}: {err['error']}")
+            click.echo(f"  Error in {err['node']}: {err['error']}", err=True)
 
     if failed:
         raise click.exceptions.Exit(1)

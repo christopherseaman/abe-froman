@@ -3,6 +3,37 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.2] — live terminal renderer
+
+### Added
+
+- **Live terminal renderer for `sqrlly run`** — per-node status
+  (waiting / running / passed / retrying / failed), updated in place
+  via ANSI cursor controls, with a clock-driven aliveness spinner.
+  Auto-enables when stdout is a TTY; pass `--quiet` / `-q` to suppress.
+- `runtime/terminal.py` — `TerminalRenderer` implements the same
+  interface as `JsonlLogger`, so it slots into the existing event
+  stream with no backend or compile-layer changes. `TeeLogger` fans
+  events to both renderer and JSONL log when `--log <path>` is also
+  set.
+- Workflow events only — no LLM-token streaming.
+
+### Changed
+
+- The legacy `Completed: N nodes` summary at the end of
+  `sqrlly run` is suppressed when the live renderer was active (it
+  already shows the same info). Falls through to the legacy summary
+  in `--quiet` / non-TTY / piped contexts.
+- The "Note: workdir is not a git repo" headsup is suppressed when
+  stdout is a TTY (would collide with the renderer's grid); still
+  surfaces in non-interactive contexts.
+
+### Known limitations
+
+- Workflows using `route:` forward edges instead of `depends_on:`
+  show all nodes as "running" from start because the status
+  heuristic uses `depends_on` only. Tracked as a follow-up.
+
 ## [0.4.0] — `sqrlly init` scaffold
 
 ### Added
