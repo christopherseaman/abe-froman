@@ -3,6 +3,24 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.8] — Nerd Font-safe mascot + opus 4.8 reference output
+
+### Fixed
+
+- **Mascot renders in Nerd Fonts** — the squirrel was drawn with
+  Symbols for Legacy Computing (`🬢🭠` / `🭕🬖`), the one block Nerd
+  Fonts deliberately omits, so it showed as tofu. Replaced with the
+  emoji `🐿️` (the only squirrel in Unicode), which renders via the
+  OS color-emoji fallback even under a patched Nerd Font. Single-
+  facing now; the internal facing logic is retained to drive
+  nut-seeking movement.
+
+### Changed
+
+- **Refreshed `examples/absurd-paper/reference-output/`** — regenerated
+  `paper.md`, `paper.pdf`, and `run.jsonl` from a full opus 4.8 run
+  (15 nodes, reviewer fan-out, publish verdict 0.96).
+
 ## [0.4.7] — constant-rate dot spawn (decouple from workflow size)
 
 ### Changed
