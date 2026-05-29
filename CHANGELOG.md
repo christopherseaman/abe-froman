@@ -3,6 +3,44 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.14] — skill-doc gaps + gate/fan-out robustness (from agent audit)
+
+A sub-agent driving sqrlly with only the installed skill surfaced these.
+
+### Fixed
+
+- **Scalar fan-out manifest items no longer crash.** A manifest like
+  `["alpha", "beta"]` previously raised `AttributeError` (`item.get`);
+  bare scalars are now coerced to `{"id": "<value>"}` so they fan out
+  with `{{id}}` bound. Non-object/non-scalar items (nested lists/null)
+  raise a clear error.
+- **Gate scores are clamped to [0, 1].** A mis-scaled validator (e.g.
+  printing `5.0`) could skip threshold checks and skew
+  `score(id)` route predicates; the overall score is now clamped
+  (per-dimension `scores` are left as-is — they may carry arbitrary
+  numeric fields).
+- **`--preset` help no longer references removed auto-detection** — it
+  claimed "auto-detection synthesizes one when settings.presets is
+  empty," contradicting actual behavior (the auto-detect was removed in
+  0.2.x).
+
+### Changed
+
+- **SKILLS.md filled the gaps that blocked agents** on routing/fan-out:
+  a real `route:` example with the predicate namespace (simpleeval
+  Python expr; `passed`/`score`/`scores`, dep outputs, `state`), a real
+  `fan_out:` example (`manifest_path`/`template`/`final_nodes` + item
+  shape), a Prerequisites/backend-auth section, a file-resolution +
+  commit-first note, a caveat that `validate` doesn't check file
+  existence, a note that `graph`/`view` show static topology only, and
+  an online link to the schema reference (unreachable for PyPI users
+  on disk).
+- **Documented the `graph`/`view` route-edge limitation** (CLAUDE.md):
+  inline-route `goto` targets are runtime `Command(goto=...)`, so the
+  static Mermaid diagram can't draw those edges.
+- Corrected the `_parse_evaluation_output` docstring (claimed "loud
+  failure"; actual behavior is `score=0.0` + diagnostic feedback).
+
 ## [0.4.13] — `sqrlly init --skill` + install/skill docs
 
 ### Added

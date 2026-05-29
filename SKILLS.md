@@ -56,7 +56,10 @@ write a YAML file with `name`, `version`, `nodes`, and `settings`.
          model: sonnet
          default: true
    ```
-   `settings.presets` is required — there is no environment auto-detect.
+   There is no environment auto-detect. A workflow whose nodes are all
+   script / binary / subgraph can omit `settings.presets` (or set it to
+   `{}`); any **LLM (prompt) node** needs at least one preset with
+   `default: true`, or dispatch fails at run time.
 5. **Add a gate** to retry a node until its output is good enough:
    ```yaml
    evaluation:
@@ -67,13 +70,44 @@ write a YAML file with `name`, `version`, `nodes`, and `settings`.
    ```
    A script gate reads the node output on stdin and prints a score
    (`0.85`) or a JSON object (`{"score": 0.6, "feedback": "..."}`).
-6. **Branch** with a `route:` block (`goto: <id>` unconditional, or a
-   `cases:` / `else:` predicate ladder) or **parallelize** with a
-   `fan_out:` block (one branch per item in a JSON manifest).
+6. **Branch** with a `route:` block — an unconditional `goto:`, or a
+   `cases:` / `else:` ladder of `when:` predicates:
+   ```yaml
+   route:
+     cases:
+       - when: "score('classify') >= 0.8"   # predicate (see below)
+         goto: high_quality
+       - when: "'urgent' in classify"        # `classify` = its output
+         goto: escalate
+     else:
+       goto: default_path
+   ```
+   `when:` is a **Python expression** (sandboxed simpleeval) — use
+   `True` / `False`, not the string `"true"`. In scope: each upstream
+   dependency id (bound to its output), `state` (the full state dict),
+   and `history` / `evals` (evaluation records); plus functions
+   `passed(id)`, `score(id)`, and `scores(id)`.
+7. **Parallelize** with a `fan_out:` block — one branch per manifest
+   item, joined by `final_nodes`:
+   ```yaml
+   fan_out:
+     manifest_path: items.json   # JSON: [{"id": "a", ...}, ...] or {"items": [...]}
+     template:
+       execute:
+         url: prompts/item.md     # rendered once per item
+       # evaluation: ...          # optional: gate each branch
+     final_nodes: [summarize]     # run once after all branches join
+   ```
+   Each manifest item is a JSON **object**; its fields become template
+   variables (`{{id}}`, `{{name}}`, …). A bare string item is treated
+   as `{"id": "<string>"}`. The manifest may instead be produced at
+   run time as this node's JSON output, with `manifest_path` as the
+   static fallback.
 
 Do not guess field names. Every model is `extra="forbid"` — a typo'd
 key is a hard validation error. The exhaustive field reference is
-`docs/schema-reference.md`.
+`docs/schema-reference.md` (online:
+https://github.com/christopherseaman/sqrlly/blob/main/docs/schema-reference.md).
 
 ## Validate and run
 
@@ -84,8 +118,18 @@ sqrlly validate path/to/workflow.yaml
 sqrlly run path/to/workflow.yaml --log run.jsonl
 ```
 
-`validate` compile-checks the graph and reports the node count plus any
-advisory warnings. `run` executes it.
+`validate` compile-checks the graph (schema + wiring) and reports the
+node count plus advisory warnings. It does **not** check that every
+`execute.url` / `validator` file exists on disk — those surface at run
+time. `run` executes the workflow.
+
+**File resolution / git.** `execute.url` and `validator` paths resolve
+relative to `--workdir` (default the current directory). When the
+workdir is a git repo, runs execute inside a fresh git worktree of
+`HEAD`, so **commit your workflow and the files it references first**,
+and run from the repo root (a repo with no commits can't create a
+worktree). Outside a git repo, worktree isolation is off and paths
+resolve directly under `--workdir`.
 
 `run` flags: `--workdir/-w <dir>`, `--dry-run` (trace topology without
 executing), `--preset/-p <name>` (force a named preset as the default),
@@ -93,6 +137,9 @@ executing), `--preset/-p <name>` (force a named preset as the default),
 
 `sqrlly graph <config>` prints a Mermaid topology diagram;
 `sqrlly view <config>` writes a self-contained interactive HTML viewer.
+Both show the **static** topology — dynamic `route:` `goto` targets
+are emitted as `Command(goto=...)` at run time and are not drawn as
+edges, so branch targets may appear as unconnected nodes.
 
 ## Debug a run
 

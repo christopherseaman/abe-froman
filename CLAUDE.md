@@ -229,6 +229,12 @@ mapping (we're testing our wrapping code, not the SDK).
   parses as subtraction. Use underscores in IDs that need template
   substitution. `validate` / `run` now emit an advisory warning for
   any hyphenated node id (`compile/lint.py`).
+- **`graph` / `view` don't draw route edges** — `cli/main.py::graph`
+  renders `compiled.get_graph().draw_mermaid()`, which only sees the
+  static LangGraph. Inline-route targets are emitted at run time as
+  `Command(goto=...)`, so a routed node's branch targets appear as
+  unconnected nodes (no edges). Inherent to the routing implementation;
+  the diagram shows static topology only. Flagged in SKILLS.md.
 - **Per-model backpressure under downgrade** — Foreman acquires the
   semaphore for the node's *original* model. If `PromptExecutor`
   downgrades opus → sonnet mid-call (on `OverloadError`), the sonnet
