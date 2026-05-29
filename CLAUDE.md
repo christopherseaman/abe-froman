@@ -165,7 +165,10 @@ langgraph-free).
 - `view.py` — `view` command: self-contained HTML workflow viewer.
 - `init.py` — `init` command: scaffolds a minimal workflow
   (`workflow.yaml` + `prompts/hello.md`) for `pipx`-installed users
-  with no repo on disk.
+  with no repo on disk. `init --skill` instead installs the agent
+  skill doc (repo-root `SKILLS.md`, `force-include`d into the wheel as
+  `sqrlly/_skill.md`) into a working repo at
+  `.agents/skills/sqrlly/SKILL.md` (repo-aware via git toplevel).
 - `migrate.py` — internal module (NOT a CLI command): pre-Stage-4 →
   4 → 5b YAML transforms (idempotent; preserves comments + anchors).
   The `sqrlly migrate` subcommand was removed in the preset-rework

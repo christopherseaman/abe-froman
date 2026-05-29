@@ -46,6 +46,11 @@ for these tools.
 
 Python 3.11+. From source: `git clone` then `uv sync`.
 
+**Using sqrlly from a coding agent?** `sqrlly init --skill` installs the
+agent skill into your repo at `.agents/skills/sqrlly/SKILL.md`
+(repo-aware) so the agent auto-discovers how to author and run
+workflows.
+
 ## Quickstart
 
 Bootstrap a runnable workflow in two commands — no git clone needed:

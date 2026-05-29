@@ -11,9 +11,27 @@ script, a binary, or a nested workflow. Quality **gates** retry failing
 nodes with feedback; **routing** and **fan-out** handle branching and
 parallelism.
 
+## Prerequisites
+
+Install the CLI: `pipx install sqrlly` (or `uv tool install sqrlly`).
+Use the `[acp]` extra (`pipx install "sqrlly[acp]"`) only for
+`transport: acp`.
+
+LLM nodes drive Claude Code, so the chosen backend must be installed
+and authenticated — auth is per-CLI, not sqrlly's job:
+
+- `transport: cli` — the `claude` binary on PATH, logged in once with
+  `claude /login`. No extra Python deps.
+- `transport: acp` — `npm i -g @zed-industries/claude-code-acp`, plus
+  the same `claude` login.
+
+Script, binary, and subgraph nodes need no backend.
+
 ## Author a workflow
 
-Write a YAML file with `name`, `version`, `nodes`, and `settings`.
+Fastest start: `sqrlly init [dir]` scaffolds a schema-valid
+`workflow.yaml` + `prompts/hello.md` to edit from. To author by hand,
+write a YAML file with `name`, `version`, `nodes`, and `settings`.
 
 1. **Each node** needs a unique `id` (use underscores, never hyphens —
    see Footguns) and a `name`. Add an `execute:` block unless the node
@@ -104,6 +122,8 @@ executing), `--preset/-p <name>` (force a named preset as the default),
 
 ## Reference
 
+- Install this skill into a repo: `sqrlly init --skill` → writes
+  `.agents/skills/sqrlly/SKILL.md` at the repo root (repo-aware).
 - Full schema: `docs/schema-reference.md`
 - Architecture: `TECHNICAL.md`
 - Worked examples: `examples/` — start with `examples/jokes/`.
