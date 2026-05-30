@@ -3,6 +3,19 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.19] — document the `file://` trusted-input model
+
+### Changed
+
+- **Documented that `file://` / local paths are not confined.** Workflow
+  YAML is trusted input: an absolute or `../`-relative `execute.url` /
+  `validator` resolves to that exact path and runs with the orchestrator
+  process's full filesystem access; `allow_remote_scripts` and the
+  remote gates apply only to *remote* schemes. Added a Footgun in
+  SKILLS.md (ships in the wheel via `init --skill`), a ⚠️ callout in
+  `docs/schema-reference.md`, and a note in `TECHNICAL.md`. `TODO.md` U1
+  records the workdir-confinement *fix* is still deferred.
+
 ## [0.4.18] — docs accuracy + resume semantics + repo hygiene
 
 Fourth audit pass found no correctness bugs; this is documentation
