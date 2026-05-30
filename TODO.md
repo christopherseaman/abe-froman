@@ -69,3 +69,12 @@ The behavior is now **explicitly documented** as trusted-input (no
 `file://` confinement) in `docs/schema-reference.md`, `TECHNICAL.md`,
 and `SKILLS.md` — so it's no longer a silent gap; only the
 confinement *fix* remains deferred here.
+
+### 🤞 V1 — terminal-compatible graph visualization
+
+`sqrlly graph` emits raw Mermaid (needs an external renderer) and
+`view` writes HTML — neither renders in a terminal, and both show only
+static topology (route `goto` edges are runtime `Command(goto=...)`,
+not drawn). Explore rendering a terminal-friendly diagram, e.g. via
+[beautiful-mermaid](https://github.com/lukilabs/beautiful-mermaid), and
+ideally overlay the route edges the static graph omits. DX nice-to-have.
