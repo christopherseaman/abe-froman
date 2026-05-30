@@ -88,8 +88,11 @@ write a YAML file with `name`, `version`, `nodes`, and `settings`.
    node wrote files —
    ```yaml
    output_contract:
-     required_files: ["out/report.md"]   # node fails if missing after it runs
+     base_directory: "."                  # base for required_files (required)
+     required_files: ["report.md"]        # node fails if missing after it runs
    ```
+   In a git repo, files are checked in the node's worktree (where it
+   wrote them), so write paths relative to the run, not absolute.
 7. **Branch** with a `route:` block — an unconditional `goto:`, or a
    `cases:` / `else:` ladder of `when:` predicates:
    ```yaml

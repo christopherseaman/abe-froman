@@ -3,6 +3,36 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.17] — fail-loud correctness fixes (third agent-audit pass)
+
+### Fixed
+
+- **Gate silent false-pass closed.** A non-dimension gate that returned
+  JSON with no `score` but a stray numeric field (e.g. `{"rating": 8}`)
+  silently derived a passing score instead of halting. The parser now
+  requires an explicit `score` for single-score gates (`require_score`
+  True) — stray numerics no longer satisfy it. The multi-dimension
+  min-derivation path (`require_score=False`) is unchanged.
+- **`output_contract` now validates the node's worktree.** Under git
+  worktree isolation (the default), files a node wrote in its foreman
+  worktree were checked against the base workdir and reported missing.
+  `ExecutionResult` now carries the `worktree`; foreman scaffolds and
+  stamps it, and validation runs against where the node actually wrote.
+- **Missing `.md` LLM-gate validator halts loudly** (raises
+  `EvaluationError`), matching the `.py` gate — was a silent `0.0` that
+  masqueraded as a quality failure and burned retries.
+- **Unevaluable `route:` predicate halts cleanly.** A `when:` that
+  throws (name error, bad attribute) now raises `RouteError` → a clean
+  CLI `Error:` with the route + predicate, not a raw traceback.
+- **`url_headers` `${VAR}` honors the `.env` layer.** Expansion now
+  falls back to the project-local `.env` (process env still wins),
+  matching the documented secret chain.
+
+### Changed
+
+- SKILLS.md `output_contract` example includes the required
+  `base_directory` and notes worktree-relative file checks.
+
 ## [0.4.16] — gate parser tolerates LLM JSON wrapping + skill-doc fixes
 
 Second agent-audit pass.
