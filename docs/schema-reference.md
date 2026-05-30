@@ -49,8 +49,9 @@ node; a `params.preset` that names no preset in `settings.presets`.
 | `model_downgrade_chain` | `list[str]` | `["opus", "sonnet", "haiku"]` | Tier list for `OverloadError` auto-downgrade. |
 
 > The pre-rework `default_model` and `executor` settings no longer
-> exist. Backend selection is now entirely through `presets` (or
-> auto-detection when `presets` is empty).
+> exist. Backend selection is entirely through `presets`; there is no
+> auto-detection (empty `presets` is valid for script-only workflows —
+> LLM nodes then fail at dispatch).
 
 ### Concurrency
 
@@ -95,6 +96,16 @@ defaults to `llm`, so pre-`CommandPreset` YAML still parses).
 | `provider` | `"anthropic"` | required | Vendor / model family (only option for both transports today). |
 | `model` | `str` | required | Model id. |
 | `default` | `bool` | `false` | Exactly one `LlmPreset` must be `true`. |
+| `permission_mode` | `"default" \| "acceptEdits" \| "bypassPermissions" \| "plan" \| None` | `None` | Tool-use policy. `cli` → `--permission-mode`; `acp` → kind-gate in the permission callback (`bypassPermissions`=all, `acceptEdits`=edits+reads not execute, `default`/`plan`=read-only). |
+| `allowed_tools` | `list[str] \| None` | `None` | Tools to permit. `cli` → `--allowedTools` (exact claude names); `acp` → best-effort match vs tool kind/title. |
+| `disallowed_tools` | `list[str] \| None` | `None` | Tools to deny. `cli` → `--disallowedTools`; `acp` → best-effort denylist by kind/title. |
+| `cli_args` | `list[str] \| None` | `None` | **cli only** — extra args appended verbatim to the `claude` argv (escape hatch). Ignored by `acp`. |
+
+> Tool-use defaults (all unset): `cli` runs bare `claude -p` (no tools);
+> `acp` allows all tool calls (its historical behavior). The shape is
+> unified across transports; `permission_mode` is the portable knob,
+> the tool lists are exact on `cli` and best-effort on `acp` (which
+> gates by tool *kind*, not claude tool names).
 
 Both supported transports drive Claude Code; the choice is invocation
 shape, not vendor:

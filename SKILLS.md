@@ -55,11 +55,25 @@ write a YAML file with `name`, `version`, `nodes`, and `settings`.
          provider: anthropic   # only provider currently supported
          model: sonnet
          default: true
+         # Tool use (optional). Same shape on both transports:
+         permission_mode: acceptEdits   # default | acceptEdits | bypassPermissions | plan
+         allowed_tools: ["Edit", "Bash(git *)"]
+         # disallowed_tools: ["WebFetch"]
+         # cli_args: ["--add-dir", "."]   # cli-only escape hatch
    ```
    There is no environment auto-detect. A workflow whose nodes are all
    script / binary / subgraph can omit `settings.presets` (or set it to
    `{}`); any **LLM (prompt) node** needs at least one preset with
    `default: true`, or dispatch fails at run time.
+
+   **Tool use.** `permission_mode` is the portable knob; on `cli` it maps
+   to `claude`'s `--permission-mode`, on `acp` it gates by tool *kind*
+   (`bypassPermissions` = all, `acceptEdits` = edits+reads not bash,
+   `default`/`plan` = read-only). `allowed_tools` / `disallowed_tools`
+   are exact claude tool names on `cli` and best-effort (kind/title
+   match) on `acp`. `cli_args` is a cli-only escape hatch. Defaults
+   (all unset): `cli` runs with no tools; `acp` allows all (its
+   historical behavior).
 5. **Add a gate** to retry a node until its output is good enough:
    ```yaml
    evaluation:
