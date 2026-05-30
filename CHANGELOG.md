@@ -3,6 +3,32 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.0] — tool use for cli + acp (unified preset permissions)
+
+LLM nodes can now use tools (edit files, run bash, …) on **both**
+transports, configured with one preset shape.
+
+### Added
+
+- **Tool-use permissions on `LlmPreset`** — `permission_mode`
+  (`default` / `acceptEdits` / `bypassPermissions` / `plan`),
+  `allowed_tools`, `disallowed_tools`, and a cli-only `cli_args` escape
+  hatch. Unified shape across transports:
+  - `transport: cli` — maps to `claude`'s `--permission-mode` /
+    `--allowedTools` / `--disallowedTools` (plus verbatim `cli_args`).
+    **Previously cli nodes had no tool access at all.**
+  - `transport: acp` — gates by tool *kind* in the permission callback
+    (`bypassPermissions` = all; `acceptEdits` = edits + reads, not
+    execute; `default` / `plan` = read-only); the tool lists are matched
+    best-effort by kind/title.
+  - Defaults preserved: all unset → `cli` runs with no tools, `acp`
+    allows all (its prior behavior).
+
+### Fixed
+
+- `docs/schema-reference.md` no longer claims preset "auto-detection"
+  (removed in the 0.2.x transport rework).
+
 ## [0.4.19] — document the `file://` trusted-input model
 
 ### Changed
