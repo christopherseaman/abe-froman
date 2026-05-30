@@ -78,3 +78,8 @@ static topology (route `goto` edges are runtime `Command(goto=...)`,
 not drawn). Explore rendering a terminal-friendly diagram, e.g. via
 [beautiful-mermaid](https://github.com/lukilabs/beautiful-mermaid), and
 ideally overlay the route edges the static graph omits. DX nice-to-have.
+
+Package it as an **optional `[viz]` extra**, mirroring `[acp]`: the
+renderer dep stays out of the core install, the `graph`/`view` command
+lazy-imports it (clear "install `sqrlly[viz]`" error if absent), and
+the layer/lazy-import pattern follows `factory._build_acp`.
