@@ -52,6 +52,11 @@ nodes:
     execute:
       url: "examples/absurd-paper/workflow.yaml"
 
+  - id: command_preset
+    name: "Command preset demo"
+    execute:
+      url: "examples/command_preset/workflow.yaml"
+
 settings:
   # Concurrency cap of 6 lets all six subgraphs start in the same
   # super-step. Drop this if rate limits matter.

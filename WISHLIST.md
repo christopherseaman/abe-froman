@@ -1,5 +1,17 @@
 # Wishlist
 
+> **⚠️ Historical note (post-0.2.x "transport: api strip").** Several
+> delivered (`[x]`) items below describe a direct-API backend system —
+> `backends/anthropic.py`, `backends/openai.py`, `auto_detect_executor`,
+> `Settings.executor`, DeepSeek, `StubBackend` — that was **removed** in
+> the 0.2.x transport rework. Only `transport: acp` and `transport: cli`
+> (provider `anthropic`) exist today; LLM config lives in
+> `settings.presets`. Those items are retained as history — ignore their
+> implementation specifics (and any "default executor → auto-detect"
+> claim, e.g. the "Default executor should be real" item, which the
+> preset cutover superseded). Test-count figures in older items are
+> point-in-time; current is ~941.
+
 - [x] **Documentation** — _landed, post-Stage-5b._ README,
   TECHNICAL.md, and CLAUDE.md split by audience: README is the
   user/contributor entry point (install, quickstart, schema, examples);

@@ -54,7 +54,7 @@ uv sync                                      # core deps
 npm i -g @zed-industries/claude-code-acp     # for ACP backend / acp tests
 # `claude` CLI on PATH                       # for cli backend / cli tests
 
-uv run pytest tests/ --ignore=tests/acp --ignore=tests/cli -v   # ~880 tests, ~60s
+uv run pytest tests/ --ignore=tests/acp --ignore=tests/cli -v   # ~940 tests, ~50s
 uv run pytest tests/acp -v                   # ACP tests, ~2 min, requires npm package above
 uv run pytest tests/cli -v                   # CLI tests, ~15s, requires `claude` on PATH
 uv run pytest -m live -v                     # restored live-roundtrip (cli-only)
@@ -251,6 +251,20 @@ mapping (we're testing our wrapping code, not the SDK).
   worktrees. Authors write reconciliation nodes; stray trees
   accumulate under `<workdir>/.sqrlly/`. Clean up manually with
   `git worktree remove <path>`.
+- **`--resume` is a fault-recovery re-run, not skip-completed** —
+  `cli/main.py` loads the prior checkpoint's `channel_values`, seeds a
+  *fresh* run with it, clears `failed_nodes`/`retries`/`errors`, and
+  deletes the thread. Execution/evaluation `node_fn`s have no
+  `completed_nodes` short-circuit (nodes.py:583, :684), so completed
+  nodes **re-execute** (outputs refreshed; LLM nodes may diverge from
+  the original run). State stays internally consistent. A true
+  skip-completed resume is the pending `--resume` rewrite (WISHLIST
+  26/31). Docs (README/SKILLS) describe the real semantics.
+- **Subgraph event prefix is one level** — `runner`/`SubgraphLogger`
+  prefix child events `parent::child`; a 2-level nest shows the
+  *immediate* parent only (`mid::child`, not `top::mid::child`), so
+  child ids must be unique across sibling subgraphs to avoid log
+  collisions.
 - **Checkpointer migration** — Pre-refactor `.sqrlly-state.json`
   format is ignored on `--resume`; re-run from scratch.
 - **ACP soak under load** — process-tree cleanup is fixed for the
@@ -282,9 +296,11 @@ mapping (we're testing our wrapping code, not the SDK).
   Layers: workflow YAML setting → `os.environ[name]` → project-local
   `.env` file (auto-discovered by walking up from CWD). sqrlly
   never reads from machine-global keystores. The api-transport strip
-  removed all in-tree consumers of this resolver, but it remains
-  available for workflow-defined keys (e.g. a script node that calls
-  out to a third-party service).
+  removed the only in-tree consumer of `resolve_secret` itself, but the
+  `.env` layer is still used in-tree by `url.py::_expand_vars` (header
+  `${VAR}` expansion), and `resolve_secret` remains available for
+  workflow-defined keys (e.g. a script node calling a third-party
+  service).
 - **`pyproject.toml`** marker for ACP tests: `acp` (used in
   `pytest -m`).
 

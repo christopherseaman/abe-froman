@@ -93,6 +93,8 @@ write a YAML file with `name`, `version`, `nodes`, and `settings`.
    ```
    In a git repo, files are checked in the node's worktree (where it
    wrote them), so write paths relative to the run, not absolute.
+   `required_files` entries are **literal paths** — globs are not
+   expanded (`out_*.md` is checked verbatim and will report missing).
 7. **Branch** with a `route:` block — an unconditional `goto:`, or a
    `cases:` / `else:` ladder of `when:` predicates:
    ```yaml
@@ -169,11 +171,15 @@ urls — including an `http(s)://` base, which fetches **prompt
 templates** over the network (gated by `allow_remote_urls`,
 `allowed_url_hosts`, `url_headers`, `max_remote_fetch_bytes`). Remote
 **scripts/binaries** are not supported (they fail with a clear error;
-use `file://` paths for those).
+use `file://` paths for those). `url_headers` is keyed by URL
+**prefix** (most-specific first), each mapping to a header dict:
+`{ "https://api.host/": { "Authorization": "Bearer ${TOKEN}" } }`.
+`${VAR}` expands from the process env, then the project-local `.env`.
 
 `run` flags: `--workdir/-w <dir>`, `--dry-run` (trace topology without
 executing), `--preset/-p <name>` (force a named preset as the default),
-`--resume` (continue from the last checkpoint), `--log <path>`.
+`--resume` (re-run with prior state, clearing failures — see Debug),
+`--log <path>`.
 
 `sqrlly graph <config>` prints a Mermaid topology diagram;
 `sqrlly view <config>` writes a self-contained interactive HTML viewer.
@@ -186,16 +192,23 @@ edges, so branch targets may appear as unconnected nodes.
 - Read the `--log` JSONL stream — events: `workflow_start`,
   `node_completed`, `node_failed`, `gate_evaluated`, `node_retried`,
   `workflow_end`. The node id is the `node` field (not `node_id`).
-  Subgraph events are prefixed `parent::child`. Note: events carry
-  status/score, not the node's full output text — capture that from the
-  node itself if you need it.
+  Subgraph events are prefixed `parent::child` (one level — a deeper
+  nest shows the *immediate* parent, so keep child ids unique across
+  sibling subgraphs). Note: events carry status/score, not the node's
+  full output text — capture that from the node itself if you need it.
 - A failed `run` exits non-zero and lists the failed nodes.
 - A node that keeps retrying is failing its gate — inspect the
   `gate_evaluated` events for the `score` (and per-dimension `scores`).
 - `--dry-run` traces topology without calling backends or running
   scripts; use it to confirm the graph shape before a real run.
-- `--resume` restarts from the last checkpoint at
-  `<workdir>/.sqrlly-checkpoint.db`.
+- `--resume` is a **fault-recovery re-run**, not a skip-completed
+  continuation. It seeds a fresh run with the prior run's checkpointed
+  state (`<workdir>/.sqrlly-checkpoint.db`) and clears `failed_nodes` so
+  failed nodes retry — but every node **re-executes** (completed nodes
+  are not skipped; their outputs are refreshed). For deterministic
+  (script) nodes the re-run reproduces prior output; for LLM nodes it
+  may diverge. Use it to recover a failed run, not to avoid recomputing
+  completed work.
 
 ## Footguns
 

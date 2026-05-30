@@ -6,7 +6,7 @@
 - **Local context** — when run inside a git repo, every node gets its own isolated worktree; agents read dep outputs, edit files on disk, and run tools.
 - **Quality gates** — a script or LLM scorer judges output; failing gates re-run the node with feedback injected, up to a configurable retry budget.
 - **Branching** — `route:` sends flow conditionally; `fan_out:` spawns parallel branches over a JSON manifest.
-- **Resumable** — state checkpoints to SQLite; `--resume` picks up where a stopped run left off.
+- **Fault-recovery resume** — state checkpoints to SQLite; `--resume` re-runs seeded with the prior run's state and clears failures to retry.
 
 ## Install
 
@@ -108,7 +108,7 @@ sqrlly run examples/jokes/workflow.yaml --log run.jsonl
 - **Jinja2 templates** — prompt files are full Jinja2; `{{generate}}` interpolates an upstream node's output; `{% if %}` / `{% for %}` / filters all work.
 - **Retry feedback loop** — when a gate scores below `threshold`, the next attempt's context gets `{{_retry_reason}}` auto-populated with the previous score, per-dimension thresholds, and feedback.
 - **Worktree isolation** — inside a git repo, each node runs in its own `git worktree` under `<workdir>/.sqrlly/`, reused across retries so prompt nodes can iterate on prior files.
-- **Checkpointed state** — runs persist to `<workdir>/.sqrlly-checkpoint.db` (LangGraph `AsyncSqliteSaver`); `--resume` continues from the last checkpoint.
+- **Checkpointed state** — runs persist to `<workdir>/.sqrlly-checkpoint.db` (LangGraph `AsyncSqliteSaver`); `--resume` re-runs seeded with that state, clearing failed nodes to retry (a fault-recovery re-run, not a skip-completed continuation — completed nodes re-execute).
 - **Recursive subgraphs** — a `.yaml` URL runs another sqrlly workflow; the same file works standalone or as a subgraph reference.
 
 ## Backends and presets
@@ -160,7 +160,7 @@ Full reference (including `CommandPreset` for custom script interpreters): [docs
 - `--workdir / -w <dir>` — working directory (default `.`).
 - `--dry-run` — trace topology without executing.
 - `--preset / -p <name>` — force a named preset as the default.
-- `--resume` — continue from the last checkpoint.
+- `--resume` — re-run seeded with the prior run's state, clearing failures to retry (completed nodes re-execute).
 - `--log <path>` — write a JSONL event log.
 - `--quiet / -q` — suppress the live terminal renderer (use in CI / piped runs).
 
@@ -191,7 +191,7 @@ Each example directory ships a checked-in `view.html` (authoring view) and, wher
 - See **[TECHNICAL.md](https://github.com/christopherseaman/sqrlly/blob/main/TECHNICAL.md)** for architecture and contributor reading order.
 
 ```bash
-uv run pytest tests/ --ignore=tests/acp     # ~840 tests
+uv run pytest tests/ --ignore=tests/acp     # ~940 tests
 uv run pytest tests/acp                     # ACP integration (needs the npm adapter)
 ```
 

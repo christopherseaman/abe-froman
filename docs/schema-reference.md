@@ -328,7 +328,7 @@ prompt template as `{{_retry_reason}}`.
 | Field | Type | Default | Effect |
 |---|---|---|---|
 | `base_directory` | `str` | required | Directory checked after the node runs. |
-| `required_files` | `list[str]` | `[]` | Files that must exist for the node to succeed. |
+| `required_files` | `list[str]` | `[]` | Literal paths (no glob) that must exist for the node to succeed, checked under `base_directory` in the node's run dir (its worktree in a git repo). |
 
 ---
 
