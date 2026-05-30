@@ -199,6 +199,34 @@ class TestVarExpansion:
             fetch_url("https://nope.invalid/a.md", settings, cache)
         assert "ABSENT_TOKEN" in str(ei.value)
 
+    def test_env_file_fallback(self, monkeypatch, tmp_path):
+        """A ${VAR} absent from the process env resolves from the
+        project-local .env (matches the documented secret chain)."""
+        from sqrlly.runtime.url import _expand_vars
+        from sqrlly.runtime.secrets import _load_dotenv_once
+
+        monkeypatch.delenv("DOTENV_ONLY_TOKEN", raising=False)
+        (tmp_path / ".env").write_text("DOTENV_ONLY_TOKEN=fromdotenv\n")
+        monkeypatch.chdir(tmp_path)
+        _load_dotenv_once.cache_clear()
+        try:
+            assert _expand_vars("Bearer ${DOTENV_ONLY_TOKEN}") == "Bearer fromdotenv"
+        finally:
+            _load_dotenv_once.cache_clear()
+
+    def test_process_env_wins_over_env_file(self, monkeypatch, tmp_path):
+        from sqrlly.runtime.url import _expand_vars
+        from sqrlly.runtime.secrets import _load_dotenv_once
+
+        (tmp_path / ".env").write_text("PREC_TOKEN=fromdotenv\n")
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("PREC_TOKEN", "fromenv")
+        _load_dotenv_once.cache_clear()
+        try:
+            assert _expand_vars("${PREC_TOKEN}") == "fromenv"
+        finally:
+            _load_dotenv_once.cache_clear()
+
 
 # ----- live local server: cache hit, size cap -----
 

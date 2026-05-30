@@ -138,6 +138,20 @@ class TestGateEvaluation:
             await run_evaluation(gate, "p1")
 
     @pytest.mark.asyncio
+    async def test_missing_md_validator_halts(self, tmp_path):
+        """A missing .md LLM-gate validator halts loudly (raises at
+        read_text, before any backend call) — like the .py gate, not a
+        silent 0.0 masquerading as a quality failure."""
+        from sqrlly.runtime.gates import run_evaluation_llm
+
+        gate = Evaluation(validator=str(tmp_path / "nope.md"), threshold=0.8)
+        with pytest.raises(EvaluationError, match="not found"):
+            await run_evaluation_llm(
+                gate, "p1", str(tmp_path), "out",
+                backend=None, default_model="sonnet",
+            )
+
+    @pytest.mark.asyncio
     async def test_py_validator_score_above_one_is_clamped(self, tmp_path):
         """A mis-scaled gate (prints 5.0) must not yield score>1 — that
         would skip threshold checks and skew score(id) route predicates."""
@@ -648,6 +662,26 @@ class TestGateOutputParser:
         with pytest.raises(EvaluationError, match="missing a 'score'"):
             _parse_evaluation_output(json.dumps({"feedback": "ok"}))
 
+    def test_stray_numeric_without_score_halts(self):
+        """Regression: a non-dimension gate (require_score default True)
+        with a stray numeric but no 'score' must HALT, not silently
+        derive a passing score from the stray field."""
+        from sqrlly.runtime.gates import _parse_evaluation_output
+
+        with pytest.raises(EvaluationError, match="missing a 'score'"):
+            _parse_evaluation_output(json.dumps({"rating": 8}))
+        with pytest.raises(EvaluationError, match="missing a 'score'"):
+            _parse_evaluation_output(json.dumps({"verdict": "good", "confidence": 0.95}))
+
+    def test_stray_numeric_with_dimensions_still_derives_min(self):
+        """The dimension path (require_score=False) is unaffected."""
+        from sqrlly.runtime.gates import _parse_evaluation_output
+
+        result = _parse_evaluation_output(
+            json.dumps({"accuracy": 0.9, "clarity": 0.6}), require_score=False
+        )
+        assert result.score == 0.6
+
     def test_non_numeric_score_loud_failure(self):
         from sqrlly.runtime.gates import _parse_evaluation_output
 
@@ -691,11 +725,16 @@ class TestMultiDimensionParser:
         assert result.feedback is None
 
     def test_single_dimension_no_score_derives_min(self):
-        """One dim, no top-level score: derived score == that dim's value."""
+        """One dim, no top-level score: derived score == that dim's value.
+
+        Dimension gates dispatch with require_score=False (set by
+        run_evaluation from `not evaluation.dimensions`); only then is a
+        score derived from dimension fields. With require_score=True the
+        same shape is a non-dimension gate missing its score → halts."""
         from sqrlly.runtime.gates import _parse_evaluation_output
 
         raw = json.dumps({"correctness": 0.8})
-        result = _parse_evaluation_output(raw)
+        result = _parse_evaluation_output(raw, require_score=False)
         assert result.score == 0.8
         assert result.feedback is None
         assert result.scores == {"correctness": 0.8}

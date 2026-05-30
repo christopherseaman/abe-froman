@@ -104,19 +104,28 @@ _VAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
 def _expand_vars(value: str) -> str:
-    """Expand ${VAR} from process env; raise on missing var.
+    """Expand ${VAR} from the process env, then the project-local
+    ``.env``; raise on missing var.
 
-    Missing-var is a configuration error, not an I/O error — surfaces as
-    ValueError so callers don't catch it via IOError handlers meant for
-    network failures.
+    Matches the documented secret chain (env → ``.env``) so a token kept
+    only in ``.env`` resolves in ``url_headers`` too. Missing-var is a
+    configuration error, not an I/O error — surfaces as ValueError so
+    callers don't catch it via IOError handlers meant for network
+    failures.
     """
+    from sqrlly.runtime.secrets import _load_dotenv_once
+
     def repl(match: re.Match[str]) -> str:
         name = match.group(1)
-        if name not in os.environ:
-            raise ValueError(
-                f"Header references env var ${{{name}}} but it is not set"
-            )
-        return os.environ[name]
+        if name in os.environ:
+            return os.environ[name]
+        dotenv = _load_dotenv_once()
+        if name in dotenv:
+            return dotenv[name]
+        raise ValueError(
+            f"Header references env var ${{{name}}} but it is not set "
+            f"(checked process env and .env)"
+        )
     return _VAR_RE.sub(repl, value)
 
 

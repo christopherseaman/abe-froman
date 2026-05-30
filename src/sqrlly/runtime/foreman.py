@@ -31,6 +31,7 @@ from typing import Any
 import psutil
 
 from sqrlly.runtime.executor.prompt import resolve_model
+from sqrlly.runtime.gates import scaffold_output_directory
 from sqrlly.runtime.result import ExecutionResult, NodeExecutor, PromptBackend
 from sqrlly.schema.models import Node, Settings
 
@@ -99,10 +100,19 @@ class ForemanExecutor:
         async with self._global_sem:
             async with (model_sem or _null_async_cm()):
                 wt = await self._acquire_worktree(node.id)
-                return await self._inner.execute(
+                # Scaffold the output dir in the worktree (where the node
+                # actually writes), not just the workdir.
+                if node.output_contract:
+                    scaffold_output_directory(node.output_contract, wt)
+                result = await self._inner.execute(
                     node, context, workdir=wt,
                     settings_override=settings_override,
                 )
+                # Record where the node ran so output_contract validates
+                # against the worktree it wrote into.
+                if result.worktree is None:
+                    result.worktree = wt
+                return result
 
     async def _wait_for_memory(
         self,

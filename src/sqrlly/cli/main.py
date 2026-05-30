@@ -469,14 +469,15 @@ def run(
 
     _emit_warnings(config)
 
-    from sqrlly.runtime.result import EvaluationError, ManifestError
+    from sqrlly.runtime.result import EvaluationError, ManifestError, RouteError
     try:
         result = asyncio.run(
             _run_async(config, workdir, dry_run, preset, resume, log_file, quiet)
         )
-    except (EvaluationError, ManifestError) as e:
-        # Infrastructure failures (broken validator / unreadable manifest)
-        # halt the run loudly with a clean message, not a traceback.
+    except (EvaluationError, ManifestError, RouteError) as e:
+        # Infrastructure failures (broken validator / unreadable manifest
+        # / unevaluable route predicate) halt the run loudly with a clean
+        # message, not a traceback.
         raise click.ClickException(str(e))
 
     completed = result.get("completed_nodes", set())

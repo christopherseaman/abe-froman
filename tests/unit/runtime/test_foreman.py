@@ -76,6 +76,45 @@ class _InstrumentedForeman(ForemanExecutor):
             self._in_flight -= 1
 
 
+class TestOutputContractWorktree:
+    @pytest.mark.asyncio
+    async def test_output_contract_targets_the_worktree(self, tmp_path):
+        """Regression: a node writes its required file in its worktree, so
+        validation must target `result.worktree`, not the base workdir
+        (which would report the file missing — the HIGH#2 bug)."""
+        from sqrlly.runtime.gates import validate_output_contract
+        from sqrlly.schema.models import Execute, Node, OutputContract
+
+        _init_git_repo(tmp_path)
+        script = tmp_path / "writer.sh"
+        script.write_text("#!/bin/sh\necho hi > report.md\n")
+        script.chmod(0o755)
+        node = Node(
+            id="writer", name="writer",
+            execute=Execute(url=str(script)),
+            output_contract=OutputContract(
+                base_directory=".", required_files=["report.md"]
+            ),
+        )
+        inner = DispatchExecutor(workdir=str(tmp_path))
+        foreman = ForemanExecutor(inner=inner, base_workdir=str(tmp_path))
+        try:
+            result = await foreman.execute(node, {})
+            assert result.success
+            assert result.worktree is not None
+            # File landed in the worktree, not the base workdir.
+            assert (Path(result.worktree) / "report.md").exists()
+            assert not (tmp_path / "report.md").exists()
+            # Validation against the worktree passes; against the base
+            # workdir it would (wrongly) report the file missing.
+            assert validate_output_contract(node.output_contract, result.worktree) == []
+            assert validate_output_contract(
+                node.output_contract, str(tmp_path)
+            ) == ["report.md"]
+        finally:
+            await foreman.close()
+
+
 class TestWorktreePool:
     @pytest.mark.asyncio
     async def test_first_execute_creates_worktree(self, tmp_path):

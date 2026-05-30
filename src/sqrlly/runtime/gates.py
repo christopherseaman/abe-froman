@@ -213,10 +213,14 @@ def _parse_evaluation_output(
             raise EvaluationError(
                 f"gate response has a non-numeric 'score': {data['score']!r}"
             )
-    elif require_score and not dim_scores:
+    elif require_score:
+        # A single-score gate (no `dimensions` declared → require_score
+        # True) MUST emit a top-level `score`. Stray numeric fields are
+        # NOT a verdict — halt loudly rather than silently deriving a
+        # passing score from e.g. {"rating": 8}. (Multi-dim gates pass
+        # require_score=False and take the min-derivation below.)
         raise EvaluationError(
-            "gate response is missing a 'score' field (and no numeric "
-            f"dimension fields to derive one): {stripped[:200]!r}"
+            f"gate response is missing a 'score' field: {stripped[:200]!r}"
         )
     elif dim_scores:
         # Multi-dim gate without an explicit top-level `score`: the
@@ -379,9 +383,8 @@ async def run_evaluation_llm(
     try:
         template_text = template_path.read_text()
     except FileNotFoundError:
-        return EvaluationResult(
-            score=0.0,
-            feedback=f"evaluation template not found: {template_path}",
+        raise EvaluationError(
+            f"LLM gate template not found: {template_path}"
         )
     context = build_llm_gate_context(
         node_id=node_id,

@@ -19,6 +19,11 @@ class ExecutionResult:
     output: str = ""
     error: str | None = None
     structured_output: dict[str, Any] | None = None
+    # The directory the node actually executed in (a foreman git
+    # worktree, when active). Set by ForemanExecutor; None means the node
+    # ran directly in the workdir. Used to validate output_contract
+    # against where the node really wrote its files.
+    worktree: str | None = None
 
 
 class OverloadError(Exception):
@@ -39,6 +44,16 @@ class ManifestError(RuntimeError):
     """A fan-out node's declared ``manifest_path`` could not be read
     (file missing or invalid JSON). Halts loudly rather than silently
     fanning out over zero items."""
+
+
+class RouteError(ValueError):
+    """A ``route:`` ``when:`` predicate failed to evaluate (parse error,
+    name error, or sandbox violation). Halts with a clean message naming
+    the route and predicate rather than dumping a raw traceback.
+
+    Subclasses ``ValueError`` (a malformed predicate *is* a value error)
+    so callers/tests catching ``ValueError`` keep working while the CLI
+    can catch ``RouteError`` specifically for a clean halt."""
 
 
 @runtime_checkable

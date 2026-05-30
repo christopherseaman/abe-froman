@@ -621,8 +621,12 @@ def _make_execution_node(
             return make_failure_update(node.id, exec_result.error)
 
         if node.output_contract:
+            # Validate where the node actually ran — its foreman worktree
+            # when active, else the workdir. Checking the workdir alone
+            # reports worktree-written files as missing.
+            contract_dir = exec_result.worktree or state.get("workdir", ".")
             missing = validate_output_contract(
-                node.output_contract, state.get("workdir", ".")
+                node.output_contract, contract_dir
             )
             if missing:
                 return {

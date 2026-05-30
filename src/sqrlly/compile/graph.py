@@ -21,6 +21,7 @@ from sqrlly.compile.nodes import (
 from sqrlly.compile.route import build_route_namespace, evaluate_case
 from sqrlly.compile.subgraph import node_subgraph_path
 from sqrlly.runtime.gates import build_eval_preamble
+from sqrlly.runtime.result import RouteError
 from sqrlly.runtime.state import WorkflowState
 from sqrlly.schema.models import Graph, Node, Settings
 
@@ -141,7 +142,7 @@ def _make_inline_route_node(node: Node):
             try:
                 matched = evaluate_case(case.when, ns, functions=funcs)
             except Exception as e:
-                raise ValueError(
+                raise RouteError(
                     f"Route '{sender_id}' case {case.when!r}: {e}"
                 ) from e
             if matched:
