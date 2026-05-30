@@ -420,6 +420,14 @@ Non-`file://` URLs go through four gates in `fetch_url`:
    `.py`/`.js`/`.sh`.
 4. `max_remote_fetch_bytes: int` (default 5_000_000) — body cap.
 
+These gates apply **only to remote schemes**. `file://` / local paths
+are not gated and not confined: an absolute or `../`-relative
+`execute.url` / `validator` resolves to that exact path and runs with
+the process's full filesystem access. Workflow YAML is trusted input;
+there is no workdir/worktree sandbox on local paths (tracked as TODO
+U1 — `file://` confinement). The "local files only" default is
+remote-vs-local, not a security boundary.
+
 Per-prefix `url_headers` with `${VAR}` env expansion (via
 `_expand_vars`) attach auth headers. Missing env var raises
 `ValueError` (config error, not network error).

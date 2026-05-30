@@ -222,6 +222,11 @@ edges, so branch targets may appear as unconnected nodes.
   `settings.presets`, exactly one must have `default: true`.
 - **Subgraphs share the schema** — a subgraph `.yaml` is an ordinary
   workflow and must validate standalone.
+- **Workflow YAML is trusted input** — `file://` / local paths are NOT
+  confined to the workdir: an absolute (`/etc/…`) or `../`-relative
+  `execute.url` or `validator` reads/runs with the orchestrator
+  process's full filesystem access, and `allow_remote_scripts` gates
+  only *remote* schemes. Don't run workflow files you don't trust.
 
 ## Reference
 

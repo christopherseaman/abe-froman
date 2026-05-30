@@ -264,6 +264,15 @@ reproduce a "local files only" policy.
 A per-compile cache keyed by canonical URL fetches each URL at most once
 per `build_workflow_graph` call.
 
+> **⚠️ `file://` is not confined — treat workflow YAML as trusted
+> input.** The "local files only" default is about *remote-vs-local*,
+> not a sandbox. A `file://` path — absolute (`/etc/passwd`) or
+> `../`-relative — resolves to that exact location and reads/executes
+> with the orchestrator process's full filesystem access;
+> `allow_remote_scripts` and the gates above apply only to *remote*
+> schemes. There is no workdir confinement on local paths. Don't run
+> workflow files from untrusted sources.
+
 > **Remote execution scope.** Only remote **prompt** templates
 > (`.md` / `.txt` / `.prompt`) are fetched-and-run today. Remote
 > **script** and **binary** execution is not yet wired — a non-`file://`

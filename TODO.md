@@ -21,3 +21,8 @@ the current trust model (a workflow author already controls what
 executes), but a real robustness gap if workflow YAML ever comes from
 a less-trusted source. Workdir confinement is the larger of the two
 and deserves its own design pass.
+
+The behavior is now **explicitly documented** as trusted-input (no
+`file://` confinement) in `docs/schema-reference.md`, `TECHNICAL.md`,
+and `SKILLS.md` — so it's no longer a silent gap; only the
+confinement *fix* remains deferred here.
