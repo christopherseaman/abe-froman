@@ -3,6 +3,36 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.18] — docs accuracy + resume semantics + repo hygiene
+
+Fourth audit pass found no correctness bugs; this is documentation
+truth-up and cleanup (no source behavior change).
+
+### Changed
+
+- **`--resume` documented honestly.** It is a *fault-recovery re-run*,
+  not a skip-completed continuation: it seeds a fresh run with the prior
+  checkpoint's state and clears failures so failed nodes retry, but
+  completed nodes **re-execute** (outputs refreshed; LLM nodes may
+  diverge). Corrected in README, SKILLS.md, and CLAUDE.md;
+  skip-completed remains the pending `--resume` rewrite (WISHLIST 26/31).
+- **SKILLS.md gaps closed:** `url_headers` prefix-keyed shape and its
+  env→`.env` `${VAR}` expansion; `required_files` is literal (no glob);
+  subgraph event prefix is one level deep. schema-reference notes the
+  literal `required_files`.
+- **Docs truth-up:** test counts (README/CLAUDE → ~940); secret note
+  (the `.env` layer is used in-tree by `url.py::_expand_vars`); a
+  historical banner on WISHLIST.md flagging the removed direct-API
+  backend items (anthropic/openai backends, `Settings.executor`,
+  auto-detect, DeepSeek, StubBackend).
+
+### Removed
+
+- Stale scratch docs `docs/test-audit.md`,
+  `docs/test-audit-verification.md`, `docs/backlog-adapter-inspiration.md`
+  (referenced removed code / one-off). Added `command_preset` to
+  `examples/run_all_examples.yaml` for coverage.
+
 ## [0.4.17] — fail-loud correctness fixes (third agent-audit pass)
 
 ### Fixed
