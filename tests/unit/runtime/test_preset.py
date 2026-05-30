@@ -140,3 +140,34 @@ class TestCreateBackendFromPreset:
         preset = _preset(transport="cli", provider="anthropic", model="sonnet")
         backend = create_backend_from_preset(preset)
         assert isinstance(backend, CLIBackend)
+
+    def test_cli_threads_tool_permissions(self):
+        """Factory passes the preset's tool fields into the cli backend."""
+        preset = LlmPreset(
+            transport="cli", provider="anthropic", model="sonnet",
+            permission_mode="acceptEdits", allowed_tools=["Edit"],
+            cli_args=["--add-dir", "."],
+        )
+        backend = create_backend_from_preset(preset)
+        assert backend._tool_argv() == [
+            "--permission-mode", "acceptEdits",
+            "--allowedTools", "Edit",
+            "--add-dir", ".",
+        ]
+
+    def test_acp_threads_tool_permissions(self):
+        """Factory passes the policy into the acp backend's callbacks."""
+        preset = LlmPreset(
+            transport="acp", provider="anthropic", model="sonnet",
+            permission_mode="default", disallowed_tools=["Bash"],
+        )
+        backend = create_backend_from_preset(preset)
+        assert backend._callbacks._permission_mode == "default"
+        assert backend._callbacks._disallowed_tools == ["Bash"]
+
+    def test_rejects_unknown_permission_mode(self):
+        with pytest.raises(Exception):
+            LlmPreset(
+                transport="cli", provider="anthropic", model="x",
+                permission_mode="bogus",
+            )

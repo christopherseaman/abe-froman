@@ -60,6 +60,42 @@ class TestCLIBackendArgvAssembly:
         # entire argv set.
         assert result.output == "argv: --model haiku"
 
+    def test_tool_argv_empty_when_unset(self):
+        """No tool config → bare `claude -p --model` (prior behavior)."""
+        assert CLIBackend()._tool_argv() == []
+
+    def test_tool_argv_assembles_all_flags(self):
+        backend = CLIBackend(
+            permission_mode="acceptEdits",
+            allowed_tools=["Edit", "Bash(git *)"],
+            disallowed_tools=["WebFetch"],
+            cli_args=["--add-dir", "."],
+        )
+        assert backend._tool_argv() == [
+            "--permission-mode", "acceptEdits",
+            "--allowedTools", "Edit", "Bash(git *)",
+            "--disallowedTools", "WebFetch",
+            "--add-dir", ".",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_tool_flags_reach_subprocess(self, tmp_path):
+        """End-to-end: configured flags actually land on the argv."""
+        fake = _write_fake(
+            tmp_path, "claude-fake", '#!/bin/sh\necho "argv: $@"\n',
+        )
+        backend = CLIBackend(
+            argv_prefix=(str(fake),),
+            permission_mode="bypassPermissions",
+            allowed_tools=["Edit"],
+        )
+        result = await backend.send_prompt(
+            prompt="x", model="sonnet", workdir=str(tmp_path),
+        )
+        assert "--model sonnet" in result.output
+        assert "--permission-mode bypassPermissions" in result.output
+        assert "--allowedTools Edit" in result.output
+
     @pytest.mark.asyncio
     async def test_argv_changes_with_model(self, tmp_path):
         """Different `model=` → different `--model <value>` token."""

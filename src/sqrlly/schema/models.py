@@ -295,6 +295,21 @@ class LlmPreset(BaseModel):
     model: str
     default: bool = False
 
+    # Tool-use permissions. Unified shape across transports, but the
+    # fidelity differs: `cli` maps to exact `claude` flags; `acp` gates
+    # by tool *kind* (read/edit/execute/…) in its permission callback,
+    # so `permission_mode` is the portable knob and the tool lists are
+    # exact on cli / best-effort (kind+title match) on acp. All unset →
+    # today's behavior (cli: no tools; acp: allow-all).
+    permission_mode: Literal[
+        "default", "acceptEdits", "bypassPermissions", "plan"
+    ] | None = None
+    allowed_tools: list[str] | None = None
+    disallowed_tools: list[str] | None = None
+    # Escape hatch: extra args appended verbatim to the `claude` argv
+    # (cli only) for anything the fields above don't cover.
+    cli_args: list[str] | None = None
+
 
 class CommandPreset(BaseModel):
     """Named interpreter/command bundle — referenced by name from script

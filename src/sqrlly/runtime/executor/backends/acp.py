@@ -9,6 +9,7 @@ from typing import Any, Awaitable
 from acp import spawn_agent_process, text_block
 from acp.interfaces import Client
 
+from sqrlly.runtime.executor.backends._acp_policy import acp_tool_allowed
 from sqrlly.runtime.executor.backends._overload import (
     ACP_OVERLOAD_SUBSTRINGS,
     maybe_raise_overload,
@@ -27,15 +28,37 @@ async def _await_with_timeout(coro: Awaitable[Any], timeout: float | None) -> An
 
 
 class _ACPCallbacks(Client):
-    """ACP Client that collects text chunks inline."""
+    """ACP Client that collects text chunks inline and gates tool use."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        permission_mode: str | None = None,
+        allowed_tools: list[str] | None = None,
+        disallowed_tools: list[str] | None = None,
+    ) -> None:
         self.chunks: list[str] = []
+        self._permission_mode = permission_mode
+        self._allowed_tools = allowed_tools
+        self._disallowed_tools = disallowed_tools
 
     async def request_permission(
         self, options: Any, session_id: str, tool_call: Any, **kwargs: Any
     ) -> Any:
-        from acp.schema import AllowedOutcome, RequestPermissionResponse
+        from acp.schema import (
+            AllowedOutcome,
+            DeniedOutcome,
+            RequestPermissionResponse,
+        )
+
+        if not acp_tool_allowed(
+            getattr(tool_call, "kind", None),
+            getattr(tool_call, "title", None),
+            permission_mode=self._permission_mode,
+            allowed_tools=self._allowed_tools,
+            disallowed_tools=self._disallowed_tools,
+        ):
+            return RequestPermissionResponse(outcome=DeniedOutcome(outcome="cancelled"))
 
         option_id = options[0].id if options else "allow"
         return RequestPermissionResponse(
@@ -78,10 +101,18 @@ class ACPBackend:
         self,
         program: str = "npx",
         args: tuple[str, ...] = ("@zed-industries/claude-code-acp",),
+        *,
+        permission_mode: str | None = None,
+        allowed_tools: list[str] | None = None,
+        disallowed_tools: list[str] | None = None,
     ):
         self._program = program
         self._args = args
-        self._callbacks = _ACPCallbacks()
+        self._callbacks = _ACPCallbacks(
+            permission_mode=permission_mode,
+            allowed_tools=allowed_tools,
+            disallowed_tools=disallowed_tools,
+        )
         self._conn: Any = None
         self._proc: Any = None
         self._proc_pid: int | None = None

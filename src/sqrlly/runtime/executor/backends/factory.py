@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from sqrlly.schema.models import LlmPreset
 
 
-def _build_acp(_preset: "LlmPreset") -> PromptBackend:
+def _build_acp(preset: "LlmPreset") -> PromptBackend:
     # Lazy import — the `acp` Python package is the `[acp]` optional
     # extra. Keeping this import inside the builder means
     # `pip install sqrlly` (cli-only) loads the factory without
@@ -21,11 +21,20 @@ def _build_acp(_preset: "LlmPreset") -> PromptBackend:
     return ACPBackend(
         program="npx",
         args=("@zed-industries/claude-code-acp",),
+        permission_mode=preset.permission_mode,
+        allowed_tools=preset.allowed_tools,
+        disallowed_tools=preset.disallowed_tools,
     )
 
 
-def _build_cli(_preset: "LlmPreset") -> PromptBackend:
-    return CLIBackend(argv_prefix=("claude", "-p"))
+def _build_cli(preset: "LlmPreset") -> PromptBackend:
+    return CLIBackend(
+        argv_prefix=("claude", "-p"),
+        permission_mode=preset.permission_mode,
+        allowed_tools=preset.allowed_tools,
+        disallowed_tools=preset.disallowed_tools,
+        cli_args=preset.cli_args,
+    )
 
 
 # (transport, provider) → builder. Restoring or adding a transport means

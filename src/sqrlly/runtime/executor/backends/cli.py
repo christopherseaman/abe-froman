@@ -49,14 +49,40 @@ class CLIBackend:
     overload substrings then surfaced as ``RuntimeError`` otherwise.
     """
 
-    def __init__(self, argv_prefix: tuple[str, ...] = ("claude", "-p")):
+    def __init__(
+        self,
+        argv_prefix: tuple[str, ...] = ("claude", "-p"),
+        *,
+        permission_mode: str | None = None,
+        allowed_tools: list[str] | None = None,
+        disallowed_tools: list[str] | None = None,
+        cli_args: list[str] | None = None,
+    ):
         self._argv_prefix = argv_prefix
+        self._permission_mode = permission_mode
+        self._allowed_tools = allowed_tools
+        self._disallowed_tools = disallowed_tools
+        self._cli_args = cli_args
+
+    def _tool_argv(self) -> list[str]:
+        """Tool-permission flags appended to every invocation. Empty when
+        the preset sets none → bare ``claude -p`` (the prior behavior)."""
+        argv: list[str] = []
+        if self._permission_mode:
+            argv += ["--permission-mode", self._permission_mode]
+        if self._allowed_tools:
+            argv += ["--allowedTools", *self._allowed_tools]
+        if self._disallowed_tools:
+            argv += ["--disallowedTools", *self._disallowed_tools]
+        if self._cli_args:
+            argv += list(self._cli_args)
+        return argv
 
     async def send_prompt(
         self, prompt: str, model: str, workdir: str,
         timeout: float | None = None,
     ) -> ExecutionResult:
-        argv = [*self._argv_prefix, "--model", model]
+        argv = [*self._argv_prefix, "--model", model, *self._tool_argv()]
         proc = await asyncio.create_subprocess_exec(
             *argv,
             cwd=workdir,
