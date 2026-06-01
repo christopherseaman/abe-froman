@@ -1,6 +1,6 @@
 [project]
 name = "sqrlly"
-version = "0.5.0"
+version = "0.5.1"
 description = "Workflow orchestrator using LangGraph with Claude (via ACP) and script execution backends"
 readme = "README.md"
 requires-python = ">=3.11"
