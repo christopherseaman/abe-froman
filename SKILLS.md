@@ -204,6 +204,7 @@ edges, so branch targets may appear as unconnected nodes.
 ## Debug a run
 
 - Read the `--log` JSONL stream — events: `workflow_start`,
+  `node_model` (LLM nodes: the `preset` + `model` that ran the node),
   `node_completed`, `node_failed`, `gate_evaluated`, `node_retried`,
   `workflow_end`. The node id is the `node` field (not `node_id`).
   Subgraph events are prefixed `parent::child` (one level — a deeper

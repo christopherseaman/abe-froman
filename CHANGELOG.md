@@ -3,6 +3,18 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.1] — JSONL logs record per-node model + preset
+
+### Added
+
+- **`node_model` JSONL event** — for each LLM node the log now records
+  which `preset` and `model` ran it (`{"event": "node_model", "node":
+  "gen", "model": "sonnet", "preset": "fast"}`), emitted just before
+  `node_completed`. Plumbed via new `ExecutionResult.model`/`preset`
+  fields set in `_dispatch_prompt` (a downgraded model is reflected if
+  the executor reports it) and a `node_models` state channel. Script /
+  binary nodes emit no `node_model` event.
+
 ## [0.5.0] — tool use for cli + acp (unified preset permissions)
 
 LLM nodes can now use tools (edit files, run bash, …) on **both**
