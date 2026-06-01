@@ -24,7 +24,7 @@ class TestMakeInitialState:
             "workflow_name", "completed_nodes",
             "failed_nodes", "node_outputs", "node_structured_outputs",
             "evaluations", "retries", "child_outputs",
-            "node_worktrees", "errors", "workdir", "dry_run",
+            "node_worktrees", "node_models", "errors", "workdir", "dry_run",
         }
         assert set(state.keys()) == expected_keys
         assert state["workflow_name"] == "Workflow"

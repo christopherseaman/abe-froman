@@ -262,6 +262,10 @@ def assemble_success_update(node: Node, result: ExecutionResult) -> dict[str, An
     }
     if result.structured_output is not None:
         update["node_structured_outputs"] = {node.id: result.structured_output}
+    if result.model is not None:
+        update["node_models"] = {
+            node.id: {"model": result.model, "preset": result.preset}
+        }
     return update
 
 

@@ -66,6 +66,33 @@ class TestLogUpdate:
         assert events[0]["event"] == "node_completed"
         assert events[0]["node"] == "research"
 
+    def test_detects_node_model(self):
+        """node_models delta → a node_model event recording preset+model."""
+        buf = StringIO()
+        logger = JsonlLogger(buf)
+        logger.log_update({
+            "node_models": {"gen": {"model": "sonnet", "preset": "fast"}},
+        })
+        events = [json.loads(l) for l in buf.getvalue().strip().split("\n")]
+        assert len(events) == 1
+        e = events[0]
+        assert e["event"] == "node_model"
+        assert e["node"] == "gen"
+        assert e["model"] == "sonnet"
+        assert e["preset"] == "fast"
+
+    def test_node_model_emitted_before_completed(self):
+        """For a non-gated LLM node both land in one update; node_model
+        is emitted first."""
+        buf = StringIO()
+        logger = JsonlLogger(buf)
+        logger.log_update({
+            "node_models": {"gen": {"model": "sonnet", "preset": "fast"}},
+            "completed_nodes": {"gen"},
+        })
+        events = [json.loads(l) for l in buf.getvalue().strip().split("\n")]
+        assert [e["event"] for e in events] == ["node_model", "node_completed"]
+
     def test_detects_failed(self):
         buf = StringIO()
         logger = JsonlLogger(buf)

@@ -47,6 +47,7 @@ REDUCERS: dict[str, Callable[[Any, Any], Any]] = {
     "retries": _merge_dicts,
     "child_outputs": _merge_dicts,
     "node_worktrees": _merge_dicts,
+    "node_models": _merge_dicts,
     "evaluations": _merge_evaluations,
 }
 
@@ -61,6 +62,7 @@ class WorkflowState(TypedDict):
     retries: Annotated[dict[str, int], REDUCERS["retries"]]
     child_outputs: Annotated[dict[str, Any], REDUCERS["child_outputs"]]
     node_worktrees: Annotated[dict[str, str], REDUCERS["node_worktrees"]]
+    node_models: Annotated[dict[str, Any], REDUCERS["node_models"]]
     errors: Annotated[list[dict], REDUCERS["errors"]]
     workdir: str
     dry_run: bool
@@ -106,6 +108,7 @@ def make_initial_state(
         "retries": {},
         "child_outputs": {},
         "node_worktrees": {},
+        "node_models": {},
         "errors": [],
         "workdir": workdir,
         "dry_run": dry_run,

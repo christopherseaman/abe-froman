@@ -13,8 +13,9 @@ def _emit_update_events(emitter: Any, update: dict[str, Any]) -> None:
 
     A LangGraph ``stream_mode="updates"`` chunk is shaped
     ``{node_name: partial_state_update}``; the partial update is the
-    delta the node returned (after reducer application). The four
-    event types we surface — ``node_completed``, ``node_failed``,
+    delta the node returned (after reducer application). The event
+    types we surface — ``node_model`` (LLM nodes only: which
+    preset/model ran), ``node_completed``, ``node_failed``,
     ``gate_evaluated``, ``node_retried`` — each correspond to a
     specific shape inside that delta. We read them directly here
     rather than diffing successive snapshots.
@@ -24,9 +25,9 @@ def _emit_update_events(emitter: Any, update: dict[str, Any]) -> None:
     how their ``emit()`` formats the event (``SubgraphLogger`` prefixes
     the ``node`` field). The ``emitter`` argument duck-types ``emit()``.
 
-    Emission order is fixed to match the historical state-diff
-    ordering: ``node_completed`` → ``node_failed`` → ``gate_evaluated``
-    → ``node_retried``. Tests asserting on event order depend on this.
+    Emission order is fixed: ``node_model`` → ``node_completed`` →
+    ``node_failed`` → ``gate_evaluated`` → ``node_retried``. Tests
+    asserting on event order depend on this.
 
     Command-only nodes (route dispatchers that emit ``Command(goto=...)``
     without any state update) appear in the updates stream as
@@ -34,6 +35,14 @@ def _emit_update_events(emitter: Any, update: dict[str, Any]) -> None:
     """
     if update is None:
         return
+    for node, info in (update.get("node_models") or {}).items():
+        emitter.emit({
+            "event": "node_model",
+            "node": node,
+            "model": info.get("model"),
+            "preset": info.get("preset"),
+        })
+
     for node in update.get("completed_nodes") or []:
         emitter.emit({"event": "node_completed", "node": node})
 

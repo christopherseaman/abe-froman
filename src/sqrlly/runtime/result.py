@@ -24,6 +24,11 @@ class ExecutionResult:
     # ran directly in the workdir. Used to validate output_contract
     # against where the node really wrote its files.
     worktree: str | None = None
+    # The LLM preset name and model that ran this node (prompt nodes
+    # only; None for script/binary). Surfaced into JSONL as a
+    # `node_model` event so logs record which model/preset each node used.
+    model: str | None = None
+    preset: str | None = None
 
 
 class OverloadError(Exception):

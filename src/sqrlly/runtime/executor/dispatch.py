@@ -254,10 +254,17 @@ class DispatchExecutor:
             params_timeout if params_timeout is not None
             else node.effective_timeout(settings)
         )
-        return await prompt_executor.execute_rendered(
+        result = await prompt_executor.execute_rendered(
             rendered, current_model, workdir, timeout=timeout,
             settings=settings,
         )
+        # Record which preset/model ran this node for the JSONL log.
+        # `execute_rendered` may set `result.model` to a downgraded tier
+        # on OverloadError; fall back to the configured model otherwise.
+        result.preset = preset_name
+        if result.model is None:
+            result.model = current_model
+        return result
 
     async def _dispatch_script(
         self,
