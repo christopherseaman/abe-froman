@@ -3,6 +3,23 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.3] — worktree isolation control (v1)
+
+### Added
+
+- **`worktree` setting + per-node override** — control worktree
+  isolation explicitly instead of the implicit all-or-nothing
+  git-repo heuristic. `settings.worktree` (default `auto`) is
+  inherited graph→subgraph; `Node.worktree` overrides per node.
+  Modes: `auto` (isolate per-node iff in a git repo — today's
+  behavior, now named), `isolated` (force a worktree), `off`/`none`
+  (run in the shared base workdir). Bare YAML `off`/`on` booleans are
+  accepted. A node set to `off` runs in the base workdir, so a script
+  gate (which runs there) can read the node's files directly. Existing
+  workflows are unaffected — absent field = `auto` = prior behavior.
+  Named shared-worktree groups (`worktree: team-a`) are a planned
+  follow-up; a non-reserved value is rejected at `validate` time.
+
 ## [0.5.2] — quick wins from the adapter-port findings
 
 ### Added

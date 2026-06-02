@@ -63,6 +63,12 @@ node; a `params.preset` that names no preset in `settings.presets`.
 | `memory_min_available_bytes` | `int \| str \| None` | `None` | Foreman blocks new dispatches while available memory is below this. Accepts raw bytes or a binary-suffixed string (`"4GB"`, `"500MiB"`, `"2T"`; `KB = 1024`). `None` disables. |
 | `max_subgraph_depth` | `int` | `10` | Cap on recursive subgraph nesting. |
 
+### Worktree isolation
+
+| Field | Type | Default | Effect |
+|---|---|---|---|
+| `worktree` | `str` | `"auto"` | Graph-level isolation default; inherited graph→subgraph. `auto` = isolate each node in its own git worktree iff the workdir is a git repo (else no worktree). `isolated` = force a per-node worktree. `off` (alias `none`) = no worktree; the node runs in the shared base workdir. Bare YAML `off`/`on` (booleans) are accepted (`off`→`off`, `on`→`isolated`). A value that isn't a reserved mode is rejected (named shared-worktree groups are not yet supported). Per-node override: `Node.worktree`. |
+
 Both memory gates compose (AND) with each other and with the
 semaphores — every gate must allow dispatch. In-flight jobs are never
 aborted by the gates; only new acquisitions wait.
@@ -185,6 +191,7 @@ sqrlly never reads machine-global keystores.
 | `fan_out` | `FanOut \| None` | `None` | Manifest-driven `Send` fan-out. |
 | `route` | `Route \| None` | `None` | Inline forward-edge routing block. |
 | `timeout` | `float \| None` | `None` | Per-node timeout; falls back to `settings.default_timeout`. |
+| `worktree` | `str \| None` | `None` | Per-node isolation override; `None` inherits `settings.worktree`. Values: `auto` / `isolated` / `off` (alias `none`); bare YAML `off`/`on` booleans accepted. `off` runs the node in the shared base workdir (so e.g. a script gate, which runs at the base workdir, can read the node's files). See `settings.worktree`. |
 
 `Node` declares `extra="forbid"` — an unknown key (including the
 removed `model`, `prompt_file`, `inputs`, `outputs`) surfaces as a

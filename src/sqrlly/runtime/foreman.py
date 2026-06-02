@@ -99,19 +99,27 @@ class ForemanExecutor:
 
         async with self._global_sem:
             async with (model_sem or _null_async_cm()):
-                wt = await self._acquire_worktree(node.id)
-                # Scaffold the output dir in the worktree (where the node
-                # actually writes), not just the workdir.
+                # `worktree: off` opts the node out of isolation: it runs in
+                # the base workdir (shared FS) and records no worktree path.
+                # `auto`/`isolated` get a dedicated worktree — `auto` is
+                # isolated here because foreman only runs inside a git repo.
+                isolate = node.effective_worktree(s) != "off"
+                run_dir = (
+                    await self._acquire_worktree(node.id) if isolate
+                    else self._base
+                )
+                # Scaffold the output dir where the node actually writes.
                 if node.output_contract:
-                    scaffold_output_directory(node.output_contract, wt)
+                    scaffold_output_directory(node.output_contract, run_dir)
                 result = await self._inner.execute(
-                    node, context, workdir=wt,
+                    node, context, workdir=run_dir,
                     settings_override=settings_override,
                 )
-                # Record where the node ran so output_contract validates
-                # against the worktree it wrote into.
-                if result.worktree is None:
-                    result.worktree = wt
+                # Record where an isolated node ran so output_contract
+                # validates against the worktree it wrote into. An `off`
+                # node ran in the base workdir and leaves worktree unset.
+                if isolate and result.worktree is None:
+                    result.worktree = run_dir
                 return result
 
     async def _wait_for_memory(

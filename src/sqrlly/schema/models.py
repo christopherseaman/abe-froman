@@ -55,6 +55,39 @@ def _parse_byte_size(value: Any) -> Any:
     return int(float(n_str) * mult)
 
 
+# Worktree isolation modes (v1). `none` is an accepted alias for `off`.
+# Named shared-worktree groups are a planned fast-follow; until then a
+# non-reserved token is rejected so a group name can't silently no-op.
+_WORKTREE_MODES = ("auto", "isolated", "off")
+
+
+def _normalize_worktree(value: Any) -> Any:
+    """Normalize a worktree-mode value: ``None`` passes through (inherit);
+    ``"none"`` aliases to ``"off"``; one of ``auto``/``isolated``/``off``
+    is accepted; anything else raises."""
+    if value is None:
+        return None
+    # Bare `worktree: off`/`on` parse as YAML booleans (off/no/false →
+    # False, on/yes/true → True). Map the toggle to the isolation modes
+    # so the ergonomic `worktree: off` opt-out works unquoted.
+    if isinstance(value, bool):
+        return "isolated" if value else "off"
+    if not isinstance(value, str):
+        raise ValueError(
+            f"worktree must be a string, got {type(value).__name__}"
+        )
+    mode = value.strip().lower()
+    if mode == "none":
+        return "off"
+    if mode not in _WORKTREE_MODES:
+        raise ValueError(
+            f"worktree must be one of auto/isolated/off "
+            f"(named shared-worktree groups are not yet supported), "
+            f"got {value!r}"
+        )
+    return mode
+
+
 class RouteCase(BaseModel):
     """One case in a route ladder.
 
@@ -388,6 +421,16 @@ class Settings(BaseModel):
     @classmethod
     def _normalize_memory_bytes(cls, v: Any) -> Any:
         return _parse_byte_size(v)
+
+    # Worktree isolation default for the graph; inherits graph→subgraph via
+    # `merge_settings`. `auto` = isolate per-node iff in a git repo (today's
+    # implicit behavior, made explicit). Per-node override: `Node.worktree`.
+    worktree: str = "auto"
+
+    @field_validator("worktree", mode="before")
+    @classmethod
+    def _normalize_worktree_setting(cls, v: Any) -> Any:
+        return _normalize_worktree(v)
     max_subgraph_depth: int = 10  # cap on recursive subgraph nesting (Stage 4c)
     # Stage 5b — execute.url remote URL gates
     base_url: str | None = None  # default base for relative urls in execute.url
@@ -451,11 +494,22 @@ class Node(BaseModel):
     fan_out: FanOut | None = None
     route: Route | None = None
     timeout: float | None = None
+    worktree: str | None = None
+
+    @field_validator("worktree", mode="before")
+    @classmethod
+    def _normalize_worktree_override(cls, v: Any) -> Any:
+        return _normalize_worktree(v)
 
     def effective_timeout(self, settings: Settings) -> float | None:
         if self.timeout is not None:
             return self.timeout
         return settings.default_timeout
+
+    def effective_worktree(self, settings: Settings) -> str:
+        if self.worktree is not None:
+            return self.worktree
+        return settings.worktree
 
     def effective_max_retries(self, settings: Settings) -> int:
         if self.evaluation and self.evaluation.max_retries is not None:

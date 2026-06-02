@@ -50,6 +50,21 @@ class TestExplicitDefaultStillWins:
         assert merged.max_retries == 3
 
 
+class TestWorktreeInheritance:
+    """`Settings.worktree` rides the generic merge unchanged: a subgraph
+    inherits the graph's isolation default, or overrides it for its scope."""
+
+    def test_subgraph_inherits_parent_worktree(self):
+        parent = Settings(worktree="off")
+        child = Settings()  # subgraph authored no worktree
+        assert merge_settings(parent, child).worktree == "off"
+
+    def test_subgraph_overrides_parent_worktree(self):
+        parent = Settings(worktree="off")
+        child = Settings(worktree="isolated")
+        assert merge_settings(parent, child).worktree == "isolated"
+
+
 class TestComposesNested:
     """Real workflows have parent → subgraph → sub-subgraph chains.
     merge_settings must compose left-to-right; the right-most explicit

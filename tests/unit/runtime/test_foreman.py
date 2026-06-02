@@ -196,6 +196,50 @@ class TestWorktreePool:
             await foreman.close()
 
     @pytest.mark.asyncio
+    async def test_worktree_off_runs_in_base_workdir(self, tmp_path):
+        """`worktree: off` runs the node in the base workdir (no worktree),
+        and records no worktree path — so the node's files are reachable at
+        the base workdir where script gates also run."""
+        _init_git_repo(tmp_path)
+        inner = DispatchExecutor(workdir=str(tmp_path))
+        foreman = ForemanExecutor(inner=inner, base_workdir=str(tmp_path))
+        try:
+            node = Node(
+                id="p", name="p",
+                execute=Execute(url=_PWD, params={"args": []}),
+                worktree="off",
+            )
+            result = await foreman.execute(node, {})
+            assert result.success
+            assert Path(result.output.strip()).resolve() == Path(tmp_path).resolve()
+            assert foreman.get_worktree("p") is None
+            assert result.worktree is None
+        finally:
+            await foreman.close()
+
+    @pytest.mark.asyncio
+    async def test_worktree_isolated_runs_in_its_worktree(self, tmp_path):
+        """`worktree: isolated` matches the `auto`-in-repo default: the node
+        runs in its own worktree and the path is recorded."""
+        _init_git_repo(tmp_path)
+        inner = DispatchExecutor(workdir=str(tmp_path))
+        foreman = ForemanExecutor(inner=inner, base_workdir=str(tmp_path))
+        try:
+            node = Node(
+                id="p", name="p",
+                execute=Execute(url=_PWD, params={"args": []}),
+                worktree="isolated",
+            )
+            result = await foreman.execute(node, {})
+            assert result.success
+            wt_path = foreman.get_worktree("p")
+            assert wt_path is not None
+            assert Path(result.output.strip()).resolve() == Path(wt_path).resolve()
+            assert Path(result.worktree).resolve() == Path(wt_path).resolve()
+        finally:
+            await foreman.close()
+
+    @pytest.mark.asyncio
     async def test_concurrent_same_node_creates_one_worktree(self, tmp_path):
         """E3: two acquisitions racing for the same node_id share one
         creation task — exactly one worktree, both callers get its path."""
