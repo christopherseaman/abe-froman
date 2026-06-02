@@ -12,6 +12,41 @@
 > preset cutover superseded). Test-count figures in older items are
 > point-in-time; current is ~941.
 
+## Worktree composition (design north star)
+
+Surfaced by the adapter port (2026-05-30): sqrlly has worktree **fork**
+(foreman gives each node an isolated git worktree) and data flows as
+**stdout / `node_outputs`** — but there's no *file*-side **join**: no
+way to read files across worktrees or assemble per-worktree files into
+a result. File-accumulating workflows (a deliverable that's a *tree of
+files* built by many nodes) therefore can't run under isolation today;
+they fall back to a shared non-git workdir (`worktree_isolation`
+effectively off). The coherent model is **fork → produce → read → join
+→ GC**:
+
+| Stage | What | Status / related item |
+|---|---|---|
+| **Fork** | per-node isolated worktree | have it (`ForemanExecutor`) |
+| **Produce** | nodes write file artifacts in their worktree | `output_contract` validates in-worktree (0.4.17); **AP1** generalizes to a written `manifest.json` |
+| **Read across** | a node consumes another node's worktree files | **AP1** (worktree-aware `manifest_path`) + **AP4** (fan-in pairing by child id) — the enablers; needed by *any* join |
+| **Join / assemble** | gather per-worktree files into one result | **pick one engine:** **AP3** (file-copy of `output_contract` files → `output_directory`) **or** **B3** (`build-<N>-snapshot-*` branch + commit + octopus-merge-on-acceptance) |
+| **GC** | reclaim worktrees / branches | **B4** |
+| *escape hatch* | opt out of the model for shared-FS workflows | **AP2** (`settings.worktree_isolation: false` + a loud warning when >1 node shares an output dir under isolation) — orthogonal valve, not part of the model |
+
+**The architectural decision is AP3 vs B3** — they're the same "join"
+with two engines (file-copy vs git-merge). AP1/AP4 feed whichever is
+chosen, so they're *do-regardless* foundations. The builder's stated
+`build-<N>-snapshot-*` + merge-on-acceptance convention points at **B3**
+as the destination, with AP3's file-copy a possible interim. AP2's
+warning ships regardless (cheap safety against the silent-degrade).
+B4 (GC) follows once branches/worktrees accumulate.
+
+Related, tracked in `TODO.md`: **AP1–AP4** (adapter-port findings),
+**B3** (foreman branch/commit/octopus-merge), **B4** (worktree/branch
+GC), **AP2** (isolation opt-out + warning).
+
+---
+
 - [x] **Documentation** — _landed, post-Stage-5b._ README,
   TECHNICAL.md, and CLAUDE.md split by audience: README is the
   user/contributor entry point (install, quickstart, schema, examples);
