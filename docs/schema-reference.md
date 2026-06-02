@@ -445,7 +445,9 @@ item.
 **FanOutTemplate**: `execute: Execute` (required),
 `evaluation: Evaluation?`.
 **FanOutFinalNode**: `id: str`, `name: str` (required),
-`description: str?`, `execute: Execute?`, `evaluation: Evaluation?`.
+`description: str?`, `execute: Execute?`, `evaluation: Evaluation?`,
+`output_contract: OutputContract?` (enforced via the standard
+execution path, like a top-level node's).
 
 When `template.execute.url` ends in `.yaml`, each Send runs a per-child
 subgraph instead of a single executor call.

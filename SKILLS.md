@@ -142,14 +142,16 @@ write a YAML file with `name`, `version`, `nodes`, and `settings`.
            url: prompts/summarize.md
    ```
    `final_nodes` is a list of **inline node definitions** (each needs
-   `id` / `name` / `execute`), not a list of references to top-level
-   node ids. Each manifest item is a JSON **object**; its fields become
-   template variables (`{{id}}`, `{{name}}`, …). A bare string item is
-   treated as `{"id": "<string>"}`. The manifest may instead be produced
-   at run time as this node's JSON output, with `manifest_path` as the
-   static fallback (a *declared* manifest_path that's missing or invalid
-   JSON halts the run; an empty-but-valid manifest warns and skips the
-   fan-out).
+   `id` / `name` / `execute`; they also accept `evaluation` and
+   `output_contract`), not references to top-level node ids. Each
+   manifest item is a JSON **object**; its fields become template
+   variables (`{{id}}`, `{{name}}`, …). A bare string item is treated
+   as `{"id": "<string>"}`. The manifest may instead be produced at run
+   time as this node's JSON output — a ``` code fence or surrounding
+   prose around the JSON array/object is tolerated — with `manifest_path`
+   as the static fallback (a *declared* manifest_path that's missing or
+   invalid JSON halts the run; an empty-but-valid manifest warns and
+   skips the fan-out).
 
 Do not guess field names. Every model is `extra="forbid"` — a typo'd
 key is a hard validation error. The exhaustive field reference is

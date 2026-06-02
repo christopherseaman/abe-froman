@@ -115,6 +115,11 @@ the base workdir, so they never meet. **Desired:** a worktree-aware
 `_read_manifest` extract a fenced/embedded JSON array from stdout
 (defensive), not require bare-JSON whole output.
 
+✅ **Partially done (0.5.2):** `_read_manifest` now strips a ``` fence /
+extracts the embedded JSON array-or-object from stdout. The
+**worktree-aware `manifest_path`** (resolve against the parent's
+worktree) is the remaining, higher-value half.
+
 ### 🤞 AP2 — worktree isolation is implicit-on and silently breaks shared-file workflows
 
 `_is_git_repo(workdir)` (walks up) → per-node `ForemanExecutor`
@@ -152,9 +157,9 @@ worktree map by child id, or fold both into `{id: {output, worktree}}`.
 
 ### 🤞 AP5 — schema papercuts (C1/C5)
 
-- **C1:** `output_contract` rejected on `fan_out.final_nodes`
-  (`FanOutFinalNode` lacks the field; top-level `Node` has it). Fix: add
-  `output_contract` to `FanOutFinalNode` (`schema/models.py`).
+- **C1 ✅ (0.5.2):** `output_contract` added to `FanOutFinalNode` and
+  threaded into the final node's synthetic `Node`, so it's enforced via
+  the standard execution path.
 - **C5:** `depends_on` can't name an inline fan-out final-node id
   (`_validate_depends_on` only knows top-level ids; workaround: depend on
   the fan-out parent). Fix: allow/document depending on a final-node id.
@@ -166,7 +171,8 @@ worktree map by child id, or fold both into `{id: {output, worktree}}`.
   gate JSON.
 - **`required_files` globs** — literal today; support globs (== B5 /
   the "flexible output contracts" builder want).
-- **`--version` flag** — add Click `@click.version_option`.
+- **`--version` flag ✅ (0.5.2)** — `@click.version_option` on the CLI
+  group (reads package metadata).
 - **Py 3.14 langchain warning** — `Core Pydantic V1 functionality…` on
   every `uv run`; cosmetic now, real if langchain drops the V1 shim;
   pin/track the dep.

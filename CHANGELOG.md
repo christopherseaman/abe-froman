@@ -3,6 +3,24 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.2] — quick wins from the adapter-port findings
+
+### Added
+
+- **`sqrlly --version`** — `version_option` on the CLI group (reads
+  installed package metadata).
+- **`output_contract` on fan-out `final_nodes`** (C1) — accepted on
+  `FanOutFinalNode` and enforced via the standard execution path
+  (scaffold + validate), like a top-level node's contract.
+
+### Fixed
+
+- **Fan-out manifest tolerates wrapped stdout** (AP1, partial) — a
+  parent node that emits its manifest inside a ``` code fence or with a
+  reasoning preamble now fans out instead of "manifest resolved to zero
+  items"; `_read_manifest` strips the fence / extracts the embedded JSON
+  array-or-object. (Worktree-aware `manifest_path` remains future work.)
+
 ## [0.5.1] — JSONL logs record per-node model + preset
 
 ### Added
