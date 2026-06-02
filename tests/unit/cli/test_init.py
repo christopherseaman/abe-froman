@@ -20,6 +20,15 @@ def _git_init(path: Path) -> None:
     subprocess.run(["git", "init", "-q", str(path)], check=True)
 
 
+class TestVersion:
+    def test_version_flag_prints_version(self, runner):
+        import importlib.metadata as m
+        result = runner.invoke(cli, ["--version"])
+        assert result.exit_code == 0
+        assert "sqrlly" in result.output
+        assert m.version("sqrlly") in result.output
+
+
 class TestInit:
     def test_creates_workflow_and_prompt(self, runner, tmp_path):
         target = tmp_path / "my-workflow"

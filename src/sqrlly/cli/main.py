@@ -58,6 +58,7 @@ def _emit_warnings(config: Graph) -> None:
 
 
 @click.group()
+@click.version_option(package_name="sqrlly", prog_name="sqrlly")
 def cli():
     """sqrlly — workflow orchestrator."""
     pass

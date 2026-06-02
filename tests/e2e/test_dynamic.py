@@ -207,6 +207,7 @@ class TestFinalNodes:
             id="summary", name="Summary",
             description=None,
             execute=Execute(url="s.md"), evaluation=None,
+            output_contract=None,
         ))()
 
         from helpers import make_config

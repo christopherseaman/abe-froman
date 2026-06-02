@@ -300,6 +300,7 @@ def _make_final_fan_out_node(
         evaluation=final_node.evaluation,
         depends_on=[parent_node.id],
         execute=final_node.execute,
+        output_contract=final_node.output_contract,
     )
 
     inner = _make_execution_node(

@@ -8,6 +8,7 @@ langgraph imports.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -17,6 +18,28 @@ from sqrlly.schema.models import Node
 
 if TYPE_CHECKING:
     from sqrlly.schema.models import Graph
+
+_FENCE_RE = re.compile(r"```(?:json|JSON)?\s*\n?(.*?)\n?```", re.DOTALL)
+
+
+def _strip_to_json(text: str) -> str:
+    """Pull a JSON array/object out of a node's stdout so a fan-out
+    manifest survives the common LLM wrappings: a ``` code fence, or a
+    reasoning preamble around the payload. Returns the original text when
+    neither applies (then ``json.loads`` decides). Mirrors the gate
+    parser's tolerance — a manifest-emitting parent shouldn't have to
+    print bare JSON as its entire output."""
+    t = text.strip()
+    fence = _FENCE_RE.search(t)
+    if fence:
+        return fence.group(1).strip()
+    starts = [i for i in (t.find("["), t.find("{")) if i != -1]
+    ends = [i for i in (t.rfind("]"), t.rfind("}")) if i != -1]
+    if starts and ends:
+        start, end = min(starts), max(ends)
+        if start <= end:
+            return t[start : end + 1]
+    return t
 
 
 def find_terminal_nodes(config: "Graph") -> list[str]:
@@ -75,7 +98,7 @@ def _read_manifest(state: WorkflowState, node: Node) -> list[dict]:
     """
     output = state.get("node_outputs", {}).get(node.id, "")
     try:
-        data = json.loads(output)
+        data = json.loads(_strip_to_json(output))
         if isinstance(data, dict) and "items" in data:
             return _normalize_items(data["items"])
         if isinstance(data, list):

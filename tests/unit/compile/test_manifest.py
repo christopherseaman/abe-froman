@@ -48,6 +48,26 @@ class TestReadManifestFromOutput:
         result = _read_manifest(state, node)
         assert result == []
 
+    def test_fenced_json_array_is_unwrapped(self):
+        """An LLM parent that wraps the manifest in a ```json fence still
+        fans out (not 'resolved to zero items')."""
+        output = '```json\n[{"id": "a"}, {"id": "b"}]\n```'
+        state = make_initial_state(node_outputs={"p1": output})
+        result = _read_manifest(state, _phase_with_dynamic())
+        assert result == [{"id": "a"}, {"id": "b"}]
+
+    def test_preamble_then_array_is_extracted(self):
+        output = 'Here is the manifest:\n[{"id": "x"}]'
+        state = make_initial_state(node_outputs={"p1": output})
+        result = _read_manifest(state, _phase_with_dynamic())
+        assert result == [{"id": "x"}]
+
+    def test_fenced_items_object_is_unwrapped(self):
+        output = '```\n{"items": [{"id": "y"}]}\n```'
+        state = make_initial_state(node_outputs={"p1": output})
+        result = _read_manifest(state, _phase_with_dynamic())
+        assert result == [{"id": "y"}]
+
     def test_json_dict_without_items(self):
         output = json.dumps({"other": "data"})
         state = make_initial_state(node_outputs={"p1": output})

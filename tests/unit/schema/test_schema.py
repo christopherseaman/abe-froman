@@ -720,6 +720,26 @@ class TestFanOut:
         assert config.final_nodes[0].id == "summary"
         assert config.final_nodes[0].execute.url == "s.md"
 
+    def test_final_node_accepts_output_contract(self):
+        """C1: `output_contract` is valid on a fan-out final node (it runs
+        through the standard execution path, which enforces it)."""
+        config = FanOut(
+            template={"execute": {"url": "t.md"}},
+            final_nodes=[
+                {
+                    "id": "summary",
+                    "name": "Summary",
+                    "execute": {"url": "s.md"},
+                    "output_contract": {
+                        "base_directory": ".",
+                        "required_files": ["summary.md"],
+                    },
+                }
+            ],
+        )
+        fn = config.final_nodes[0]
+        assert fn.output_contract.required_files == ["summary.md"]
+
     def test_empty_block_is_well_formed(self):
         """A bare `FanOut()` is structurally valid (template is optional
         at the schema level — runtime validates required fields when

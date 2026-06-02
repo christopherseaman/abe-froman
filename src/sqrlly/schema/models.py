@@ -248,6 +248,10 @@ class FanOutFinalNode(BaseModel):
     description: str | None = None
     execute: Execute | None = None
     evaluation: Evaluation | None = None
+    # Enforced via the standard execution-node path (the final node runs
+    # through `_make_execution_node`), so it scaffolds + validates just
+    # like a top-level node's contract.
+    output_contract: OutputContract | None = None
 
 
 class FanOut(BaseModel):
