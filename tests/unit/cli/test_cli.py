@@ -169,6 +169,60 @@ class TestRunCommand:
         assert result.exit_code != 0
         assert "Failed:" in result.output
 
+    def test_worktree_gc_on_success_removes_trees(self, runner, tmp_path):
+        """worktree_gc: on_success removes all .sqrlly/wt-* dirs after a
+        clean run; worktree_gc: never (default) leaves them in place.
+        Uses a real git repo + /usr/bin/true (no LLM required)."""
+        import shutil
+        import subprocess
+
+        true_bin = shutil.which("true") or "/usr/bin/true"
+
+        def _init_repo(path: Path) -> None:
+            subprocess.run(["git", "init", "-q", "-b", "main", str(path)], check=True)
+            subprocess.run(["git", "-C", str(path), "config", "user.email", "t@t"], check=True)
+            subprocess.run(["git", "-C", str(path), "config", "user.name", "t"], check=True)
+            (path / "README").write_text("init")
+            subprocess.run(["git", "-C", str(path), "add", "README"], check=True)
+            subprocess.run(["git", "-C", str(path), "commit", "-q", "-m", "init"], check=True)
+
+        # --- on_success: trees must be removed after a clean run ---
+        repo_gc = tmp_path / "repo_gc"
+        repo_gc.mkdir()
+        _init_repo(repo_gc)
+        cfg_gc = repo_gc / "workflow.yaml"
+        cfg_gc.write_text(
+            "name: GcTest\nversion: '1.0'\n"
+            "settings:\n  worktree_gc: on_success\n"
+            "nodes:\n"
+            "  - id: step\n    name: Step\n"
+            f"    execute:\n      url: {true_bin}\n"
+            "      params:\n        args: []\n"
+        )
+        result_gc = runner.invoke(cli, ["run", str(cfg_gc), "--workdir", str(repo_gc)])
+        assert result_gc.exit_code == 0, result_gc.output + result_gc.stderr
+        sqrlly_dir = repo_gc / ".sqrlly"
+        leftover = list(sqrlly_dir.glob("wt-*")) if sqrlly_dir.exists() else []
+        assert leftover == [], f"on_success GC left trees: {leftover}"
+
+        # --- never (default): tree remains after run ---
+        repo_keep = tmp_path / "repo_keep"
+        repo_keep.mkdir()
+        _init_repo(repo_keep)
+        cfg_keep = repo_keep / "workflow.yaml"
+        cfg_keep.write_text(
+            "name: KeepTest\nversion: '1.0'\n"
+            "nodes:\n"
+            "  - id: step\n    name: Step\n"
+            f"    execute:\n      url: {true_bin}\n"
+            "      params:\n        args: []\n"
+        )
+        result_keep = runner.invoke(cli, ["run", str(cfg_keep), "--workdir", str(repo_keep)])
+        assert result_keep.exit_code == 0, result_keep.output + result_keep.stderr
+        sqrlly_dir_keep = repo_keep / ".sqrlly"
+        leftover_keep = list(sqrlly_dir_keep.glob("wt-*")) if sqrlly_dir_keep.exists() else []
+        assert leftover_keep != [], "never GC should leave trees but found none"
+
 
 class TestRunOptions:
     def test_preset_unknown_raises(self, runner, tmp_path):

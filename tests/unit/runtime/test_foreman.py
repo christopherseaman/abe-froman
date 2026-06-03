@@ -342,6 +342,26 @@ class TestWorktreePool:
             await foreman.close()
 
 
+    @pytest.mark.asyncio
+    async def test_reclaim_removes_distinct_trees(self, tmp_path):
+        _init_git_repo(tmp_path)
+        inner = DispatchExecutor(workdir=str(tmp_path))
+        foreman = ForemanExecutor(inner=inner, base_workdir=str(tmp_path))
+        try:
+            a = Node(id="a", name="a", execute=Execute(url=_PWD, params={"args": []}), worktree_group="team")
+            b = Node(id="b", name="b", execute=Execute(url=_PWD, params={"args": []}), worktree_group="team")
+            c = Node(id="c", name="c", execute=Execute(url=_PWD, params={"args": []}))  # auto -> per-node
+            for n in (a, b, c):
+                await foreman.execute(n, {})
+            grp = foreman.get_worktree("a"); iso = foreman.get_worktree("c")
+            assert foreman.get_worktree("b") == grp  # shared
+            removed = await foreman.reclaim()
+            assert not Path(grp).exists() and not Path(iso).exists()
+            assert sorted(removed) == sorted({grp, iso})  # shared tree counted once
+        finally:
+            await foreman.close()
+
+
 class TestRehydration:
     @pytest.mark.asyncio
     async def test_rehydrate_populates_worktree_map(self, tmp_path):

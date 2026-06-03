@@ -423,6 +423,10 @@ async def _execute_workflow(
                 compiled, state, config,
                 thread_id=thread_id, logger=logger,
             )
+            if (config.settings.worktree_gc == "on_success"
+                    and not result.get("failed_nodes")
+                    and isinstance(executor_obj, ForemanExecutor)):
+                await executor_obj.reclaim()
         finally:
             await executor_obj.close()
 

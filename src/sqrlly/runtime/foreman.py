@@ -243,6 +243,25 @@ class ForemanExecutor:
             )
         return str(dest)
 
+    async def reclaim(self) -> list[str]:
+        """Remove every distinct worktree this foreman created.
+
+        Returns the removed paths. The caller decides WHEN (end-of-run,
+        success only); this method does not gate on run status.
+        Group nodes share a single path — deduplication ensures each
+        distinct tree is removed exactly once.
+        """
+        distinct = sorted(set(self._worktrees.values()))
+        for path in distinct:
+            proc = await asyncio.create_subprocess_exec(
+                "git", "-C", self._base, "worktree", "remove", "--force", path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await proc.communicate()  # best-effort; a manually-deleted tree is fine
+        self._worktrees.clear()
+        return distinct
+
     def get_worktree(self, node_id: str) -> str | None:
         """Return the worktree path for a node_id, or None if not yet allocated."""
         return self._worktrees.get(node_id)
