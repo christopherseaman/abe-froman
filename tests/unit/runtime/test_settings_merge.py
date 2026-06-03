@@ -51,8 +51,10 @@ class TestExplicitDefaultStillWins:
 
 
 class TestWorktreeInheritance:
-    """`Settings.worktree` rides the generic merge unchanged: a subgraph
-    inherits the graph's isolation default, or overrides it for its scope."""
+    """Worktree isolation inherits graph→subgraph: a subgraph inherits the
+    graph's default or overrides it, and authoring either field of the
+    mutually-exclusive (worktree, worktree_group) pair clears the inherited
+    sibling for that scope."""
 
     def test_subgraph_inherits_parent_worktree(self):
         parent = Settings(worktree="off")
