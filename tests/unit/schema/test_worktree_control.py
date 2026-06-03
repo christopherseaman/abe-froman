@@ -64,3 +64,29 @@ def test_worktree_coerces_yaml_booleans(yaml_bool, expected):
     `off`/`no`/`false` → False → "off"; `on`/`yes`/`true` → True → "isolated"."""
     assert Settings(worktree=yaml_bool).worktree == expected
     assert Node(id="a", name="a", worktree=yaml_bool).worktree == expected
+
+
+def test_settings_worktree_group_defaults_none():
+    assert Settings().worktree_group is None
+
+
+def test_node_worktree_group_defaults_none():
+    assert Node(id="a", name="a").worktree_group is None
+
+
+def test_settings_group_alone_is_valid():
+    s = Settings(worktree_group="prd")
+    assert s.worktree_group == "prd"
+    assert s.worktree == "auto"  # neutral default, no conflict
+
+
+def test_node_group_with_auto_is_valid():
+    n = Node(id="a", name="a", worktree="auto", worktree_group="team-a")
+    assert n.worktree_group == "team-a"
+
+
+@pytest.mark.parametrize("mode", ["isolated", "off"])
+def test_group_with_explicit_mode_is_rejected(mode):
+    with pytest.raises(ValidationError) as exc:
+        Node(id="a", name="a", worktree=mode, worktree_group="team-a")
+    assert "worktree_group" in str(exc.value)

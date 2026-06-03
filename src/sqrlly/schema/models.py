@@ -425,12 +425,24 @@ class Settings(BaseModel):
     # Worktree isolation default for the graph; inherits graph→subgraph via
     # `merge_settings`. `auto` = isolate per-node iff in a git repo (today's
     # implicit behavior, made explicit). Per-node override: `Node.worktree`.
-    worktree: str = "auto"
+    worktree: Literal["auto", "isolated", "off"] = "auto"
+    worktree_group: str | None = None
 
     @field_validator("worktree", mode="before")
     @classmethod
     def _normalize_worktree_setting(cls, v: Any) -> Any:
         return _normalize_worktree(v)
+
+    @model_validator(mode="after")
+    def _worktree_group_exclusive(self) -> "Settings":
+        if self.worktree_group is not None and self.worktree in ("isolated", "off"):
+            raise ValueError(
+                "worktree_group cannot be combined with worktree="
+                f"{self.worktree!r}: a group already implies a shared tree "
+                "(omit worktree, or set it to auto)"
+            )
+        return self
+
     max_subgraph_depth: int = 10  # cap on recursive subgraph nesting (Stage 4c)
     # Stage 5b — execute.url remote URL gates
     base_url: str | None = None  # default base for relative urls in execute.url
@@ -494,12 +506,22 @@ class Node(BaseModel):
     fan_out: FanOut | None = None
     route: Route | None = None
     timeout: float | None = None
-    worktree: str | None = None
+    worktree: Literal["auto", "isolated", "off"] | None = None
+    worktree_group: str | None = None
 
     @field_validator("worktree", mode="before")
     @classmethod
     def _normalize_worktree_override(cls, v: Any) -> Any:
         return _normalize_worktree(v)
+
+    @model_validator(mode="after")
+    def _worktree_group_exclusive(self) -> "Node":
+        if self.worktree_group is not None and self.worktree in ("isolated", "off"):
+            raise ValueError(
+                "worktree_group cannot be combined with worktree="
+                f"{self.worktree!r}: pick one (a group implies a shared tree)"
+            )
+        return self
 
     def effective_timeout(self, settings: Settings) -> float | None:
         if self.timeout is not None:
