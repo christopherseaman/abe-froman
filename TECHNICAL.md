@@ -501,6 +501,18 @@ filterable) on a clean run, before `settings.worktree_gc: on_success`
 calls `foreman.reclaim()`. Reconciling *overlapping* isolated trees
 (3-way merge) is intentionally deferred.
 
+For a **subgraph fan-out template**, the *child is the isolation unit*:
+`make_fan_out_subgraph_invoker` acquires one worktree per branch
+(`foreman.acquire_branch_worktree(child_id)`) and compiles the subgraph
+per branch against a `_BranchScopedExecutor` that pins every inner node
+to the branch tree (forces `worktree: off` + `workdir=branch_tree`), so
+inner nodes share the branch tree rather than colliding on a shared
+inner-node key. The branch tree is surfaced as `ExecutionResult.worktree`
+and recorded as `node_worktrees[child_id]` by the same path inline
+children use — giving 1:1 resume/GC/`branch_map` parity with inline
+fan-out. Isolation is gated on the fan-out scope's effective worktree
+(off → no branch tree, base workdir, matching inline-`off`).
+
 The memory gates run *outside* the semaphores so a gated acquisition
 doesn't sit holding a slot waiting for memory to drop. Both gates
 AND-compose with the semaphores: every gate must allow dispatch.

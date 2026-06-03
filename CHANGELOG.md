@@ -3,6 +3,23 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.5] — subgraph fan-out worktree isolation
+
+### Fixed
+
+- **Subgraph fan-out branches now get isolated worktrees.** When a
+  fan-out template is a subgraph, each Send branch runs in its own
+  worktree (keyed by branch id) with the subgraph's inner nodes pinned
+  inside it — the *branch is the isolation unit*. Previously all branches
+  shared one inner-node worktree (a cross-branch write race), and
+  `{{<parent>_branch_map}}.worktree` was null for subgraph templates.
+  Inline fan-out already behaved correctly; this brings subgraph
+  templates to parity (1:1 resume / GC / branch-map). An inner node's
+  own `worktree`/`worktree_group` is neutralized (it can't escape the
+  branch tree); a fan-out nested inside a branch shares the outer branch
+  tree. Reconciling *overlapping* isolated trees (3-way merge) remains
+  deferred.
+
 ## [0.5.4] — worktree groups (v2 control)
 
 ### Added

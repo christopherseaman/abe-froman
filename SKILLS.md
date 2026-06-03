@@ -206,6 +206,17 @@ Set `settings.worktree_gc: on_success` to remove worktrees after a clean
 run (default `never` keeps them for inspection / `--resume`). The full
 lifecycle is **fork → produce → read/share → promote → GC**.
 
+**Subgraph fan-out isolation.** When a fan-out template is a subgraph
+(`.yaml`), each Send branch gets its own worktree (keyed by the branch
+id) and the subgraph's inner nodes all run *inside* that one branch tree
+— the **branch is the isolation unit**. Inner nodes share the branch
+tree (so a later inner node reads an earlier one's files for free; two
+inner nodes writing the *same* path race — give them distinct paths). An
+inner node's own `worktree`/`worktree_group` is neutralized — it can't
+escape the branch tree or join a cross-branch group. A fan-out nested
+*inside* a branch shares the outer branch tree (it isn't a second
+isolation level).
+
 **Remote sources.** `settings.base_url` sets the base for relative
 urls — including an `http(s)://` base, which fetches **prompt
 templates** over the network (gated by `allow_remote_urls`,

@@ -176,18 +176,17 @@ discover-by-default, glob-filterable. File-copy survives only as the
 non-git fallback. The 2026-06-02 design retired AP3-as-copy because
 copy can't express deletions or unanticipated footprints.
 
-### 🤞 AP4 — fan-in worktree pairing is positional (PLANNED v2)
+### ✅ AP4 — fan-in worktree pairing (DONE, v2 / 0.5.4 + 0.5.5)
 
-A fan-in node gets child outputs as `{{<parent>_branches}}` (id→output
-**dict**) but worktree paths as `{{<parent>_branch_worktrees}}` (a bare
-**list** of paths — `compile/nodes.py:133-142`). Pairing a child's
-output to its worktree relies on **implicit order**. **Fix:** add a
-keyed `{{<parent>_branch_map}}` = `{id: {output, worktree}}` (additive;
-keep the legacy list). **Blocker first:** fan-out children never write
-`node_worktrees` (`dynamic.py` `exec_update` omits it vs `nodes.py:654`),
-so `{{<parent>_branch_worktrees}}` renders `[]` under isolation today —
-close that write gap as part of v2. Tracked in the worktree-v2 build
-plan.
+Added the keyed `{{<parent>_branch_map}}` = `{id: {output, worktree}}`
+(additive; legacy `{{<parent>_branch_worktrees}}` list retained). The
+inline fan-out child `node_worktrees` write gap was closed in 0.5.4
+(`dynamic.py:210-211`). The **subgraph** fan-out gap (builder-reported:
+all branches shared one inner-node tree → `branch_map.worktree` null)
+was fixed in 0.5.5 — each branch now gets its own worktree (child-is-the-
+unit; `make_fan_out_subgraph_invoker` + `_BranchScopedExecutor` +
+`foreman.acquire_branch_worktree`). Build plan:
+`docs/superpowers/plans/2026-06-03-subgraph-fanout-worktree-isolation.md`.
 
 ### 🤞 AP5 — schema papercuts (C1/C5)
 
