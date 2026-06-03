@@ -309,6 +309,38 @@ class TestWorktreePool:
         finally:
             await foreman.close()
 
+    @pytest.mark.asyncio
+    async def test_orphaned_group_dir_is_not_silently_reused(self, tmp_path):
+        """A non-empty directory at wt-group-<name> that is NOT a live git worktree
+        (no .git entry) must NOT be silently returned as a valid worktree path.
+        A partial prior run may have mkdir'd the dest and written files but never
+        completed 'git worktree add'; reusing it silently leads to obscure downstream
+        git failures. With the fix, the liveness check (requiring a .git entry) falls
+        through to 'git worktree add', which refuses the non-empty existing dir and
+        RuntimeError surfaces loudly instead of the bogus path being returned.
+        """
+        _init_git_repo(tmp_path)
+        # Create a non-empty plain dir at the group path (simulates partial prior run:
+        # dir was created and files were written, but 'git worktree add' never ran).
+        orphan = tmp_path / ".sqrlly" / "wt-group-team"
+        orphan.mkdir(parents=True)
+        (orphan / "leftover.txt").write_text("from crashed run")
+        # Confirm it is a plain dir, not a live worktree.
+        assert not (orphan / ".git").exists()
+
+        inner = DispatchExecutor(workdir=str(tmp_path))
+        foreman = ForemanExecutor(inner=inner, base_workdir=str(tmp_path))
+        try:
+            node = Node(
+                id="worker", name="worker",
+                execute=Execute(url=_PWD, params={"args": []}),
+                worktree_group="team",
+            )
+            with pytest.raises(RuntimeError):
+                await foreman.execute(node, {})
+        finally:
+            await foreman.close()
+
 
 class TestRehydration:
     @pytest.mark.asyncio

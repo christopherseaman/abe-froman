@@ -7,8 +7,9 @@ Wraps an inner `NodeExecutor` (typically `DispatchExecutor`) and adds:
     set, blocks new dispatches while host memory percent is above it.
     Composes (AND) with the semaphores; in-flight jobs are never
     aborted by this gate.
-  - A **worktree pool** — each `node.id` gets a dedicated git worktree, reused
-    across retries so the agent can iterate on its own prior files.
+  - A **worktree pool** — per-node trees for ``auto``/``isolated`` nodes;
+    group nodes share one tree keyed by group name; ``off`` nodes run in
+    the base workdir.
 
 Foreman is LangGraph-agnostic: it imports nothing from `compile/` or `langgraph`.
 The retry decision lives at the compile layer; foreman just runs what's handed
@@ -218,9 +219,12 @@ class ForemanExecutor:
         dest_dir.mkdir(parents=True, exist_ok=True)
         if group is not None:
             safe = group.replace("/", "_").replace("::", "__")
+            # NOTE: group names that differ only by '/' vs '_' (or '::') map to
+            # the same safe name and therefore the same wt-group-<safe> path;
+            # authors should use distinct names that remain unique after sanitization.
             dest = dest_dir / f"wt-group-{safe}"
-            if dest.is_dir():
-                # Shared tree already exists (sibling created it, or prior run).
+            if dest.is_dir() and (dest / ".git").exists():
+                # Shared live worktree already exists (sibling created it, or prior run).
                 return str(dest)
         else:
             safe = pool_key.replace("::", "__").replace("/", "_")
