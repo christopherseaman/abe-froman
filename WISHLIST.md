@@ -56,10 +56,12 @@ group key` internally.
 
 Build plan: `docs/superpowers/plans/2026-06-02-worktree-v2-lifecycle.md`.
 
-Related, tracked in `TODO.md`: **AP4** (keyed worktree map), promotion
-(supersedes AP3), GC (B4), glob contracts (B5). **AP2** (isolation
-opt-out) and the silent-degrade fix landed in **v1 (0.5.3)**. **B3**
-(octopus-merge) is the deferred multi-source-overlap case only.
+Related, tracked in `TODO.md`: promotion (supersedes AP3), GC (B4),
+glob contracts (B5). **AP2** (isolation opt-out) + silent-degrade fix
+landed in **0.5.3**; **worktree groups** + **AP4** (keyed map) in
+**0.5.4**; **subgraph fan-out per-branch isolation** (child-is-the-unit)
+in **0.5.5**. **B3** (octopus-merge) is the deferred
+multi-source-overlap case only.
 
 ---
 
