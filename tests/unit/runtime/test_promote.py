@@ -48,3 +48,29 @@ def test_discover_path_with_spaces(tmp_path):
     changes = discover_changes(str(wt))
     assert "has space.md" in changes          # no surrounding quotes
     assert changes["has space.md"] == "added"
+
+
+def test_promote_applies_add_and_edit_to_base(tmp_path):
+    _repo(tmp_path); wt = _wt(tmp_path)
+    (wt/"a.txt").write_text("changed"); (wt/"new.md").write_text("hi")
+    from sqrlly.runtime.promote import promote
+    applied = promote(str(wt), str(tmp_path))
+    assert (tmp_path/"a.txt").read_text() == "changed"
+    assert (tmp_path/"new.md").read_text() == "hi"
+    assert set(applied) == {"a.txt", "new.md"}
+
+
+def test_promote_deletion_propagates(tmp_path):
+    _repo(tmp_path); wt = _wt(tmp_path)
+    (wt/"a.txt").unlink()
+    from sqrlly.runtime.promote import promote
+    promote(str(wt), str(tmp_path))
+    assert not (tmp_path/"a.txt").exists()
+
+
+def test_promote_creates_nested_dirs(tmp_path):
+    _repo(tmp_path); wt = _wt(tmp_path)
+    (wt/"sub").mkdir(); (wt/"sub"/"deep.md").write_text("z")
+    from sqrlly.runtime.promote import promote
+    promote(str(wt), str(tmp_path))
+    assert (tmp_path/"sub"/"deep.md").read_text() == "z"

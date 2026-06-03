@@ -14,7 +14,9 @@ this is acceptable.
 """
 from __future__ import annotations
 
+import shutil
 import subprocess
+from pathlib import Path
 
 # git status --porcelain=v1 XY codes -> change kind.
 # We only run promotion on a node's own freshly-forked worktree, so the
@@ -70,3 +72,19 @@ def discover_changes(worktree: str, globs: list[str] | None = None) -> dict[str,
                 i += 1           # skip it (destination is what we promote)
         i += 1
     return changes
+
+
+def promote(worktree: str, base: str, globs: list[str] | None = None) -> list[str]:
+    """Apply the worktree's discovered delta onto ``base``. Adds/edits are
+    copied; deletions are removed. Single-source: assumes ``base`` has not
+    diverged for these paths (it is the fork point). Returns applied paths."""
+    changes = discover_changes(worktree, globs)
+    for rel, kind in changes.items():
+        dst = Path(base) / rel
+        if kind == "deleted":
+            dst.unlink(missing_ok=True)
+        else:
+            src = Path(worktree) / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+    return list(changes)
