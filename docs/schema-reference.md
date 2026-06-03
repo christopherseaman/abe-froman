@@ -195,6 +195,7 @@ sqrlly never reads machine-global keystores.
 | `timeout` | `float \| None` | `None` | Per-node timeout; falls back to `settings.default_timeout`. |
 | `worktree` | `Literal["auto","isolated","off"] \| None` | `None` | Per-node isolation **mode** override; `None` inherits. Values: `auto` / `isolated` / `off` (alias `none`); bare YAML `off`/`on` booleans accepted. `off` runs the node in the shared base workdir (so e.g. a script gate, which runs at the base workdir, can read the node's files). See `settings.worktree`. |
 | `worktree_group` | `str \| None` | `None` | Per-node shared-tree name; mutually exclusive with an explicit `worktree` mode. Nodes sharing a name share one worktree. See `settings.worktree_group`. |
+| `promote` | `bool` | `False` | After a **clean** run, apply this node's worktree git delta (adds/edits/deletes vs the fork point) to the base workdir. Discovers the footprint from git — no need to predict which files changed — so it handles open-ended work (bugfixes/refactors) including deletions. If `output_contract.required_files` is set, those entries (git pathspec; `*`/`**`/`?`/`[…]`) filter what's promoted; otherwise the whole delta is promoted. Runs before GC. Top-level nodes only. An `off` node already writes to the base workdir, so `promote` is a no-op there. Multi-source reconciliation of *overlapping* isolated trees (3-way merge) is out of scope. |
 
 `Node` declares `extra="forbid"` — an unknown key (including the
 removed `model`, `prompt_file`, `inputs`, `outputs`) surfaces as a

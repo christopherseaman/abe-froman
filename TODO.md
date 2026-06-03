@@ -43,18 +43,21 @@ workflow proves it unavoidable; even then likely a content-aware
 acceptance gate, not blind `git merge`. The `build-<N>-snapshot-*`
 branch convention is a builder Phase-9 concern, not v2.
 
-### Promotion — git-delta apply, single-source (supersedes AP3, PLANNED v2)
+### ✅ Promotion — git-delta apply, single-source (supersedes AP3, SHIPPED v2)
 
-Get a worktree's results out to the base / `settings.output_directory`.
-**git-delta, not file-copy:** apply one worktree's diff vs its fork
-point to the base. **Discover by default** (no `output_contract` → the
-full delta, including edits and deletes — handles unanticipated
-footprints like a bugfix); **glob-filterable** via `output_contract`
-using git pathspec (`*` / `**` / `?` / `[…]`), one matcher shared with
-`git diff -- <pathspec>`. Single-source onto an unmoved base = clean;
-multi-source-overlap = B3 (deferred). File-copy kept only as the
-fallback for non-git (`off` / non-repo) trees. Build plan:
+`Node.promote` applies one worktree's git delta vs its fork point to the
+base (`runtime/promote.py`): **discover by default** (full delta incl.
+edits/deletes — handles unanticipated footprints like a bugfix);
+**glob-filterable** via `output_contract.required_files` (git pathspec).
+Single-source onto an unmoved base = clean; multi-source-overlap = B3
+(deferred). Runs before GC, top-level nodes only. Build plan:
 `docs/superpowers/plans/2026-06-02-worktree-v2-lifecycle.md`.
+
+Residual low-pri: (1) when several nodes share a `worktree_group` and
+each sets `promote`, the shared tree is promoted once per member
+(idempotent double-copy) — dedupe by tree path if it ever matters;
+(2) `promote` on fan-out children / subgraph inner nodes is not wired
+(top-level only) — extend if a consumer needs it.
 
 ### B4 — No worktree / branch GC
 

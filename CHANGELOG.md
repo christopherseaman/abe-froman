@@ -22,6 +22,13 @@ All notable changes to sqrlly are documented here. Format follows
   removes every allocated worktree (per-node + shared group trees) after
   a clean run; default `never` keeps them for inspection / `--resume`.
   End-of-run only; a failed run never GCs.
+- **`Node.promote` — single-source git-delta promotion.** After a clean
+  run, a node flagged `promote: true` applies its worktree's git delta
+  (adds/edits/**deletes**) to the base workdir. The footprint is
+  discovered from git (handles unanticipated edits like bugfixes/
+  refactors); `output_contract.required_files` (git pathspec globs) can
+  filter it. Runs before GC. Reconciling *overlapping* isolated trees
+  (3-way merge) remains deferred.
 
 ### Fixed
 

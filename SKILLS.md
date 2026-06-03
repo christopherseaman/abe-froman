@@ -196,6 +196,16 @@ setting beats the subgraph's beats the graph's). **Footgun:** a
 into one shared tree — keep fan-out children on `auto`/`isolated`
 unless you intend that.
 
+**Getting results out + cleanup.** An isolated/group node's files live in
+its worktree, not the base workdir. Set `promote: true` on a top-level
+node to apply its worktree's git delta (adds/edits/**deletes**) back to
+the base workdir after a clean run — the change set is discovered from
+git, so it works for open-ended edits (bugfixes/refactors) you can't
+enumerate in advance; an `output_contract` (glob paths) narrows it.
+Set `settings.worktree_gc: on_success` to remove worktrees after a clean
+run (default `never` keeps them for inspection / `--resume`). The full
+lifecycle is **fork → produce → read/share → promote → GC**.
+
 **Remote sources.** `settings.base_url` sets the base for relative
 urls — including an `http(s)://` base, which fetches **prompt
 templates** over the network (gated by `allow_remote_urls`,

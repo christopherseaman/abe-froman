@@ -487,6 +487,20 @@ reads `.available`, accepts suffixed strings like `"4GB"`); per-
 Worktrees are allocated on first `execute()` and retained across
 retries (fan-out branches use composite keys `parent_id::item_id`).
 
+The worktree *mode* is `node.effective_worktree(settings) -> (kind,
+group)`, resolved by scope specificity (node → subgraph → graph via
+`merge_settings`): `off` runs in the base workdir (no tree); `group`
+shares one deterministic tree at `wt-group-<name>/` keyed `group:<name>`
+(in-flight creation deduped by that key; each member still records its
+own `node.id → path` in `node_worktrees`); `auto`/`isolated` get a
+per-node tree. The full file-side lifecycle is **fork → produce →
+read/share → promote → GC**: a shared `group` gives read/share for
+free; `Node.promote` applies a node's git delta to the base via
+`runtime/promote.py` (discover-by-default, `output_contract`-glob-
+filterable) on a clean run, before `settings.worktree_gc: on_success`
+calls `foreman.reclaim()`. Reconciling *overlapping* isolated trees
+(3-way merge) is intentionally deferred.
+
 The memory gates run *outside* the semaphores so a gated acquisition
 doesn't sit holding a slot waiting for memory to drop. Both gates
 AND-compose with the semaphores: every gate must allow dispatch.
