@@ -18,6 +18,10 @@ All notable changes to sqrlly are documented here. Format follows
 - **`{{<parent>_branch_map}}`** — fan-in template var pairing each
   fan-out child's `{output, worktree}` by child id (AP4), alongside the
   existing positional `{{<parent>_branch_worktrees}}` list.
+- **`settings.worktree_gc` — opt-in worktree cleanup.** `on_success`
+  removes every allocated worktree (per-node + shared group trees) after
+  a clean run; default `never` keeps them for inspection / `--resume`.
+  End-of-run only; a failed run never GCs.
 
 ### Fixed
 
