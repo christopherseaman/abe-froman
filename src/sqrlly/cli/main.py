@@ -425,6 +425,10 @@ async def _execute_workflow(
                 thread_id=thread_id, logger=logger,
             )
             clean = not result.get("failed_nodes")
+            # Promotion runs only for top-level nodes on a clean run, and
+            # BEFORE GC (reclaim would remove the tree first). A promotion
+            # error propagates (it is a data-loss path) rather than being
+            # swallowed like reclaim's best-effort cleanup.
             if clean and isinstance(executor_obj, ForemanExecutor):
                 for node in config.nodes:
                     if not node.promote:
@@ -432,6 +436,9 @@ async def _execute_workflow(
                     tree = executor_obj.get_worktree(node.id)
                     if tree is None:
                         continue  # `off` node already wrote to the base workdir
+                    # output_contract.required_files doubles as the promote
+                    # pathspec filter when present; otherwise the full delta
+                    # is promoted (discover mode).
                     globs = (
                         node.output_contract.required_files
                         if node.output_contract else None
