@@ -224,6 +224,57 @@ class TestRunCommand:
         assert leftover_keep != [], "never GC should leave trees but found none"
 
 
+    def test_worktree_gc_on_success_keeps_trees_on_failure(self, runner, tmp_path):
+        """Safety invariant: worktree_gc: on_success must NOT reclaim trees
+        when the run ends with failed_nodes.  The guard in cli/main.py
+        only calls foreman.reclaim() when exit_code == 0; this test pins
+        that behaviour so a regression is caught immediately.
+
+        The test will pass immediately because the guard already exists —
+        it is a regression pin, not a TDD driver.
+        """
+        import shutil
+        import subprocess
+
+        false_bin = shutil.which("false") or "/bin/false"
+        true_bin = shutil.which("true") or "/usr/bin/true"
+
+        def _init_repo(path: Path) -> None:
+            subprocess.run(["git", "init", "-q", "-b", "main", str(path)], check=True)
+            subprocess.run(["git", "-C", str(path), "config", "user.email", "t@t"], check=True)
+            subprocess.run(["git", "-C", str(path), "config", "user.name", "t"], check=True)
+            (path / "README").write_text("init")
+            subprocess.run(["git", "-C", str(path), "add", "README"], check=True)
+            subprocess.run(["git", "-C", str(path), "commit", "-q", "-m", "init"], check=True)
+
+        repo = tmp_path / "repo_fail_gc"
+        repo.mkdir()
+        _init_repo(repo)
+        # Two nodes: first succeeds (allocates a worktree), second fails.
+        # worktree_gc: on_success is set, but the run is not clean.
+        cfg = repo / "workflow.yaml"
+        cfg.write_text(
+            "name: FailGcTest\nversion: '1.0'\n"
+            "settings:\n  worktree_gc: on_success\n"
+            "nodes:\n"
+            "  - id: ok\n    name: Ok\n"
+            f"    execute:\n      url: {true_bin}\n"
+            "      params:\n        args: []\n"
+            "  - id: bad\n    name: Bad\n"
+            "    depends_on: [ok]\n"
+            f"    execute:\n      url: {false_bin}\n"
+        )
+        result = runner.invoke(cli, ["run", str(cfg), "--workdir", str(repo)])
+        assert result.exit_code != 0, "expected non-zero exit on failure"
+        # Trees must still be present — reclaim() must NOT have been called.
+        sqrlly_dir = repo / ".sqrlly"
+        leftover = list(sqrlly_dir.glob("wt-*")) if sqrlly_dir.exists() else []
+        assert leftover != [], (
+            "failed run with worktree_gc: on_success must keep worktrees, "
+            f"but .sqrlly/wt-* was empty. output={result.output!r}"
+        )
+
+
 class TestRunOptions:
     def test_preset_unknown_raises(self, runner, tmp_path):
         import shutil

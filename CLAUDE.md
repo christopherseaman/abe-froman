@@ -247,10 +247,12 @@ mapping (we're testing our wrapping code, not the SDK).
   downgrades opus → sonnet mid-call (on `OverloadError`), the sonnet
   semaphore is not acquired for that call. Intent, not enforcement
   under downgrade.
-- **No automatic worktree cleanup** — Foreman never removes
-  worktrees. Authors write reconciliation nodes; stray trees
-  accumulate under `<workdir>/.sqrlly/`. Clean up manually with
-  `git worktree remove <path>`.
+- **Worktree cleanup is opt-in** — `settings.worktree_gc: on_success`
+  triggers end-of-run cleanup (success only; the CLI calls
+  `foreman.reclaim()` only when the run exits clean). The default
+  (`never`) keeps trees under `<workdir>/.sqrlly/` for inspection
+  and `--resume`. Manual cleanup with `git worktree remove <path>`
+  always works regardless of the setting.
 - **`--resume` is a fault-recovery re-run, not skip-completed** —
   `cli/main.py` loads the prior checkpoint's `channel_values`, seeds a
   *fresh* run with it, clears `failed_nodes`/`retries`/`errors`, and

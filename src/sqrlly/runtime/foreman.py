@@ -16,8 +16,9 @@ The retry decision lives at the compile layer; foreman just runs what's handed
 to it.
 
 Worktree lifecycle: foreman creates worktrees on first `execute()` per
-`node_id`. It does NOT clean them up — author-written reconciliation nodes
-copy outputs out, and stray worktrees are `git worktree remove`d by the user.
+`node_id`, reused across retries. With ``settings.worktree_gc: on_success``
+the CLI calls ``reclaim()`` after a clean run to remove all allocated trees;
+by default (``never``) they persist for inspection / ``--resume``.
 """
 from __future__ import annotations
 
@@ -255,10 +256,14 @@ class ForemanExecutor:
         for path in distinct:
             proc = await asyncio.create_subprocess_exec(
                 "git", "-C", self._base, "worktree", "remove", "--force", path,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             )
-            await proc.communicate()  # best-effort; a manually-deleted tree is fine
+            _out, err = await proc.communicate()
+            if proc.returncode != 0:
+                logger.warning(
+                    "foreman: 'git worktree remove --force %s' failed (ignored): %s",
+                    path, err.decode().strip(),
+                )
         self._worktrees.clear()
         return distinct
 
