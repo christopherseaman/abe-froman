@@ -14,7 +14,6 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -26,7 +25,6 @@ from sqrlly.runtime.state import make_initial_state
 from sqrlly.schema.models import Graph, Settings
 
 _ECHO = shutil.which("echo") or "/bin/echo"
-_PYTHON = sys.executable
 
 
 def _init_git_repo(path: Path) -> None:
@@ -46,8 +44,8 @@ def _init_git_repo(path: Path) -> None:
 def _build_fan_out_config(workdir: Path) -> Graph:
     """2-leaf fan-out: parent echoes a 2-item manifest; children echo their id.
 
-    Settings default worktree="auto" — ForemanExecutor allocates per-node
-    worktrees for any non-off mode, so exec_result.worktree is set for children.
+    Uses worktree="isolated" — ForemanExecutor allocates a per-node worktree
+    for any non-off mode, so exec_result.worktree is set for children.
     """
     manifest = json.dumps({"items": [{"id": "0"}, {"id": "1"}]})
     return Graph(
