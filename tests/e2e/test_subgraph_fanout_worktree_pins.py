@@ -148,8 +148,9 @@ class TestInnerWorktreeDirectiveNeutralised:
 
         Would fail if: _BranchScopedExecutor.execute stopped calling
         _strip_worktree on the node before forwarding to the inner executor,
-        allowing the isolated directive to create a separate wt-gen-* tree
-        for each branch.
+        allowing the isolated directive to create a wt-gen-* tree (foreman's
+        pool-key dedup means the three branches' `gen` calls would share one
+        such tree — the `gen_trees == []` assertion catches any).
         """
         _init_git_repo(tmp_path)
         # Write subgraph with an explicit worktree:isolated on the gen node.
