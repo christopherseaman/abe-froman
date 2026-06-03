@@ -131,9 +131,10 @@ def build_context(node: Node, state: WorkflowState) -> dict[str, Any]:
                 suffix = k[len(dotted_prefix):]
                 context[f"{dep}_{suffix}"] = v
         # Synthesize fan-out aggregates from state. Any node depending on
-        # a dynamic parent sees `{{dep_branches}}` (JSON id→output map) and
-        # `{{dep_branch_worktrees}}` (JSON list of worktree paths) — not
-        # just the final-node wrapper.
+        # a dynamic parent sees `{{dep_branches}}` (JSON id→output map),
+        # `{{dep_branch_worktrees}}` (JSON list of worktree paths), and
+        # `{{dep_branch_map}}` (JSON id→{output, worktree}, the preferred
+        # id-keyed pairing) — not just the final-node wrapper.
         prefix = f"{dep}::"
         dep_branches = {k: v for k, v in child_outputs.items() if k.startswith(prefix)}
         if dep_branches:

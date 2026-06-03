@@ -219,6 +219,7 @@ class TestBuildContext:
         ctx = build_context(node, state)
         assert "normal_branches" not in ctx
         assert "normal_branch_worktrees" not in ctx
+        assert "normal_branch_map" not in ctx
 
     def test_branch_map_keyed_by_child_id(self):
         """`{{p_branch_map}}` is a JSON dict keyed by child id, each entry
