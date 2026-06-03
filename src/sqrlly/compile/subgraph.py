@@ -70,6 +70,8 @@ class _BranchScopedExecutor:
         self, node: Node, context: dict, workdir: str | None = None,
         settings_override: "Settings | None" = None,
     ) -> "ExecutionResult":
+        # A caller-supplied workdir is intentionally ignored — the branch
+        # tree always wins (that is the point of pinning the branch).
         return await self._inner.execute(
             _strip_worktree(node), context,
             workdir=self._branch_tree, settings_override=settings_override,
