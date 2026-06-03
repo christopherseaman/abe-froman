@@ -525,3 +525,283 @@ class TestCapabilityFallthrough:
             f"Expected no branch entries in node_worktrees with plain executor, "
             f"found: {branch_wt_keys}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Gap 2 — foreman present + fan-out scope worktree:off → NO branch isolation
+# ---------------------------------------------------------------------------
+
+
+class TestOffGateWithForeman:
+    @pytest.mark.asyncio
+    async def test_off_gate_with_foreman_no_branch_isolation(self, tmp_path):
+        """ForemanExecutor + settings worktree:off → branches run in base workdir.
+
+        The gate ``_isolate = parent_settings.worktree != "off"`` evaluates to
+        False, so ``use_branch`` is False for every branch and no branch worktree
+        is acquired. This is the WITH-foreman counterpart to the non-foreman
+        fallthrough already pinned in TestCapabilityFallthrough.
+
+        After the run:
+        - Zero ``wt-*`` directories under ``<repo>/.sqrlly`` (none created).
+        - ``node_worktrees`` has no ``writer_pool::*`` branch entries
+          (``ExecutionResult.worktree`` is None when ``use_branch`` is False).
+        - Files written by inner subgraph nodes (gen.txt, polish.txt) landed
+          in the BASE repo directory (branches shared the base workdir).
+
+        Would fail if: the off-gate regressed and branches started isolating
+        under ``settings.worktree="off"`` — the wt-* assertion would catch the
+        newly-created branch trees, the node_worktrees assertion would catch the
+        recorded paths, and the file-location assertion would detect files
+        inside a worktree rather than the base dir.
+        """
+        _init_git_repo(tmp_path)
+        sub_yaml = _write_sub_yaml(tmp_path)
+
+        # Build config with worktree:off — the critical difference from the
+        # isolated fixture used by every other test in this file.
+        items = [{"id": "alpha"}, {"id": "beta"}, {"id": "gamma"}]
+        manifest = json.dumps({"items": items})
+        config = Graph(
+            name="subgraph-fanout-off-gate-test",
+            version="1.0",
+            nodes=[
+                {
+                    "id": _PARENT_ID,
+                    "name": "Writer Pool",
+                    "execute": {
+                        "url": "/bin/sh",
+                        "params": {"args": ["-c", f"printf '%s' '{manifest}'"]},
+                    },
+                    "fan_out": {
+                        "template": {
+                            "execute": {
+                                "url": sub_yaml,
+                                "params": {"inputs": {"item_id": "{{id}}"}},
+                            },
+                        },
+                    },
+                },
+            ],
+            settings=Settings(worktree="off"),
+        )
+
+        foreman, _inner = _make_foreman(tmp_path)
+        graph = build_workflow_graph(config, foreman, _base_dir=tmp_path)
+        state = make_initial_state(workdir=str(tmp_path))
+        final_state = await graph.ainvoke(state)
+
+        # All three branches must have completed.
+        for item_id in ("alpha", "beta", "gamma"):
+            child_id = f"{_PARENT_ID}::{item_id}"
+            assert child_id in final_state["completed_nodes"], (
+                f"{child_id} not in completed_nodes: {final_state['completed_nodes']}"
+            )
+
+        sqrlly_dir = tmp_path / ".sqrlly"
+
+        # Zero wt-* directories (no branch trees, no inner trees).
+        wt_dirs = list(sqrlly_dir.glob("wt-*")) if sqrlly_dir.exists() else []
+        assert wt_dirs == [], (
+            f"Expected zero wt-* dirs with worktree:off, found: "
+            f"{[d.name for d in wt_dirs]}"
+        )
+
+        # node_worktrees must have no writer_pool::* branch entries.
+        wts = final_state.get("node_worktrees", {})
+        branch_entries = {k: v for k, v in wts.items() if k.startswith(f"{_PARENT_ID}::")}
+        assert branch_entries == {}, (
+            f"Expected no branch entries in node_worktrees under worktree:off, "
+            f"found: {branch_entries}"
+        )
+
+        # Inner nodes ran in the base workdir — at least one output file landed
+        # there (branches run sequentially via the shared base dir, last write wins).
+        gen_in_base = (tmp_path / "gen.txt").exists()
+        polish_in_base = (tmp_path / "polish.txt").exists()
+        assert gen_in_base or polish_in_base, (
+            "Expected at least one of gen.txt / polish.txt in base workdir "
+            f"({tmp_path}) after worktree:off run — inner nodes should write "
+            "to the base directory when branch isolation is off"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Gap 3 — nested fan-out inside a branch shares the OUTER branch tree
+# ---------------------------------------------------------------------------
+
+_OUTER_ID = "outer_pool"
+_INNER_ID = "inner_pool"
+
+
+def _write_leaf_sub_yaml(tmp_path: Path) -> str:
+    """Leaf subgraph: single node writes leaf.txt — used as inner template."""
+    leaf = {
+        "name": "leaf-sub",
+        "version": "1.0",
+        "nodes": [
+            {
+                "id": "leaf_writer",
+                "name": "Leaf Writer",
+                "execute": {
+                    "url": "/bin/sh",
+                    "params": {
+                        "args": [
+                            "-c",
+                            "echo leaf-{{outer_id}}-{{inner_id}} > leaf.txt",
+                        ]
+                    },
+                },
+            },
+        ],
+    }
+    leaf_path = tmp_path / "leaf_sub.yaml"
+    leaf_path.write_text(yaml.safe_dump(leaf))
+    return "leaf_sub.yaml"
+
+
+def _write_middle_sub_yaml(tmp_path: Path, leaf_yaml: str) -> str:
+    """Middle subgraph: one fan-out node that fans over 2 inner items,
+    each running the leaf subgraph. Passes outer_id through as input."""
+    inner_items = [{"id": "p"}, {"id": "q"}]
+    inner_manifest = json.dumps({"items": inner_items})
+    middle = {
+        "name": "middle-sub",
+        "version": "1.0",
+        "nodes": [
+            {
+                "id": _INNER_ID,
+                "name": "Inner Pool",
+                "execute": {
+                    "url": "/bin/sh",
+                    "params": {"args": ["-c", f"printf '%s' '{inner_manifest}'"]},
+                },
+                "fan_out": {
+                    "template": {
+                        "execute": {
+                            "url": leaf_yaml,
+                            "params": {
+                                "inputs": {
+                                    "outer_id": "{{outer_id}}",
+                                    "inner_id": "{{id}}",
+                                }
+                            },
+                        },
+                    },
+                },
+            },
+        ],
+    }
+    middle_path = tmp_path / "middle_sub.yaml"
+    middle_path.write_text(yaml.safe_dump(middle))
+    return "middle_sub.yaml"
+
+
+def _build_nested_fanout_config(tmp_path: Path, middle_yaml: str) -> Graph:
+    """Top-level config: outer fan-out over 2 items; template is the middle subgraph."""
+    outer_items = [{"id": "x"}, {"id": "y"}]
+    outer_manifest = json.dumps({"items": outer_items})
+    return Graph(
+        name="nested-fanout-shared-outer-tree-test",
+        version="1.0",
+        nodes=[
+            {
+                "id": _OUTER_ID,
+                "name": "Outer Pool",
+                "execute": {
+                    "url": "/bin/sh",
+                    "params": {"args": ["-c", f"printf '%s' '{outer_manifest}'"]},
+                },
+                "fan_out": {
+                    "template": {
+                        "execute": {
+                            "url": middle_yaml,
+                            "params": {"inputs": {"outer_id": "{{id}}"}},
+                        },
+                    },
+                },
+            },
+        ],
+        settings=Settings(worktree="isolated"),
+    )
+
+
+class TestNestedFanOutSharesOuterBranchTree:
+    @pytest.mark.asyncio
+    async def test_nested_fanout_shares_outer_branch_tree(self, tmp_path):
+        """Nested fan-out: inner branches run inside the outer branch tree.
+
+        Topology:
+          outer_pool fans over {x, y} → each branch runs middle_sub.yaml
+          middle_sub.yaml contains inner_pool fans over {p, q} → each runs leaf_sub.yaml
+
+        The outer fan-out acquires branch worktrees (ForemanExecutor +
+        worktree:isolated → ``use_branch = True``).  The outer subgraph is
+        compiled against a ``_BranchScopedExecutor`` that deliberately omits
+        ``acquire_branch_worktree``.  Therefore inside the middle subgraph,
+        ``make_fan_out_subgraph_invoker`` sees ``hasattr(executor,
+        "acquire_branch_worktree") == False`` and falls through to
+        ``use_branch = False``, running inner branches in the outer branch tree
+        rather than spinning up their own trees.
+
+        After the run:
+        - Exactly 2 outer branch trees (``wt-outer_pool__x-*`` and
+          ``wt-outer_pool__y-*``).
+        - No inner-level trees (no ``wt-inner_pool__*``) and no leaf-level
+          trees (no ``wt-leaf_writer-*``).
+        - leaf.txt written by an inner branch exists inside at least one outer
+          branch tree, confirming the inner writes landed there.
+
+        Would fail if: ``_BranchScopedExecutor`` started forwarding
+        ``acquire_branch_worktree`` to the underlying foreman, allowing nested
+        fan-out branches to spin up their own trees.
+        """
+        _init_git_repo(tmp_path)
+        leaf_yaml = _write_leaf_sub_yaml(tmp_path)
+        middle_yaml = _write_middle_sub_yaml(tmp_path, leaf_yaml)
+        config = _build_nested_fanout_config(tmp_path, middle_yaml)
+
+        foreman, _inner = _make_foreman(tmp_path)
+        graph = build_workflow_graph(config, foreman, _base_dir=tmp_path)
+        state = make_initial_state(workdir=str(tmp_path))
+        final_state = await graph.ainvoke(state)
+
+        # Both outer branches must have completed.
+        for outer_id in ("x", "y"):
+            child_id = f"{_OUTER_ID}::{outer_id}"
+            assert child_id in final_state["completed_nodes"], (
+                f"{child_id} not in completed_nodes: {final_state['completed_nodes']}"
+            )
+
+        sqrlly_dir = tmp_path / ".sqrlly"
+
+        # Exactly 2 outer branch trees.
+        outer_trees = list(sqrlly_dir.glob(f"wt-{_OUTER_ID}__*"))
+        assert len(outer_trees) == 2, (
+            f"Expected 2 outer branch trees (wt-{_OUTER_ID}__*), "
+            f"got {len(outer_trees)}: {[d.name for d in outer_trees]}"
+        )
+
+        # No inner-pool trees — nested branches must NOT spin up their own trees.
+        inner_trees = list(sqrlly_dir.glob(f"wt-{_INNER_ID}__*"))
+        assert inner_trees == [], (
+            f"Expected no wt-{_INNER_ID}__* trees (nested branches share outer "
+            f"branch tree), found: {[d.name for d in inner_trees]}"
+        )
+
+        # No leaf-writer trees — leaf nodes inside nested branches must also
+        # not create their own isolation trees.
+        leaf_trees = list(sqrlly_dir.glob("wt-leaf_writer-*"))
+        assert leaf_trees == [], (
+            f"Expected no wt-leaf_writer-* trees, found: "
+            f"{[d.name for d in leaf_trees]}"
+        )
+
+        # leaf.txt must exist inside at least one outer branch tree, confirming
+        # that inner branch writes landed in the outer branch tree, not elsewhere.
+        leaf_found = any((t / "leaf.txt").exists() for t in outer_trees)
+        assert leaf_found, (
+            f"Expected leaf.txt inside at least one outer branch tree "
+            f"({[d.name for d in outer_trees]}), but found none — inner branches "
+            "may have run in the wrong working directory"
+        )
