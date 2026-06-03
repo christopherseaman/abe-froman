@@ -57,7 +57,13 @@ Residual low-pri: (1) when several nodes share a `worktree_group` and
 each sets `promote`, the shared tree is promoted once per member
 (idempotent double-copy) — dedupe by tree path if it ever matters;
 (2) `promote` on fan-out children / subgraph inner nodes is not wired
-(top-level only) — extend if a consumer needs it.
+(top-level only) — extend if a consumer needs it; a `collect_warnings`
+advisory for `promote` on a fan-out/group node would close the footgun.
+
+Advisory test gaps (each mechanism tested in isolation; combinations
+inferred): promote+GC in one run; `worktree_group` across `--resume`
+(deterministic `wt-group-<name>` + per-member `node_worktrees`
+rehydrate). Add integration coverage when convenient.
 
 ### B4 — No worktree / branch GC
 
