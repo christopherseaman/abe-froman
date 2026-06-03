@@ -103,7 +103,7 @@ class ForemanExecutor:
                 # the base workdir (shared FS) and records no worktree path.
                 # `auto`/`isolated` get a dedicated worktree — `auto` is
                 # isolated here because foreman only runs inside a git repo.
-                isolate = node.effective_worktree(s) != "off"
+                isolate = node.effective_worktree(s)[0] != "off"
                 run_dir = (
                     await self._acquire_worktree(node.id) if isolate
                     else self._base

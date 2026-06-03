@@ -529,10 +529,17 @@ class Node(BaseModel):
             return self.timeout
         return settings.default_timeout
 
-    def effective_worktree(self, settings: Settings) -> str:
+    def effective_worktree(self, settings: Settings) -> tuple[str, str | None]:
+        """Resolve isolation by scope specificity. Returns (kind, group):
+        kind in {auto, isolated, off, group}; group is the shared-tree name
+        when kind == "group", else None."""
+        if self.worktree_group is not None:
+            return ("group", self.worktree_group)
         if self.worktree is not None:
-            return self.worktree
-        return settings.worktree
+            return (self.worktree, None)
+        if settings.worktree_group is not None:
+            return ("group", settings.worktree_group)
+        return (settings.worktree, None)
 
     def effective_max_retries(self, settings: Settings) -> int:
         if self.evaluation and self.evaluation.max_retries is not None:

@@ -1,9 +1,7 @@
-"""v1 worktree-control schema.
+"""Worktree-control schema — v1 fields + v2 (kind, group) resolution.
 
-Pins the inherited isolation field (`auto`/`isolated`/`off`) and the
-per-node override accessor that mirrors `Node.effective_timeout`. Named
-shared-worktree groups are a fast-follow (v2); in v1 a non-reserved token
-is rejected so a group name can't silently no-op.
+Covers the inherited isolation field (`auto`/`isolated`/`off`), the
+per-node override accessor, and named shared-worktree groups (v2).
 """
 from __future__ import annotations
 
@@ -39,23 +37,45 @@ def test_settings_worktree_rejects_group_token_in_v1():
 def test_node_worktree_override_wins_over_settings():
     s = Settings(worktree="isolated")
     n = Node(id="a", name="a", worktree="off")
-    assert n.effective_worktree(s) == "off"
+    assert n.effective_worktree(s) == ("off", None)
 
 
 def test_node_worktree_inherits_settings_when_unset():
     s = Settings(worktree="off")
     n = Node(id="a", name="a")
-    assert n.effective_worktree(s) == "off"
+    assert n.effective_worktree(s) == ("off", None)
 
 
 def test_node_effective_worktree_default_is_auto():
-    assert Node(id="a", name="a").effective_worktree(Settings()) == "auto"
+    assert Node(id="a", name="a").effective_worktree(Settings()) == ("auto", None)
 
 
 def test_node_worktree_none_alias_normalizes_to_off():
     n = Node(id="a", name="a", worktree="none")
     assert n.worktree == "off"
-    assert n.effective_worktree(Settings()) == "off"
+    assert n.effective_worktree(Settings()) == ("off", None)
+
+
+def test_effective_group_on_node_wins():
+    s = Settings(worktree="isolated")
+    n = Node(id="a", name="a", worktree_group="team-a")
+    assert n.effective_worktree(s) == ("group", "team-a")
+
+
+def test_effective_node_mode_beats_settings_group():
+    s = Settings(worktree_group="prd")
+    n = Node(id="a", name="a", worktree="off")
+    assert n.effective_worktree(s) == ("off", None)
+
+
+def test_effective_inherits_settings_group():
+    s = Settings(worktree_group="prd")
+    n = Node(id="a", name="a")
+    assert n.effective_worktree(s) == ("group", "prd")
+
+
+def test_effective_default_is_auto():
+    assert Node(id="a", name="a").effective_worktree(Settings()) == ("auto", None)
 
 
 @pytest.mark.parametrize("yaml_bool,expected", [(False, "off"), (True, "isolated")])
