@@ -207,6 +207,8 @@ def _make_fan_out_node(
                 "node_outputs": {child_id: exec_result.output},
                 "child_outputs": {child_id: exec_result.output},
             }
+            if exec_result.worktree:
+                exec_update["node_worktrees"] = {child_id: exec_result.worktree}
             update = _merge_updates(update, exec_update)
 
             if not template.evaluation:
