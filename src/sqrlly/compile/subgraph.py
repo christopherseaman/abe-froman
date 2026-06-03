@@ -249,10 +249,25 @@ def make_fan_out_subgraph_invoker(
 ) -> Any:
     """Per-Send-branch subgraph invoker for fan-out templates.
 
-    Compiles the subgraph **once** at parent-graph build time (same one-
-    shot model as `make_subgraph_node`). Returns an async callable
-    ``invoke(context, workdir, dry_run) -> ExecutionResult`` that the
-    fan-out node body calls in place of ``executor.execute(...)``.
+    Returns an async callable ``invoke(context, workdir, dry_run,
+    prefix) -> ExecutionResult`` that the fan-out node body calls in
+    place of ``executor.execute(...)``.
+
+    When ``parent_settings.worktree != "off"`` and the executor has
+    ``acquire_branch_worktree``, each Send branch gets its own isolated
+    git worktree keyed by ``prefix`` (the child_id). Inner subgraph
+    nodes are compiled against a ``_BranchScopedExecutor`` that pins
+    every node to that tree (forced ``worktree: off`` + explicit
+    workdir), so inner nodes never spin up their own trees. The branch
+    worktree path is returned as ``ExecutionResult.worktree`` for
+    upstream recording in ``node_worktrees``.
+
+    Off/non-foreman paths fall through to ``workdir`` as before, and
+    ``ExecutionResult.worktree`` is None (inline parity).
+
+    The subgraph is compiled lazily inside ``invoke`` (not at factory
+    build time) so each branch gets its own compiled graph wired to its
+    own ``_BranchScopedExecutor``.
 
     Inputs (``template_params['inputs']``) render against the per-item
     context; the rendered map seeds the sub-invocation's
@@ -266,15 +281,16 @@ def make_fan_out_subgraph_invoker(
     if depth == 0:
         detect_config_cycle(template_url, base_dir=base_dir)
     sub_config = load_graph(template_url, base_dir=base_dir)
+    # Build effective settings once at factory time (merge is pure).
     parent_eff = parent_settings or sub_config.settings
     sub_effective = merge_settings(parent_eff, sub_config.settings)
-    sub_compiled = compile_fn(
-        sub_config, executor=executor, _depth=depth + 1,
-        effective_settings=sub_effective,
-    )
     inputs_decl: dict[str, str] = {}
     if isinstance(template_params.get("inputs"), dict):
         inputs_decl = dict(template_params["inputs"])
+
+    # Gate: isolate iff the FAN-OUT scope's effective worktree mode is not
+    # "off" (matches how inline fan-out children decide isolation).
+    _isolate = (parent_settings or Settings()).worktree != "off"
 
     async def invoke(
         context: dict[str, Any], workdir: str, dry_run: bool,
@@ -283,12 +299,33 @@ def make_fan_out_subgraph_invoker(
         """``prefix`` (typically the per-Send child_id like
         ``reviewer_pool::maverick``) names the per-branch subgraph in
         the parent JSONL when ``logger`` is set."""
+        # Determine branch worktree: acquire one per branch when isolated,
+        # else fall back to the caller-supplied workdir.
+        use_branch = prefix and _isolate and hasattr(executor, "acquire_branch_worktree")
+        if use_branch:
+            branch_tree = await executor.acquire_branch_worktree(prefix)
+        else:
+            branch_tree = workdir
+
+        # Wire the compiled subgraph to a branch-scoped executor that
+        # pins every inner node to branch_tree (forced worktree:off +
+        # explicit workdir), preventing inner nodes from spawning their
+        # own per-node trees.
+        branch_exec = (
+            _BranchScopedExecutor(executor, branch_tree)
+            if executor is not None else None
+        )
+        sub_compiled = compile_fn(
+            sub_config, executor=branch_exec, _depth=depth + 1,
+            effective_settings=sub_effective,
+        )
+
         rendered_inputs = {
             k: render_template(v, context) for k, v in inputs_decl.items()
         }
         sub_state = make_initial_state(
             workflow_name=sub_config.name,
-            workdir=workdir,
+            workdir=branch_tree,
             dry_run=dry_run,
         )
         sub_state["node_inputs"] = rendered_inputs
@@ -325,6 +362,7 @@ def make_fan_out_subgraph_invoker(
         return ExecutionResult(
             success=True,
             output=_terminal_node_output(sub_result, sub_config),
+            worktree=branch_tree if use_branch else None,
         )
 
     return invoke
