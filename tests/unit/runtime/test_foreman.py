@@ -389,6 +389,23 @@ class TestWorktreePool:
             await foreman.close()
 
 
+    @pytest.mark.asyncio
+    async def test_acquire_branch_worktree_distinct_and_reused(self, tmp_path):
+        _init_git_repo(tmp_path)
+        inner = DispatchExecutor(workdir=str(tmp_path))
+        foreman = ForemanExecutor(inner=inner, base_workdir=str(tmp_path))
+        try:
+            a = await foreman.acquire_branch_worktree("parent::0")
+            b = await foreman.acquire_branch_worktree("parent::1")
+            a2 = await foreman.acquire_branch_worktree("parent::0")
+            assert a != b and a == a2
+            assert Path(a).is_dir() and Path(b).is_dir()
+            assert set(foreman.worktree_map().values()) >= {a, b}
+            assert foreman.get_worktree("parent::0") == a
+        finally:
+            await foreman.close()
+
+
 class TestRehydration:
     @pytest.mark.asyncio
     async def test_rehydrate_populates_worktree_map(self, tmp_path):

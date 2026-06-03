@@ -267,6 +267,11 @@ class ForemanExecutor:
         self._worktrees.clear()
         return distinct
 
+    async def acquire_branch_worktree(self, branch_id: str) -> str:
+        """Acquire (or reuse) one isolated worktree keyed by a fan-out branch
+        id — mirrors inline-child keying so GC/resume/retry-reuse see it."""
+        return await self._acquire_worktree(branch_id, branch_id, None)
+
     def get_worktree(self, node_id: str) -> str | None:
         """Return the worktree path for a node_id, or None if not yet allocated."""
         return self._worktrees.get(node_id)
