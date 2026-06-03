@@ -474,7 +474,7 @@ subgraph instead of a single executor call.
 context:
 
 - `{{dep_id}}` — raw output of each dep; `{{dep_id_structured}}` — parsed structured output when present; `{{dep_id_worktree}}` — the dep's git worktree path.
-- Fan-out parent dep: `{{dep_branches}}` (JSON id→output), `{{dep_branch_worktrees}}` (JSON list of worktree paths), `{{dep_branch_map}}` (JSON id→`{output, worktree}`, the preferred id-keyed pairing).
+- Fan-out parent dep: `{{dep_branches}}` (JSON id→output), `{{dep_branch_worktrees}}` (JSON list of worktree paths), `{{dep_branch_map}}` (JSON id→`{output, worktree}`, the preferred id-keyed pairing). Worktree paths are **absolute** (resolved from `base_workdir`), so a fan-in consumer can read a sibling branch tree directly without re-resolving.
 - `{{_retry_reason}}` — auto-injected on retry (previous score, threshold, attempt, feedback).
 - `{{evals}}` — `evals[id]` → latest eval result dict for any node, or `{}`.
 - Inline-route goto target: `{{sender_id}}`, `{{sender}}`, `{{sender_structured}}`, `{{sender_worktree}}`.

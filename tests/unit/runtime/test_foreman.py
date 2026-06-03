@@ -337,6 +337,27 @@ class TestWorktreePool:
             await foreman.close()
 
     @pytest.mark.asyncio
+    async def test_worktree_paths_absolute_for_relative_base(self, tmp_path, monkeypatch):
+        """Recorded worktree paths must be absolute even when base_workdir is
+        relative (e.g. `--workdir .`), so a fan-in consumer reading
+        `branch_map.worktree` needn't re-resolve it against state['workdir']."""
+        _init_git_repo(tmp_path)
+        monkeypatch.chdir(tmp_path)
+        inner = DispatchExecutor(workdir=".")
+        foreman = ForemanExecutor(inner=inner, base_workdir=".")
+        try:
+            node = Node(id="p", name="p",
+                        execute=Execute(url=_PWD, params={"args": []}),
+                        worktree="isolated")
+            result = await foreman.execute(node, {})
+            wt = foreman.get_worktree("p")
+            assert Path(wt).is_absolute(), f"expected absolute path, got {wt!r}"
+            assert Path(result.worktree).is_absolute()
+            assert Path(wt).is_dir()
+        finally:
+            await foreman.close()
+
+    @pytest.mark.asyncio
     async def test_orphaned_group_dir_is_not_silently_reused(self, tmp_path):
         """A non-empty directory at wt-group-<name> that is NOT a live git worktree
         (no .git entry) must NOT be silently returned as a valid worktree path.

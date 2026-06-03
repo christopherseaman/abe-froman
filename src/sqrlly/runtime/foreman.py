@@ -59,7 +59,10 @@ class ForemanExecutor:
         memory_poll_interval_s: float = _MEMORY_POLL_INTERVAL_S,
     ):
         self._inner = inner
-        self._base = base_workdir
+        # Resolve to absolute so recorded worktree paths (node_worktrees,
+        # branch_map.worktree, promote/GC targets) are unambiguous regardless
+        # of the `--workdir` form — a fan-in consumer needn't re-resolve them.
+        self._base = str(Path(base_workdir).resolve())
         self._global_sem = asyncio.Semaphore(max_parallel_jobs)
         self._model_sems: dict[str, asyncio.Semaphore] = {
             model: asyncio.Semaphore(n)

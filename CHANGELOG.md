@@ -3,6 +3,18 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.6] — absolute worktree paths
+
+### Changed
+
+- **Recorded worktree paths are now absolute** regardless of the
+  `--workdir` form. `node_worktrees`, `{{<parent>_branch_map}}.worktree`,
+  `{{<parent>_branch_worktrees}}`, and the `promote`/GC targets previously
+  inherited a relative `--workdir` (e.g. `.sqrlly/wt-…` under `--workdir .`),
+  forcing a fan-in consumer to re-resolve against `state["workdir"]`. Foreman
+  now resolves `base_workdir` to absolute at construction. Builder-reported
+  on 0.5.5.
+
 ## [0.5.5] — subgraph fan-out worktree isolation
 
 ### Fixed
