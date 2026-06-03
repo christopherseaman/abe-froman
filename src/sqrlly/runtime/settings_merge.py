@@ -44,6 +44,15 @@ def merge_settings(parent: Settings, child: Settings) -> Settings:
     the constraint is naturally respected.
     """
     merged = parent.model_dump()
-    for field in child.model_fields_set:
+    set_fields = child.model_fields_set
+    for field in set_fields:
         merged[field] = getattr(child, field)
+    # worktree / worktree_group are a mutually-exclusive pair: if the child
+    # authored either, it speaks for this scope — drop the inherited sibling
+    # so resolution stays pure scope-specificity (and the exclusion validator
+    # doesn't trip on a parent-group + child-mode combination).
+    if "worktree" in set_fields and "worktree_group" not in set_fields:
+        merged["worktree_group"] = None
+    if "worktree_group" in set_fields and "worktree" not in set_fields:
+        merged["worktree"] = "auto"
     return Settings.model_validate(merged)

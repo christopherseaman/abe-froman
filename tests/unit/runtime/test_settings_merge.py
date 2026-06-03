@@ -64,6 +64,20 @@ class TestWorktreeInheritance:
         child = Settings(worktree="isolated")
         assert merge_settings(parent, child).worktree == "isolated"
 
+    def test_child_mode_clears_inherited_group(self):
+        parent = Settings(worktree_group="prd")
+        child = Settings(worktree="isolated")  # subgraph forces isolation
+        merged = merge_settings(parent, child)
+        assert merged.worktree == "isolated"
+        assert merged.worktree_group is None  # inherited group shadowed
+
+    def test_child_group_clears_inherited_mode(self):
+        parent = Settings(worktree="isolated")
+        child = Settings(worktree_group="team-a")
+        merged = merge_settings(parent, child)
+        assert merged.worktree_group == "team-a"
+        assert merged.worktree == "auto"  # neutralized; group is active
+
 
 class TestComposesNested:
     """Real workflows have parent → subgraph → sub-subgraph chains.
