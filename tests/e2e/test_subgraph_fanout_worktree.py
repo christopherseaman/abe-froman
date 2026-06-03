@@ -18,6 +18,7 @@ deterministic.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -38,7 +39,7 @@ def _init_git_repo(path: Path) -> None:
     subprocess.run(
         ["git", "-C", str(path), "commit", "--allow-empty", "-m", "init"],
         check=True, capture_output=True,
-        env={**__import__("os").environ,
+        env={**os.environ,
              "GIT_AUTHOR_NAME": "test", "GIT_AUTHOR_EMAIL": "test@test.com",
              "GIT_COMMITTER_NAME": "test", "GIT_COMMITTER_EMAIL": "test@test.com"},
     )

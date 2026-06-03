@@ -60,7 +60,11 @@ class _BranchScopedExecutor:
     """Wraps the shared executor for one fan-out subgraph branch: every inner
     node is pinned to `branch_tree` (forced `off` + workdir). Duck-types the
     NodeExecutor Protocol; passes backend / get_worktree / worktree_map /
-    reclaim / close through to the inner executor."""
+    reclaim / close through to the inner executor.
+
+    `acquire_branch_worktree` is intentionally NOT forwarded: a fan-out nested
+    inside a branch must share the outer branch tree (the outer branch is the
+    isolation unit), so its `use_branch` check fails here and it runs in-tree."""
 
     def __init__(self, inner: "NodeExecutor", branch_tree: str) -> None:
         self._inner = inner
