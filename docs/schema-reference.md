@@ -67,7 +67,8 @@ node; a `params.preset` that names no preset in `settings.presets`.
 
 | Field | Type | Default | Effect |
 |---|---|---|---|
-| `worktree` | `str` | `"auto"` | Graph-level isolation default; inherited graph→subgraph. `auto` = isolate each node in its own git worktree iff the workdir is a git repo (else no worktree). `isolated` = force a per-node worktree. `off` (alias `none`) = no worktree; the node runs in the shared base workdir. Bare YAML `off`/`on` (booleans) are accepted (`off`→`off`, `on`→`isolated`). A value that isn't a reserved mode is rejected (named shared-worktree groups are not yet supported). Per-node override: `Node.worktree`. |
+| `worktree` | `Literal["auto","isolated","off"]` | `"auto"` | Graph-level isolation **mode**, inherited graph→subgraph. `auto` = isolate each node in its own git worktree iff the workdir is a git repo (else no worktree). `isolated` = force a per-node worktree. `off` (alias `none`) = no worktree; the node runs in the shared base workdir. Bare YAML `off`/`on` booleans are accepted (`off`→`off`, `on`→`isolated`). A non-mode value is rejected (a shared-tree **name** goes in `worktree_group`, not here). Per-node override: `Node.worktree`. |
+| `worktree_group` | `str \| None` | `None` | Names a **shared worktree** so multiple nodes write into one tree (the "feature team" pattern). Mutually exclusive with an explicit `worktree` mode (`isolated`/`off`) — setting both is a validation error; `worktree` left at `auto` is fine. Inherited graph→subgraph; a child authoring either field clears the inherited sibling. Resolution is by scope specificity (node → subgraph → graph). |
 
 Both memory gates compose (AND) with each other and with the
 semaphores — every gate must allow dispatch. In-flight jobs are never
@@ -191,7 +192,8 @@ sqrlly never reads machine-global keystores.
 | `fan_out` | `FanOut \| None` | `None` | Manifest-driven `Send` fan-out. |
 | `route` | `Route \| None` | `None` | Inline forward-edge routing block. |
 | `timeout` | `float \| None` | `None` | Per-node timeout; falls back to `settings.default_timeout`. |
-| `worktree` | `str \| None` | `None` | Per-node isolation override; `None` inherits `settings.worktree`. Values: `auto` / `isolated` / `off` (alias `none`); bare YAML `off`/`on` booleans accepted. `off` runs the node in the shared base workdir (so e.g. a script gate, which runs at the base workdir, can read the node's files). See `settings.worktree`. |
+| `worktree` | `Literal["auto","isolated","off"] \| None` | `None` | Per-node isolation **mode** override; `None` inherits. Values: `auto` / `isolated` / `off` (alias `none`); bare YAML `off`/`on` booleans accepted. `off` runs the node in the shared base workdir (so e.g. a script gate, which runs at the base workdir, can read the node's files). See `settings.worktree`. |
+| `worktree_group` | `str \| None` | `None` | Per-node shared-tree name; mutually exclusive with an explicit `worktree` mode. Nodes sharing a name share one worktree. See `settings.worktree_group`. |
 
 `Node` declares `extra="forbid"` — an unknown key (including the
 removed `model`, `prompt_file`, `inputs`, `outputs`) surfaces as a
@@ -470,6 +472,7 @@ subgraph instead of a single executor call.
 context:
 
 - `{{dep_id}}` — raw output of each dep; `{{dep_id_structured}}` — parsed structured output when present; `{{dep_id_worktree}}` — the dep's git worktree path.
+- Fan-out parent dep: `{{dep_branches}}` (JSON id→output), `{{dep_branch_worktrees}}` (JSON list of worktree paths), `{{dep_branch_map}}` (JSON id→`{output, worktree}`, the preferred id-keyed pairing).
 - `{{_retry_reason}}` — auto-injected on retry (previous score, threshold, attempt, feedback).
 - `{{evals}}` — `evals[id]` → latest eval result dict for any node, or `{}`.
 - Inline-route goto target: `{{sender_id}}`, `{{sender}}`, `{{sender_structured}}`, `{{sender_worktree}}`.

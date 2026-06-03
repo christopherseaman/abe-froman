@@ -3,6 +3,28 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.4] — worktree groups (v2 control)
+
+### Added
+
+- **`worktree_group` — named shared worktrees.** Multiple nodes that
+  set the same `worktree_group` share one git worktree (the
+  "feature-team" pattern), so they read each other's files with no
+  copy or merge. Settable at graph/subgraph (`settings.worktree_group`,
+  inherited) and per node (`Node.worktree_group`). Mutually exclusive
+  with an explicit `worktree` mode; resolution is by scope specificity
+  (node → subgraph → graph). The `worktree` mode field is now a typed
+  `Literal["auto","isolated","off"]` (typos rejected at `validate`).
+- **`{{<parent>_branch_map}}`** — fan-in template var pairing each
+  fan-out child's `{output, worktree}` by child id (AP4), alongside the
+  existing positional `{{<parent>_branch_worktrees}}` list.
+
+### Fixed
+
+- **Fan-out children now record their worktree** in `node_worktrees`,
+  so `{{<parent>_branch_worktrees}}` / `{{<parent>_branch_map}}` are
+  populated under isolation (previously empty for fan-out).
+
 ## [0.5.3] — worktree isolation control (v1)
 
 ### Added

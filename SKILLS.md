@@ -182,6 +182,20 @@ repo root (not a subdirectory), and write urls repo-root-relative
 worktree. Outside a git repo, worktree isolation is off and paths
 resolve directly under `--workdir`.
 
+**Controlling worktree isolation.** `worktree` (on `settings` or a
+node) picks the isolation mode: `auto` (default — isolate per node iff
+in a git repo), `isolated` (force a worktree), `off` (run in the shared
+base workdir — use this when nodes must see each other's files, or so a
+script gate can read the node's files directly). For a shared tree
+across *some* nodes, give them the same `worktree_group: <name>` — they
+write into one worktree (the feature-team pattern) with no merge step.
+`worktree` and `worktree_group` are mutually exclusive on one node;
+both inherit graph→subgraph and resolve by scope specificity (a node's
+setting beats the subgraph's beats the graph's). **Footgun:** a
+`worktree_group` on a *fan-out template* collapses all dynamic children
+into one shared tree — keep fan-out children on `auto`/`isolated`
+unless you intend that.
+
 **Remote sources.** `settings.base_url` sets the base for relative
 urls — including an `http(s)://` base, which fetches **prompt
 templates** over the network (gated by `allow_remote_urls`,
