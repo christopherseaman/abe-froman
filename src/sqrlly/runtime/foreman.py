@@ -99,26 +99,19 @@ class ForemanExecutor:
 
         async with self._global_sem:
             async with (model_sem or _null_async_cm()):
-                # Only `worktree: off` opts out of isolation. `auto`,
-                # `isolated`, and `group` all get a dedicated worktree.
-                # (Shared-pool semantics for `group` arrive in a later task;
-                # for now each group node gets its own tree like `isolated`.)
-                isolate = node.effective_worktree(s)[0] != "off"
-                run_dir = (
-                    await self._acquire_worktree(node.id) if isolate
-                    else self._base
-                )
-                # Scaffold the output dir where the node actually writes.
+                kind, group = node.effective_worktree(s)
+                if kind == "off":
+                    run_dir = self._base
+                else:
+                    pool_key = f"group:{group}" if kind == "group" else node.id
+                    run_dir = await self._acquire_worktree(node.id, pool_key, group)
                 if node.output_contract:
                     scaffold_output_directory(node.output_contract, run_dir)
                 result = await self._inner.execute(
                     node, context, workdir=run_dir,
                     settings_override=settings_override,
                 )
-                # Record where an isolated node ran so output_contract
-                # validates against the worktree it wrote into. An `off`
-                # node ran in the base workdir and leaves worktree unset.
-                if isolate and result.worktree is None:
+                if kind != "off" and result.worktree is None:
                     result.worktree = run_dir
                 return result
 
@@ -161,22 +154,38 @@ class ForemanExecutor:
                 first_block = False
             await asyncio.sleep(self._memory_poll_s)
 
-    async def _acquire_worktree(self, node_id: str) -> str:
+    async def _acquire_worktree(
+        self,
+        node_id: str,
+        pool_key: str | None = None,
+        group: str | None = None,
+    ) -> str:
         """Return the worktree path for ``node_id``, creating it once.
 
-        Concurrent callers for the *same* node_id share one creation
-        task; callers for *different* node_ids run their
-        ``git worktree add`` subprocesses in parallel. The lock guards
-        only the task registry, not the subprocess.
+        ``pool_key`` controls deduplication of in-flight creation tasks:
+        - For group nodes: ``"group:<name>"`` so all siblings share one task.
+        - For per-node (auto/isolated): ``node_id`` (default).
+
+        ``_worktrees`` is always keyed by ``node_id`` (never by pool_key), so
+        ``get_worktree`` / ``worktree_map`` expose node-level paths as expected
+        by state persistence and rehydration.
+
+        The retry-reuse check on ``node_id`` runs first, before pool-key
+        dedup, so a retried node immediately reuses its own recorded path.
         """
+        if pool_key is None:
+            pool_key = node_id
+
+        # Retry / resume reuse: if this node already has a live tree, return it.
         async with self._worktree_lock:
             existing = self._worktrees.get(node_id)
             if existing and Path(existing).is_dir():
                 return existing
-            task = self._worktree_tasks.get(node_id)
+            # Dedup in-flight creation by pool_key (group siblings share one task).
+            task = self._worktree_tasks.get(pool_key)
             if task is None:
-                task = asyncio.create_task(self._create_worktree(node_id))
-                self._worktree_tasks[node_id] = task
+                task = asyncio.create_task(self._create_worktree(pool_key, group))
+                self._worktree_tasks[pool_key] = task
 
         try:
             path = await task
@@ -184,34 +193,51 @@ class ForemanExecutor:
             # Drop the finished task so a failed creation can be retried
             # rather than re-awaiting a task that holds a stale error.
             async with self._worktree_lock:
-                if self._worktree_tasks.get(node_id) is task:
-                    del self._worktree_tasks[node_id]
+                if self._worktree_tasks.get(pool_key) is task:
+                    del self._worktree_tasks[pool_key]
+
+        # Record under the node's own id (not pool_key) — invariant for
+        # get_worktree / worktree_map / state persistence.
+        async with self._worktree_lock:
+            self._worktrees[node_id] = path
         return path
 
-    async def _create_worktree(self, node_id: str) -> str:
-        """Create a git worktree at base/.sqrlly/wt-<id>-<uuid>."""
-        safe_id = node_id.replace("::", "__").replace("/", "_")
+    async def _create_worktree(self, pool_key: str, group: str | None = None) -> str:
+        """Create a git worktree for the given pool_key.
+
+        - Group trees use a deterministic path ``base/.sqrlly/wt-group-<name>``
+          so every member of the group, and resumed runs, reuse the same tree
+          without any uuid suffix. An ``is_dir`` check skips ``git worktree add``
+          when the tree already exists (sibling races or prior-run resume).
+        - Per-node trees use ``base/.sqrlly/wt-<safe_id>-<uuid8>`` (unchanged).
+
+        The node_id→path write is done by ``_acquire_worktree``, not here —
+        ``_worktrees`` must only be keyed by real node ids.
+        """
         dest_dir = Path(self._base) / ".sqrlly"
         dest_dir.mkdir(parents=True, exist_ok=True)
-        dest = dest_dir / f"wt-{safe_id}-{uuid.uuid4().hex[:8]}"
+        if group is not None:
+            safe = group.replace("/", "_").replace("::", "__")
+            dest = dest_dir / f"wt-group-{safe}"
+            if dest.is_dir():
+                # Shared tree already exists (sibling created it, or prior run).
+                return str(dest)
+        else:
+            safe = pool_key.replace("::", "__").replace("/", "_")
+            dest = dest_dir / f"wt-{safe}-{uuid.uuid4().hex[:8]}"
 
-        # git worktree add <dest> HEAD — uses the current HEAD as starting point.
-        # Runs synchronously; short-lived. Raises on failure — loud by design.
         proc = await asyncio.create_subprocess_exec(
-            "git", "-C", self._base, "worktree", "add", "-q",
-            str(dest), "HEAD",
+            "git", "-C", self._base, "worktree", "add", "-q", str(dest), "HEAD",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        _stdout, stderr = await proc.communicate()
+        _out, err = await proc.communicate()
         if proc.returncode != 0:
             raise RuntimeError(
-                f"foreman: 'git worktree add' failed for {node_id}: "
-                f"{stderr.decode().strip()}"
+                f"foreman: 'git worktree add' failed for {pool_key}: "
+                f"{err.decode().strip()}"
             )
-        path = str(dest)
-        self._worktrees[node_id] = path
-        return path
+        return str(dest)
 
     def get_worktree(self, node_id: str) -> str | None:
         """Return the worktree path for a node_id, or None if not yet allocated."""

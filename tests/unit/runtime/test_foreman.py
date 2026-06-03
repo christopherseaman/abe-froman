@@ -65,13 +65,13 @@ class _InstrumentedForeman(ForemanExecutor):
         self._in_flight = 0
         self.max_in_flight = 0
 
-    async def _create_worktree(self, node_id: str) -> str:
+    async def _create_worktree(self, pool_key: str, group: str | None = None) -> str:
         self.create_calls += 1
         self._in_flight += 1
         self.max_in_flight = max(self.max_in_flight, self._in_flight)
         try:
             await asyncio.sleep(0.05)
-            return await super()._create_worktree(node_id)
+            return await super()._create_worktree(pool_key, group)
         finally:
             self._in_flight -= 1
 
@@ -272,6 +272,40 @@ class TestWorktreePool:
             )
             assert wa != wb
             assert foreman.max_in_flight == 2
+        finally:
+            await foreman.close()
+
+
+    @pytest.mark.asyncio
+    async def test_group_nodes_share_one_tree(self, tmp_path):
+        _init_git_repo(tmp_path)
+        inner = DispatchExecutor(workdir=str(tmp_path))
+        foreman = ForemanExecutor(inner=inner, base_workdir=str(tmp_path))
+        try:
+            a = Node(id="a", name="a", execute=Execute(url=_PWD, params={"args": []}),
+                     worktree_group="team")
+            b = Node(id="b", name="b", execute=Execute(url=_PWD, params={"args": []}),
+                     worktree_group="team")
+            ra = await foreman.execute(a, {})
+            rb = await foreman.execute(b, {})
+            assert ra.output.strip() == rb.output.strip()       # same tree
+            assert foreman.get_worktree("a") == foreman.get_worktree("b")
+            assert foreman.get_worktree("a").endswith("/.sqrlly/wt-group-team")
+        finally:
+            await foreman.close()
+
+    @pytest.mark.asyncio
+    async def test_group_separate_from_other_group_and_isolated(self, tmp_path):
+        _init_git_repo(tmp_path)
+        inner = DispatchExecutor(workdir=str(tmp_path))
+        foreman = ForemanExecutor(inner=inner, base_workdir=str(tmp_path))
+        try:
+            a = Node(id="a", name="a", execute=Execute(url=_PWD, params={"args": []}), worktree_group="team-a")
+            b = Node(id="b", name="b", execute=Execute(url=_PWD, params={"args": []}), worktree_group="team-b")
+            c = Node(id="c", name="c", execute=Execute(url=_PWD, params={"args": []}), worktree="isolated")
+            await foreman.execute(a, {}); await foreman.execute(b, {}); await foreman.execute(c, {})
+            paths = {foreman.get_worktree(x) for x in ("a", "b", "c")}
+            assert len(paths) == 3
         finally:
             await foreman.close()
 
