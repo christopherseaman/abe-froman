@@ -103,7 +103,7 @@ class ForemanExecutor:
             async with (model_sem or _null_async_cm()):
                 kind, group = node.effective_worktree(s)
                 if kind == "off":
-                    run_dir = self._base
+                    run_dir = workdir or self._base
                 else:
                     pool_key = f"group:{group}" if kind == "group" else node.id
                     run_dir = await self._acquire_worktree(node.id, pool_key, group)

@@ -310,6 +310,33 @@ class TestWorktreePool:
             await foreman.close()
 
     @pytest.mark.asyncio
+    async def test_off_node_defaults_to_base_workdir(self, tmp_path):
+        _init_git_repo(tmp_path)
+        inner = DispatchExecutor(workdir=str(tmp_path))
+        foreman = ForemanExecutor(inner=inner, base_workdir=str(tmp_path))
+        try:
+            node = Node(id="p", name="p",
+                        execute=Execute(url=_PWD, params={"args": []}), worktree="off")
+            result = await foreman.execute(node, {})            # workdir=None
+            assert Path(result.output.strip()).resolve() == Path(tmp_path).resolve()
+        finally:
+            await foreman.close()
+
+    @pytest.mark.asyncio
+    async def test_off_node_honors_explicit_workdir(self, tmp_path):
+        _init_git_repo(tmp_path)
+        sub = tmp_path / "branch_tree"; sub.mkdir()
+        inner = DispatchExecutor(workdir=str(tmp_path))
+        foreman = ForemanExecutor(inner=inner, base_workdir=str(tmp_path))
+        try:
+            node = Node(id="p", name="p",
+                        execute=Execute(url=_PWD, params={"args": []}), worktree="off")
+            result = await foreman.execute(node, {}, workdir=str(sub))
+            assert Path(result.output.strip()).resolve() == sub.resolve()
+        finally:
+            await foreman.close()
+
+    @pytest.mark.asyncio
     async def test_orphaned_group_dir_is_not_silently_reused(self, tmp_path):
         """A non-empty directory at wt-group-<name> that is NOT a live git worktree
         (no .git entry) must NOT be silently returned as a valid worktree path.
