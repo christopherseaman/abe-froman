@@ -140,6 +140,11 @@ def build_context(node: Node, state: WorkflowState) -> dict[str, Any]:
             context[f"{dep}_branches"] = _json.dumps(dep_branches)
             dep_branch_worktrees = [v for k, v in worktrees.items() if k.startswith(prefix)]
             context[f"{dep}_branch_worktrees"] = _json.dumps(dep_branch_worktrees)
+            branch_map = {
+                cid: {"output": out, "worktree": worktrees.get(cid)}
+                for cid, out in dep_branches.items()
+            }
+            context[f"{dep}_branch_map"] = _json.dumps(branch_map)
 
     # When a node has multiple deps, provide aggregate collections so
     # templates can iterate inputs generically without hardcoding names.

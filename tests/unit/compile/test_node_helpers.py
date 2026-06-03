@@ -220,6 +220,39 @@ class TestBuildContext:
         assert "normal_branches" not in ctx
         assert "normal_branch_worktrees" not in ctx
 
+    def test_branch_map_keyed_by_child_id(self):
+        """`{{p_branch_map}}` is a JSON dict keyed by child id, each entry
+        holding both output and worktree — the AP4 fix that eliminates
+        positional-order coupling between _branches and _branch_worktrees.
+        """
+        import json
+        node = _phase(depends_on=["p"])
+        state = {
+            "node_outputs": {"p": "parent-out"},
+            "child_outputs": {"p::0": "out0", "p::1": "out1"},
+            "node_worktrees": {"p::0": "/wt/p0", "p::1": "/wt/p1"},
+        }
+        ctx = build_context(node, state)
+        bmap = json.loads(ctx["p_branch_map"])
+        assert bmap == {
+            "p::0": {"output": "out0", "worktree": "/wt/p0"},
+            "p::1": {"output": "out1", "worktree": "/wt/p1"},
+        }
+
+    def test_branch_map_missing_worktree_is_none(self):
+        """When a child has no recorded worktree, branch_map entry has worktree=None."""
+        import json
+        node = _phase(depends_on=["p"])
+        state = {
+            "node_outputs": {"p": "parent-out"},
+            "child_outputs": {"p::0": "out0", "p::1": "out1"},
+            "node_worktrees": {"p::0": "/wt/p0"},  # p::1 absent
+        }
+        ctx = build_context(node, state)
+        bmap = json.loads(ctx["p_branch_map"])
+        assert bmap["p::0"] == {"output": "out0", "worktree": "/wt/p0"}
+        assert bmap["p::1"] == {"output": "out1", "worktree": None}
+
     # -- aggregate _deps / _dep_worktrees ---------------------------------
 
     def test_single_dep_no_aggregate(self):
