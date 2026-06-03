@@ -20,6 +20,15 @@ def test_strip_worktree_forces_off_for_explicit_and_inherit():
     assert _strip_worktree(inherit).effective_worktree(Settings(worktree="auto")) == ("off", None)
 
 
+def test_strip_worktree_neutralizes_group():
+    """An inner node that declares a shared group must be pinned to the branch
+    tree (group cleared) — not allowed to join a cross-branch group."""
+    grouped = Node(id="c", name="c", worktree_group="team-x")
+    stripped = _strip_worktree(grouped)
+    assert stripped.worktree_group is None
+    assert stripped.effective_worktree(Settings(worktree="auto")) == ("off", None)
+
+
 @pytest.mark.asyncio
 async def test_wrapper_pins_workdir_and_neutralizes_node():
     rec = _Recorder()
