@@ -285,10 +285,11 @@ def _evaluation_result_payload(
     escape both pass and retry routes.
     """
     scores = dict(eval_result.scores)
-    if evaluation is not None and getattr(evaluation, "dimensions", None):
-        for d in evaluation.dimensions:
+    dims = getattr(evaluation, "dimensions", None) if evaluation is not None else None
+    if dims:
+        for d in dims:
             scores.setdefault(d.field, 0.0)
-    return {
+    payload: dict[str, Any] = {
         "score": eval_result.score,
         "scores": scores,
         "reasons": dict(eval_result.reasons),
@@ -296,6 +297,19 @@ def _evaluation_result_payload(
         "pass_criteria_met": list(eval_result.pass_criteria_met),
         "pass_criteria_unmet": list(eval_result.pass_criteria_unmet),
     }
+    # Surface the pass decision + its inputs so the gate_evaluated event
+    # (and any programmatic consumer) can tell a pass from a non-blocking
+    # warn-continue without recomputing score-vs-threshold. Multi-dim uses
+    # the per-dimension mins (weakest-link), matching the route walker.
+    if evaluation is not None:
+        if dims:
+            passed = all(scores.get(d.field, 0.0) >= d.threshold for d in dims)
+        else:
+            passed = eval_result.score >= evaluation.threshold
+        payload["passed"] = passed
+        payload["threshold"] = evaluation.threshold
+        payload["blocking"] = evaluation.blocking
+    return payload
 
 
 def classify_evaluation_outcome(

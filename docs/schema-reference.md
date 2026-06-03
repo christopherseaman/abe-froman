@@ -313,7 +313,7 @@ A quality gate that scores a node's output and drives retries.
 |---|---|---|---|
 | `validator` | `str` | required | Path to a `.py` / `.js` script or `.md` LLM-prompt gate. |
 | `threshold` | `float` | `0.0` | Minimum passing score (`0`–`1`). |
-| `blocking` | `bool` | `false` | If `true`, exhausted retries fail the workflow; if `false`, they pass with a warning. |
+| `blocking` | `bool` | `false` | If `true`, exhausted retries fail the workflow; if `false`, they pass with a warning. A gate with a positive `threshold` but `blocking: false` is advisory only (a below-threshold score won't halt) — `validate`/`run` emit an advisory warning so a hollow "green" run isn't mistaken for a real pass. The `gate_evaluated` JSONL event carries `passed` / `threshold` / `blocking` so a consumer can tell a pass from a warn-continue without recomputing. |
 | `max_retries` | `int \| None` | `None` | Overrides `settings.max_retries`. |
 | `model` | `str \| None` | `None` | Model for `.md` LLM gates. |
 | `dimensions` | `list[DimensionCheck] \| None` | `None` | Per-dimension score gates. |

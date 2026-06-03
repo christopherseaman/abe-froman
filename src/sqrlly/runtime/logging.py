@@ -67,6 +67,12 @@ def _emit_update_events(emitter: Any, update: dict[str, Any]) -> None:
             # the actual signal, not the 0.0 top-level placeholder.
             if result.get("scores"):
                 event["scores"] = result["scores"]
+            # Surface the pass decision + its inputs (recorded by
+            # _evaluation_result_payload) so a consumer distinguishes a pass
+            # from a non-blocking warn-continue without recomputing.
+            for k in ("passed", "blocking", "threshold"):
+                if k in result:
+                    event[k] = result[k]
             emitter.emit(event)
 
     for node, count in (update.get("retries") or {}).items():

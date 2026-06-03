@@ -3,6 +3,19 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.7] — gate observability
+
+### Added
+
+- **`validate`/`run` advisory warning for silent advisory gates** — a gate
+  with a positive `threshold` but `blocking: false` scores but never halts;
+  it's easy to mistake a hollow "green" run for a real pass. `collect_warnings`
+  now flags it ("advisory only … set `blocking: true` to halt").
+- **`gate_evaluated` event carries `passed` / `threshold` / `blocking`** — a
+  programmatic consumer can distinguish a pass from a non-blocking
+  warn-continue without recomputing `score < threshold`. `passed` uses
+  per-dimension mins for multi-dim gates (weakest-link), matching the router.
+
 ## [0.5.6] — absolute worktree paths
 
 ### Changed

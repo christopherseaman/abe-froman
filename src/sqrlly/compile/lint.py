@@ -15,7 +15,28 @@ from sqrlly.schema.models import Graph
 
 def collect_warnings(config: Graph) -> list[str]:
     """Advisory warnings for a workflow config, in declaration order."""
-    return _hyphenated_id_warnings(config)
+    return _hyphenated_id_warnings(config) + _advisory_gate_warnings(config)
+
+
+def _advisory_gate_warnings(config: Graph) -> list[str]:
+    """Flag a gate that can fail but won't halt.
+
+    A node whose ``evaluation`` sets a positive ``threshold`` with
+    ``blocking: false`` scores the gate but never stops the workflow — a
+    below-threshold score is logged and execution continues. Easy to
+    mistake a hollow "green" run for a real pass. (A ``threshold`` of 0.0
+    can never fail, so it is not flagged.)
+    """
+    out: list[str] = []
+    for node in config.nodes:
+        ev = node.evaluation
+        if ev is not None and not ev.blocking and ev.threshold > 0.0:
+            out.append(
+                f"node '{node.id}': gate sets threshold={ev.threshold} but "
+                f"blocking is false — advisory only; a below-threshold score "
+                f"won't halt the workflow (set 'blocking: true' to halt)."
+            )
+    return out
 
 
 def _hyphenated_id_warnings(config: Graph) -> list[str]:

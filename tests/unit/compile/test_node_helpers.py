@@ -9,6 +9,7 @@ import asyncio
 import pytest
 
 from sqrlly.compile.nodes import (
+    _evaluation_result_payload,
     _get_retry_delay,
     assemble_success_update,
     build_context,
@@ -20,6 +21,32 @@ from sqrlly.compile.nodes import (
     inject_retry_reason,
     make_failure_update,
 )
+from sqrlly.runtime.gates import EvaluationResult
+from sqrlly.schema.models import Evaluation
+
+
+class TestEvaluationResultPayload:
+    def test_passed_threshold_blocking_present_single_dim(self):
+        ev = Evaluation(validator="g.py", threshold=0.7, blocking=False)
+        below = _evaluation_result_payload(EvaluationResult(score=0.5), ev)
+        assert below["passed"] is False
+        assert below["threshold"] == 0.7
+        assert below["blocking"] is False
+        above = _evaluation_result_payload(EvaluationResult(score=0.8), ev)
+        assert above["passed"] is True
+
+    def test_passed_uses_dimension_mins_when_multidim(self):
+        ev = Evaluation(
+            validator="g.py",
+            dimensions=[{"field": "rigor", "min": 0.6}, {"field": "humor", "min": 0.5}],
+        )
+        result = EvaluationResult(score=0.55, scores={"rigor": 0.7, "humor": 0.4})
+        payload = _evaluation_result_payload(result, ev)
+        assert payload["passed"] is False  # humor 0.4 < 0.5
+
+    def test_no_evaluation_omits_passed(self):
+        payload = _evaluation_result_payload(EvaluationResult(score=0.5), None)
+        assert "passed" not in payload
 from sqrlly.runtime.gates import EvaluationResult
 from sqrlly.runtime.result import ExecutionResult
 from sqrlly.schema.models import Node, Evaluation

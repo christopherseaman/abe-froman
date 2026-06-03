@@ -54,3 +54,32 @@ class TestHyphenatedIdWarnings:
         assert len(warnings) == 1
         assert "merge-results" in warnings[0]
         assert "merge_results" in warnings[0]
+
+
+def _gated_node(node_id: str, *, threshold: float, blocking: bool) -> dict:
+    return {
+        "id": node_id, "name": node_id, "execute": {"url": "t.md"},
+        "evaluation": {"validator": "gate.py", "threshold": threshold,
+                       "blocking": blocking},
+    }
+
+
+class TestAdvisoryGateWarnings:
+    def test_blocking_gate_with_threshold_is_silent(self):
+        config = make_config([_gated_node("g", threshold=0.7, blocking=True)])
+        assert collect_warnings(config) == []
+
+    def test_nonblocking_zero_threshold_is_silent(self):
+        # threshold 0.0 can never fail → not a footgun, no warning.
+        config = make_config([_gated_node("g", threshold=0.0, blocking=False)])
+        assert collect_warnings(config) == []
+
+    def test_nonblocking_gate_with_threshold_warns(self):
+        config = make_config([_gated_node("phase_2a", threshold=0.42, blocking=False)])
+        warnings = collect_warnings(config)
+        assert len(warnings) == 1
+        msg = warnings[0]
+        assert "phase_2a" in msg
+        assert "0.42" in msg
+        assert "blocking" in msg
+        assert "advisory" in msg.lower()

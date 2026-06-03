@@ -126,6 +126,26 @@ class TestLogUpdate:
         assert events[0]["score"] == 0.95
         assert events[0]["invocation"] == 0
 
+    def test_gate_event_surfaces_passed_blocking_threshold(self):
+        """A programmatic consumer can tell pass from warn-continue without
+        recomputing score < threshold."""
+        buf = StringIO()
+        logger = JsonlLogger(buf)
+        logger.log_update({
+            "evaluations": {
+                "phase_2a": [{
+                    "invocation": 0,
+                    "result": {"score": 0.42, "passed": False,
+                               "blocking": False, "threshold": 0.7},
+                }],
+            },
+        })
+        event = json.loads(buf.getvalue().strip())
+        assert event["event"] == "gate_evaluated"
+        assert event["passed"] is False
+        assert event["blocking"] is False
+        assert event["threshold"] == 0.7
+
     def test_detects_multidim_gate(self):
         """Per-dimension scores flow through (closes multi-dim log bug)."""
         buf = StringIO()
