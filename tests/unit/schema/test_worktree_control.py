@@ -83,10 +83,18 @@ def test_settings_group_alone_is_valid():
 def test_node_group_with_auto_is_valid():
     n = Node(id="a", name="a", worktree="auto", worktree_group="team-a")
     assert n.worktree_group == "team-a"
+    assert n.worktree == "auto"
 
 
 @pytest.mark.parametrize("mode", ["isolated", "off"])
 def test_group_with_explicit_mode_is_rejected(mode):
     with pytest.raises(ValidationError) as exc:
         Node(id="a", name="a", worktree=mode, worktree_group="team-a")
+    assert "worktree_group" in str(exc.value)
+
+
+@pytest.mark.parametrize("mode", ["isolated", "off"])
+def test_settings_group_with_explicit_mode_is_rejected(mode):
+    with pytest.raises(ValidationError) as exc:
+        Settings(worktree=mode, worktree_group="grp")
     assert "worktree_group" in str(exc.value)

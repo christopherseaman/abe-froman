@@ -519,7 +519,8 @@ class Node(BaseModel):
         if self.worktree_group is not None and self.worktree in ("isolated", "off"):
             raise ValueError(
                 "worktree_group cannot be combined with worktree="
-                f"{self.worktree!r}: pick one (a group implies a shared tree)"
+                f"{self.worktree!r}: a group already implies a shared tree "
+                "(omit worktree, or set it to auto)"
             )
         return self
 
