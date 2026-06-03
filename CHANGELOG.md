@@ -3,6 +3,15 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.8] — advisory-gate warning covers fan-out gates
+
+### Fixed
+
+- The advisory-gate `validate`/`run` warning (0.5.7) now also covers
+  **fan-out template and `final_nodes` gates**, not just top-level nodes —
+  a non-blocking gate with a threshold on a fan-out final node was
+  previously unflagged. Builder-reported.
+
 ## [0.5.7] — gate observability
 
 ### Added

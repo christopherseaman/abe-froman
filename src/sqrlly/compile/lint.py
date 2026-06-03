@@ -28,14 +28,23 @@ def _advisory_gate_warnings(config: Graph) -> list[str]:
     can never fail, so it is not flagged.)
     """
     out: list[str] = []
-    for node in config.nodes:
-        ev = node.evaluation
+
+    def check(ev: object, label: str) -> None:
         if ev is not None and not ev.blocking and ev.threshold > 0.0:
             out.append(
-                f"node '{node.id}': gate sets threshold={ev.threshold} but "
-                f"blocking is false — advisory only; a below-threshold score "
-                f"won't halt the workflow (set 'blocking: true' to halt)."
+                f"{label}: gate sets threshold={ev.threshold} but blocking is "
+                f"false — advisory only; a below-threshold score won't halt "
+                f"the workflow (set 'blocking: true' to halt)."
             )
+
+    for node in config.nodes:
+        check(node.evaluation, f"node '{node.id}'")
+        if node.fan_out is not None:
+            template = getattr(node.fan_out, "template", None)
+            if template is not None:
+                check(template.evaluation, f"fan-out template of '{node.id}'")
+            for fn in node.fan_out.final_nodes:
+                check(fn.evaluation, f"fan-out final node '{fn.id}'")
     return out
 
 

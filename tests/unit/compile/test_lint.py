@@ -83,3 +83,33 @@ class TestAdvisoryGateWarnings:
         assert "0.42" in msg
         assert "blocking" in msg
         assert "advisory" in msg.lower()
+
+    def test_nonblocking_fan_out_final_node_gate_warns(self):
+        parent = {
+            "id": "fan", "name": "fan", "execute": {"url": "echo"},
+            "fan_out": {
+                "template": {"execute": {"url": "t.md"}},
+                "final_nodes": [{
+                    "id": "gate_2c", "name": "Gate",
+                    "evaluation": {"validator": "g.py", "threshold": 0.85,
+                                   "blocking": False},
+                }],
+            },
+        }
+        config = make_config([parent])
+        assert any("gate_2c" in w and "0.85" in w and "advisory" in w.lower()
+                   for w in collect_warnings(config))
+
+    def test_nonblocking_fan_out_template_gate_warns(self):
+        parent = {
+            "id": "fan", "name": "fan", "execute": {"url": "echo"},
+            "fan_out": {
+                "template": {
+                    "execute": {"url": "t.md"},
+                    "evaluation": {"validator": "g.py", "threshold": 0.7,
+                                   "blocking": False},
+                },
+            },
+        }
+        config = make_config([parent])
+        assert any("fan" in w and "0.7" in w for w in collect_warnings(config))
