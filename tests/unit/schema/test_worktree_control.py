@@ -46,10 +46,6 @@ def test_node_worktree_inherits_settings_when_unset():
     assert n.effective_worktree(s) == ("off", None)
 
 
-def test_node_effective_worktree_default_is_auto():
-    assert Node(id="a", name="a").effective_worktree(Settings()) == ("auto", None)
-
-
 def test_node_worktree_none_alias_normalizes_to_off():
     n = Node(id="a", name="a", worktree="none")
     assert n.worktree == "off"

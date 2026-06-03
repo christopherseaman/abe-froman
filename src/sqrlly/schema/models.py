@@ -55,9 +55,9 @@ def _parse_byte_size(value: Any) -> Any:
     return int(float(n_str) * mult)
 
 
-# Worktree isolation modes (v1). `none` is an accepted alias for `off`.
-# Named shared-worktree groups are a planned fast-follow; until then a
-# non-reserved token is rejected so a group name can't silently no-op.
+# Worktree isolation modes. `none` is an accepted alias for `off`.
+# This field is a MODE selector — a group name belongs in `worktree_group`,
+# not here; non-mode tokens are rejected to catch misplaced group names.
 _WORKTREE_MODES = ("auto", "isolated", "off")
 
 

@@ -99,10 +99,10 @@ class ForemanExecutor:
 
         async with self._global_sem:
             async with (model_sem or _null_async_cm()):
-                # `worktree: off` opts the node out of isolation: it runs in
-                # the base workdir (shared FS) and records no worktree path.
-                # `auto`/`isolated` get a dedicated worktree — `auto` is
-                # isolated here because foreman only runs inside a git repo.
+                # Only `worktree: off` opts out of isolation. `auto`,
+                # `isolated`, and `group` all get a dedicated worktree.
+                # (Shared-pool semantics for `group` arrive in a later task;
+                # for now each group node gets its own tree like `isolated`.)
                 isolate = node.effective_worktree(s)[0] != "off"
                 run_dir = (
                     await self._acquire_worktree(node.id) if isolate
