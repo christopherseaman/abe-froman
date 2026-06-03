@@ -275,6 +275,81 @@ class TestRunCommand:
         )
 
 
+    def test_promote_copies_worktree_delta_to_base(self, runner, tmp_path):
+        """promote: true copies isolated-worktree delta into the base workdir.
+
+        One node with worktree: isolated + promote: true writes out.txt inside
+        its worktree via a shell script.  After a clean run, out.txt must exist
+        in the base workdir (promoted).  Control: same workflow without
+        promote: true leaves no out.txt in base (it stays in the worktree).
+        Real git repo; no LLM required.
+        """
+        import subprocess
+
+        def _init_repo(path: Path) -> None:
+            subprocess.run(["git", "init", "-q", "-b", "main", str(path)], check=True)
+            subprocess.run(["git", "-C", str(path), "config", "user.email", "t@t"], check=True)
+            subprocess.run(["git", "-C", str(path), "config", "user.name", "t"], check=True)
+            (path / "README").write_text("init")
+            subprocess.run(["git", "-C", str(path), "add", "README"], check=True)
+            subprocess.run(["git", "-C", str(path), "commit", "-q", "-m", "init"], check=True)
+
+        # Write a shell script that creates out.txt in the cwd (the worktree).
+        script = tmp_path / "write_file.sh"
+        script.write_text("#!/bin/bash\nset -euo pipefail\necho hi > out.txt\n")
+        script.chmod(0o755)
+
+        # --- promote: true case ---
+        repo_promote = tmp_path / "repo_promote"
+        repo_promote.mkdir()
+        _init_repo(repo_promote)
+        cfg_promote = repo_promote / "workflow.yaml"
+        cfg_promote.write_text(
+            "name: PromoteTest\nversion: '1.0'\n"
+            "nodes:\n"
+            "  - id: writer\n    name: Writer\n"
+            "    worktree: isolated\n"
+            "    promote: true\n"
+            f"    execute:\n      url: {script}\n"
+        )
+        result_promote = runner.invoke(
+            cli, ["run", str(cfg_promote), "--workdir", str(repo_promote)]
+        )
+        assert result_promote.exit_code == 0, (
+            result_promote.output + result_promote.stderr
+        )
+        promoted_file = repo_promote / "out.txt"
+        assert promoted_file.exists(), (
+            f"promote: true — out.txt was not promoted to base workdir. "
+            f"output={result_promote.output!r}"
+        )
+        assert promoted_file.read_text().strip() == "hi", (
+            f"promoted file content wrong: {promoted_file.read_text()!r}"
+        )
+
+        # --- control: promote omitted (defaults false) ---
+        repo_nopromote = tmp_path / "repo_nopromote"
+        repo_nopromote.mkdir()
+        _init_repo(repo_nopromote)
+        cfg_nopromote = repo_nopromote / "workflow.yaml"
+        cfg_nopromote.write_text(
+            "name: NoPromoteTest\nversion: '1.0'\n"
+            "nodes:\n"
+            "  - id: writer\n    name: Writer\n"
+            "    worktree: isolated\n"
+            f"    execute:\n      url: {script}\n"
+        )
+        result_nopromote = runner.invoke(
+            cli, ["run", str(cfg_nopromote), "--workdir", str(repo_nopromote)]
+        )
+        assert result_nopromote.exit_code == 0, (
+            result_nopromote.output + result_nopromote.stderr
+        )
+        assert not (repo_nopromote / "out.txt").exists(), (
+            "promote omitted — out.txt must NOT appear in base workdir"
+        )
+
+
 class TestRunOptions:
     def test_preset_unknown_raises(self, runner, tmp_path):
         import shutil

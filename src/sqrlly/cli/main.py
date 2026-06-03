@@ -13,6 +13,7 @@ from sqrlly.compile.graph import build_workflow_graph
 from sqrlly.compile.lint import collect_warnings
 from sqrlly.runtime.executor.dispatch import DispatchExecutor
 from sqrlly.runtime.foreman import ForemanExecutor
+from sqrlly.runtime.promote import promote
 from sqrlly.runtime.runner import run_workflow
 from sqrlly.runtime.state import make_initial_state
 from sqrlly.schema.models import Graph
@@ -423,10 +424,21 @@ async def _execute_workflow(
                 compiled, state, config,
                 thread_id=thread_id, logger=logger,
             )
-            if (config.settings.worktree_gc == "on_success"
-                    and not result.get("failed_nodes")
-                    and isinstance(executor_obj, ForemanExecutor)):
-                await executor_obj.reclaim()
+            clean = not result.get("failed_nodes")
+            if clean and isinstance(executor_obj, ForemanExecutor):
+                for node in config.nodes:
+                    if not node.promote:
+                        continue
+                    tree = executor_obj.get_worktree(node.id)
+                    if tree is None:
+                        continue  # `off` node already wrote to the base workdir
+                    globs = (
+                        node.output_contract.required_files
+                        if node.output_contract else None
+                    )
+                    promote(tree, workdir, globs=globs)
+                if config.settings.worktree_gc == "on_success":
+                    await executor_obj.reclaim()
         finally:
             await executor_obj.close()
 

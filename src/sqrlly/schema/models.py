@@ -509,6 +509,7 @@ class Node(BaseModel):
     timeout: float | None = None
     worktree: Literal["auto", "isolated", "off"] | None = None
     worktree_group: str | None = None
+    promote: bool = False
 
     @field_validator("worktree", mode="before")
     @classmethod

@@ -127,3 +127,11 @@ def test_worktree_gc_accepts_on_success():
 def test_worktree_gc_rejects_unknown():
     with pytest.raises(ValidationError):
         Settings(worktree_gc="always")
+
+
+def test_node_promote_defaults_false():
+    assert Node(id="a", name="a").promote is False
+
+
+def test_node_promote_accepts_true():
+    assert Node(id="a", name="a", promote=True).promote is True
