@@ -40,3 +40,11 @@ def test_glob_filter_pathspec(tmp_path):
     (wt/"keep.md").write_text("x"); (wt/"skip.txt").write_text("y")
     changes = discover_changes(str(wt), globs=["**/*.md"])
     assert "keep.md" in changes and "skip.txt" not in changes
+
+
+def test_discover_path_with_spaces(tmp_path):
+    _repo(tmp_path); wt = _wt(tmp_path)
+    (wt/"has space.md").write_text("x")
+    changes = discover_changes(str(wt))
+    assert "has space.md" in changes          # no surrounding quotes
+    assert changes["has space.md"] == "added"

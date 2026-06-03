@@ -5,11 +5,12 @@ The footprint is *discovered* from git, so unanticipated edits/deletes are
 captured; an optional git-pathspec glob list filters it. Multi-source-
 overlap reconciliation (true 3-way merge) is intentionally out of scope.
 
-Known limitation: porcelain v1 renames emit ``R  old -> new`` in a single
-line. We extract only the destination path and report it as "modified".
-The source path (now deleted under its old name) does NOT appear as a
-separate "deleted" entry — the caller sees only the rename target. LLM-
-authored edits rarely produce pure git renames, so this is acceptable.
+Known limitation: porcelain v1 renames emit the destination path followed
+by a NUL-separated source token. We record the destination as "modified"
+and skip the source token. The source path (deleted under its old name)
+does NOT appear as a separate "deleted" entry — the caller sees only the
+rename target. LLM-authored edits rarely produce pure git renames, so
+this is acceptable.
 """
 from __future__ import annotations
 
@@ -36,26 +37,36 @@ def discover_changes(worktree: str, globs: list[str] | None = None) -> dict[str,
     ``globs`` (git pathspec, e.g. ``["prd/**", "*.md"]``) filters the set.
     Change kinds are ``"added"``, ``"modified"``, or ``"deleted"``.
     """
-    cmd = ["git", "-C", worktree, "status", "--porcelain=v1", "--untracked-files=all"]
+    # -z uses NUL-terminated output, avoiding the path quoting that
+    # --porcelain=v1 applies to paths containing spaces or special chars.
+    # For rename/copy entries the NUL-separated stream emits the destination
+    # token first, then the source as a separate token — we consume and skip
+    # the source so only the destination is recorded.
+    cmd = ["git", "-C", worktree, "status", "--porcelain=v1", "-z",
+           "--untracked-files=all"]
     if globs:
-        # Prefix each glob with :(glob) so that ** matches across path
-        # separators, consistent with shell glob expectations.
-        cmd += ["--", *[f":(glob){g}" for g in globs]]
+        # :(glob) is required so that ** matches across path separators;
+        # without it git treats ** as a literal path component and misses
+        # root-level files.
+        cmd += ["--", *(f":(glob){g}" for g in globs)]
     out = subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
+    tokens = out.split("\0")
     changes: dict[str, str] = {}
-    for line in out.splitlines():
-        if not line:
+    i = 0
+    while i < len(tokens):
+        entry = tokens[i]
+        if not entry:
+            i += 1
             continue
-        xy, path = line[:2], line[3:]
-        if xy == "??":
+        code, path = entry[:2], entry[3:]
+        if code == "??":
             changes[path] = "added"
         else:
             # xy is two chars: index-status + worktree-status. The first
             # non-space char is the meaningful code for our purposes.
-            code = xy.strip()[:1]
-            kind = _STATUS.get(code, "modified")
-            if code == "R":
-                # Rename line: "old -> new" — keep only the destination.
-                path = path.split(" -> ")[-1]
-            changes[path] = kind
+            c = code.strip()[:1]
+            changes[path] = _STATUS.get(c, "modified")
+            if c in ("R", "C"):  # rename/copy: next token is the source path
+                i += 1           # skip it (destination is what we promote)
+        i += 1
     return changes
