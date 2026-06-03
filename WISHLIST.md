@@ -14,36 +14,52 @@
 
 ## Worktree composition (design north star)
 
-Surfaced by the adapter port (2026-05-30): sqrlly has worktree **fork**
-(foreman gives each node an isolated git worktree) and data flows as
-**stdout / `node_outputs`** — but there's no *file*-side **join**: no
-way to read files across worktrees or assemble per-worktree files into
-a result. File-accumulating workflows (a deliverable that's a *tree of
-files* built by many nodes) therefore can't run under isolation today;
-they fall back to a shared non-git workdir (`worktree_isolation`
-effectively off). The coherent model is **fork → produce → read → join
-→ GC**:
+Surfaced by the adapter port (2026-05-30), refined into a deliberate
+design (2026-06-02): sqrlly has worktree **fork** (foreman gives each
+node an isolated git worktree) and data flows as **stdout /
+`node_outputs`** — but the *file* side of the lifecycle was missing.
+The coherent model is **fork → produce → read/share → promote → GC**.
+The design splits cleanly into a **control surface** (where each node
+runs) and a **tree lifecycle** (what happens to trees after):
 
-| Stage | What | Status / related item |
+| Stage | What | Status |
 |---|---|---|
 | **Fork** | per-node isolated worktree | have it (`ForemanExecutor`) |
-| **Produce** | nodes write file artifacts in their worktree | `output_contract` validates in-worktree (0.4.17); **AP1** generalizes to a written `manifest.json` |
-| **Read across** | a node consumes another node's worktree files | **AP1** (worktree-aware `manifest_path`) + **AP4** (fan-in pairing by child id) — the enablers; needed by *any* join |
-| **Join / assemble** | gather per-worktree files into one result | **pick one engine:** **AP3** (file-copy of `output_contract` files → `output_directory`) **or** **B3** (`build-<N>-snapshot-*` branch + commit + octopus-merge-on-acceptance) |
-| **GC** | reclaim worktrees / branches | **B4** |
-| *escape hatch* | opt out of the model for shared-FS workflows | **AP2** (`settings.worktree_isolation: false` + a loud warning when >1 node shares an output dir under isolation) — orthogonal valve, not part of the model |
+| **Control surface** | choose isolation per node / subgraph / graph | **v1 shipped (0.5.3):** `settings.worktree` + `Node.worktree` = `auto` / `isolated` / `off`, inherited via `merge_settings`. **v2 (planned):** named **groups** — `worktree_group` so N nodes share one tree |
+| **Produce** | nodes write file artifacts where they run | `output_contract` validates in the run dir (worktree or base) |
+| **Read / share** | a node sees another node's files | **shared/named trees give this for free** (same tree); cross-*isolated*-tree read stays path-based (**AP4** keys the worktree map by child id) |
+| **Promote** | get a tree's results out to the base / `output_directory` | **planned: git-delta promotion** — apply one worktree's git diff to the base. **Discover by default** (no contract → full delta, incl. deletes), **glob-filterable** via `output_contract` (git pathspec). Single-source clean; **multi-source-overlap merge is the one deferred rabbit hole** |
+| **GC** | reclaim worktrees | **planned: opt-in** `settings.worktree_gc: never` (default) `\| on_success`, end-of-run only (preserves retry-reuse + resume-rehydrate) |
 
-**The architectural decision is AP3 vs B3** — they're the same "join"
-with two engines (file-copy vs git-merge). AP1/AP4 feed whichever is
-chosen, so they're *do-regardless* foundations. The builder's stated
-`build-<N>-snapshot-*` + merge-on-acceptance convention points at **B3**
-as the destination, with AP3's file-copy a possible interim. AP2's
-warning ships regardless (cheap safety against the silent-degrade).
-B4 (GC) follows once branches/worktrees accumulate.
+**Resolution of the design fork (AP3 vs B3):** promotion is **neither
+pure file-copy (AP3) nor octopus-merge (B3)** — it is **git-delta apply
+of a single source**, which handles unanticipated footprints (bugfix /
+refactor: git computes the diff, copy can't even express a deletion)
+while staying out of the merge rabbit hole. The **only** deferred piece
+is reconciling *multiple* isolated trees whose diffs **overlap** — the
+true 3-way merge — revisited only when a concrete workflow proves it
+unavoidable (and even then likely a content-aware acceptance gate, not
+blind `git merge`).
 
-Related, tracked in `TODO.md`: **AP1–AP4** (adapter-port findings),
-**B3** (foreman branch/commit/octopus-merge), **B4** (worktree/branch
-GC), **AP2** (isolation opt-out + warning).
+**Control-surface design (v2 groups).** `worktree` becomes a fixed
+`Literal["auto","isolated","off"]` (typo-safe); a separate
+`worktree_group: str` names a shared tree. The two are **mutually
+exclusive** per scope (both set → validation error via
+`model_fields_set`). Resolution is **pure scope specificity**: node →
+subgraph → graph; the most-specific scope that declares *either* a mode
+or a group wins wholesale (group-vs-mode is never a same-scope
+conflict). `merge_settings` gains one special case: a child authoring
+either field clears the inherited sibling. Each grouped node still
+records its own `node.id → shared path` in `node_worktrees` (so fan-in
+pairing and resume-rehydrate keep working); foreman maps `node.id →
+group key` internally.
+
+Build plan: `docs/superpowers/plans/2026-06-02-worktree-v2-lifecycle.md`.
+
+Related, tracked in `TODO.md`: **AP4** (keyed worktree map), promotion
+(supersedes AP3), GC (B4), glob contracts (B5). **AP2** (isolation
+opt-out) and the silent-degrade fix landed in **v1 (0.5.3)**. **B3**
+(octopus-merge) is the deferred multi-source-overlap case only.
 
 ---
 

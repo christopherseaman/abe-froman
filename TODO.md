@@ -32,25 +32,51 @@ diverge on re-run), expensive for multi-hour builds. Known limitation —
 documented in README/SKILLS/CLAUDE; the skip-completed fix is the open
 work.
 
-### B3 — No Foreman branch/commit/octopus-merge
+### B3 — Octopus-merge of overlapping isolated trees (DEFERRED — the one rabbit hole)
 
-Worktrees exist, but the git lifecycle the builder needs — the
-`build-<N>-snapshot-*` branch convention and merge-on-acceptance
-(octopus merge of accepted branches) — is **unbuilt**. BUILDER-REQUESTS
-flags it Phase-9-required; substantial.
+The 2026-06-02 design narrowed this to its true residual: reconciling
+**multiple** independently-isolated worktrees whose diffs **overlap**
+(real 3-way / octopus merge). Single-source consolidation is handled by
+**promotion** (git-delta apply, see below), so B3 is no longer "the
+join engine" — it is only the overlap case. Deferred until a concrete
+workflow proves it unavoidable; even then likely a content-aware
+acceptance gate, not blind `git merge`. The `build-<N>-snapshot-*`
+branch convention is a builder Phase-9 concern, not v2.
+
+### Promotion — git-delta apply, single-source (supersedes AP3, PLANNED v2)
+
+Get a worktree's results out to the base / `settings.output_directory`.
+**git-delta, not file-copy:** apply one worktree's diff vs its fork
+point to the base. **Discover by default** (no `output_contract` → the
+full delta, including edits and deletes — handles unanticipated
+footprints like a bugfix); **glob-filterable** via `output_contract`
+using git pathspec (`*` / `**` / `?` / `[…]`), one matcher shared with
+`git diff -- <pathspec>`. Single-source onto an unmoved base = clean;
+multi-source-overlap = B3 (deferred). File-copy kept only as the
+fallback for non-git (`off` / non-repo) trees. Build plan:
+`docs/superpowers/plans/2026-06-02-worktree-v2-lifecycle.md`.
 
 ### B4 — No worktree / branch GC
 
-Foreman never removes worktrees and there's no branch cleanup, so
-snapshot-branch / worktree proliferation is a real risk once B3 lands.
-(Today, stray worktrees under `<workdir>/.sqrlly/` accrue and are
-cleaned manually.)
+### B4 — No worktree GC (PLANNED v2)
 
-### B5 — `output_contract` globs are literal
+Foreman never removes worktrees, so proliferation is a real risk once
+groups multiply trees. Design (2026-06-02): opt-in
+`settings.worktree_gc: never` (default) `| on_success`, **end-of-run
+only** (never mid-run — preserves retry-reuse and resume-rehydrate),
+reclaiming each *distinct* tree (per-node + each group tree once, from
+`foreman.worktree_map()`). On failure, keep everything so `--resume`
+works. Build plan:
+`docs/superpowers/plans/2026-06-02-worktree-v2-lifecycle.md`.
 
-`required_files` entries are checked verbatim — no glob expansion (now
-documented). The builder's directory / glob `requiredFiles` need the
-"flexible output contracts" item (Phase 5).
+### B5 — `output_contract` globs are literal (folded into promotion)
+
+`required_files` are checked verbatim. The 2026-06-02 design makes the
+contract **glob-aware** (git pathspec) as part of promotion's
+filter-mode — one matcher for declared globs and `git diff` discovery.
+Semantics shift: a glob means "at least one match exists" (a literal
+path is still a valid glob matching itself, so existing contracts are
+unaffected). Tracked in the worktree-v2 build plan.
 
 ## Low-priority / judgment calls
 
@@ -120,40 +146,39 @@ extracts the embedded JSON array-or-object from stdout. The
 **worktree-aware `manifest_path`** (resolve against the parent's
 worktree) is the remaining, higher-value half.
 
-### 🤞 AP2 — worktree isolation is implicit-on and silently breaks shared-file workflows
+### ✅ AP2 — worktree isolation control (DONE, v1 / 0.5.3)
 
-`_is_git_repo(workdir)` (walks up) → per-node `ForemanExecutor`
-isolation. Correct for stdout/`node_outputs` data-flow, but a workflow
-that flows data through a **shared file tree** (adapter's `prd/`) gets
-each node its own worktree → downstream nodes don't see upstream files.
-**Fails silently** (fan-out sees 0 items, gates score empty), not a
-crash. Only opt-out today is a non-git workdir (external staging).
-**Recommended (composes):** (1) a loud warning/error when >1 node
-targets the same `output_directory` / `output_contract.base_directory`
-under isolation; (2) an explicit `settings.worktree_isolation: false`
-opt-out so a shared-FS workflow declares intent in YAML and runs in-repo.
-Related to B3/B4 (foreman git lifecycle) but distinct.
+Was: implicit-on isolation silently broke shared-file workflows; the
+only opt-out was a non-git workdir. **Shipped in 0.5.3:**
+`settings.worktree` + `Node.worktree` (`auto` / `isolated` / `off`),
+inherited via `merge_settings`. `off` runs the node in the shared base
+workdir (and, since gates run there too, lets a script gate read the
+node's files directly). The silent-degrade opt-out is closed; the
+explicit-intent escape hatch is `worktree: off`. (The >1-node-shared-
+dir lint was not built — the explicit field makes intent declared, so
+the lint is lower value; revisit if needed.)
 
-### 🤞 AP3 — no cross-worktree output collection / tree assembly
+### ✅ AP3 — cross-worktree output collection (SUPERSEDED by promotion)
 
-Under isolation, files a node writes live in its worktree; no native
-way to gather them into one output tree (`foreman.py:17-19`:
-author-written reconciliation nodes; `output_contract` validates
-in-tree only). A workflow whose **deliverable is a directory of files**
-can't materialize it without a bespoke assembly node or shared workdir.
-**Suggested:** a first-class "collect outputs" step (auto-copy each
-worktree's `output_contract` files into `settings.output_directory`),
-or a documented assembly-node recipe. NOTE: solvable consumer-side
-(harvest `.sqrlly/wt-*/<dir>` by path) → convenience, not blocker.
-Pairs with AP2.
+The "auto-copy each worktree's `output_contract` files into
+`output_directory`" idea is replaced by **git-delta promotion** (see
+the Promotion entry above): apply a worktree's git diff to the base,
+discover-by-default, glob-filterable. File-copy survives only as the
+non-git fallback. The 2026-06-02 design retired AP3-as-copy because
+copy can't express deletions or unanticipated footprints.
 
-### 🤞 AP4 — fan-in worktree pairing is positional
+### 🤞 AP4 — fan-in worktree pairing is positional (PLANNED v2)
 
 A fan-in node gets child outputs as `{{<parent>_branches}}` (id→output
 **dict**) but worktree paths as `{{<parent>_branch_worktrees}}` (a bare
 **list** of paths — `compile/nodes.py:133-142`). Pairing a child's
-output to its worktree relies on **implicit order**. **Fix:** key the
-worktree map by child id, or fold both into `{id: {output, worktree}}`.
+output to its worktree relies on **implicit order**. **Fix:** add a
+keyed `{{<parent>_branch_map}}` = `{id: {output, worktree}}` (additive;
+keep the legacy list). **Blocker first:** fan-out children never write
+`node_worktrees` (`dynamic.py` `exec_update` omits it vs `nodes.py:654`),
+so `{{<parent>_branch_worktrees}}` renders `[]` under isolation today —
+close that write gap as part of v2. Tracked in the worktree-v2 build
+plan.
 
 ### 🤞 AP5 — schema papercuts (C1/C5)
 
