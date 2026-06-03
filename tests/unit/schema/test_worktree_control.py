@@ -114,3 +114,16 @@ def test_settings_group_with_explicit_mode_is_rejected(mode):
     with pytest.raises(ValidationError) as exc:
         Settings(worktree=mode, worktree_group="grp")
     assert "worktree_group" in str(exc.value)
+
+
+def test_worktree_gc_defaults_never():
+    assert Settings().worktree_gc == "never"
+
+
+def test_worktree_gc_accepts_on_success():
+    assert Settings(worktree_gc="on_success").worktree_gc == "on_success"
+
+
+def test_worktree_gc_rejects_unknown():
+    with pytest.raises(ValidationError):
+        Settings(worktree_gc="always")

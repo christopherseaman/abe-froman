@@ -427,6 +427,7 @@ class Settings(BaseModel):
     # implicit behavior, made explicit). Per-node override: `Node.worktree`.
     worktree: Literal["auto", "isolated", "off"] = "auto"
     worktree_group: str | None = None
+    worktree_gc: Literal["never", "on_success"] = "never"
 
     @field_validator("worktree", mode="before")
     @classmethod
