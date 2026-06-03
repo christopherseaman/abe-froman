@@ -49,6 +49,51 @@ class SubgraphDepthError(ValueError):
     """Raised when subgraph nesting exceeds settings.max_subgraph_depth."""
 
 
+def _strip_worktree(node: Node) -> Node:
+    """Force a fan-out subgraph inner node onto the branch tree: clear its
+    own worktree directives to `off` (node fields win in effective_worktree),
+    so it runs in the branch worktree, not a per-inner-node tree."""
+    return node.model_copy(update={"worktree": "off", "worktree_group": None})
+
+
+class _BranchScopedExecutor:
+    """Wraps the shared executor for one fan-out subgraph branch: every inner
+    node is pinned to `branch_tree` (forced `off` + workdir). Duck-types the
+    NodeExecutor Protocol; passes backend / get_worktree / worktree_map /
+    reclaim / close through to the inner executor."""
+
+    def __init__(self, inner: "NodeExecutor", branch_tree: str) -> None:
+        self._inner = inner
+        self._branch_tree = branch_tree
+
+    async def execute(
+        self, node: Node, context: dict, workdir: str | None = None,
+        settings_override: "Settings | None" = None,
+    ) -> "ExecutionResult":
+        return await self._inner.execute(
+            _strip_worktree(node), context,
+            workdir=self._branch_tree, settings_override=settings_override,
+        )
+
+    def get_backend(self) -> object:
+        return self._inner.get_backend() if hasattr(self._inner, "get_backend") else None
+
+    def get_worktree(self, node_id: str) -> "str | None":
+        return self._inner.get_worktree(node_id) if hasattr(self._inner, "get_worktree") else None
+
+    def worktree_map(self) -> dict:
+        return self._inner.worktree_map() if hasattr(self._inner, "worktree_map") else {}
+
+    async def reclaim(self) -> list:
+        if hasattr(self._inner, "reclaim"):
+            return await self._inner.reclaim()
+        return []
+
+    async def close(self) -> None:
+        if hasattr(self._inner, "close"):
+            await self._inner.close()
+
+
 def load_graph(config_path: str, base_dir: str | Path = ".") -> Graph:
     """Load and parse a Graph YAML file. Path is relative to base_dir."""
     path = Path(base_dir) / config_path
