@@ -1,6 +1,6 @@
 """Gate-only phase validates upstream content via DEPS_JSON env var.
 
-End-to-end exercise of the WISHLIST 216 bug fix: today a gate-only
+End-to-end exercise of the TODO 216 bug fix: today a gate-only
 phase (a node with `evaluation:` and no `execute:`) has no useful
 signal because validators only see the node's own stub output. After
 the fix, validators read upstream node outputs from `DEPS_JSON`.

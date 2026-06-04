@@ -124,7 +124,7 @@ shape, not vendor:
 
 Both currently pair with `provider: anthropic` because both run
 Claude Code. Additional `cli` providers (codex / gemini / custom) are
-tracked as WISHLIST 36. The api transport — direct calls to
+tracked as TODO 36. The api transport — direct calls to
 Anthropic / OpenAI / DeepSeek / custom OpenAI-compatible endpoints —
 was removed in 0.2.x; re-introduction remains on the roadmap.
 

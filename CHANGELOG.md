@@ -3,6 +3,19 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.9] — doc consolidation
+
+### Changed
+
+- **Docs consolidated.** `WISHLIST.md` folded into `TODO.md` (now the
+  single backlog: feature wants + deferred defects/cleanups).
+  `docs/schema-reference.md` → **`SCHEMA.md`** at the repo root; the rest
+  of `docs/` removed (historical stage plans, investigations, build
+  plans), along with `TECHNICAL.md`, `DECISIONS.md`, `BUILDER-REQUESTS.md`,
+  and `plan_sketch.md`. README/CLAUDE/SKILLS/SCHEMA references updated
+  (this fixes the now-404 `docs/…` links on the PyPI README). No code
+  behavior change.
+
 ## [0.5.8] — advisory-gate warning covers fan-out gates
 
 ### Fixed

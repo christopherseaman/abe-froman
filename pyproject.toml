@@ -77,7 +77,7 @@ exclude = [
     "**/*.db-wal",
     "/.env",
     "/CLAUDE.md",
-    "/WISHLIST.md",
+    "/TODO.md",
     "/example_workflow.json",
 ]
 

@@ -1,4 +1,8 @@
-# Wishlist
+# TODO
+
+The single consolidated backlog: feature wants (prioritized +
+non-prioritized) followed by deferred defects/cleanups (each with a
+diagnosis). `WISHLIST.md` was folded in here on 2026-06-03.
 
 > **⚠️ Historical note (post-0.2.x "transport: api strip").** Several
 > delivered (`[x]`) items below describe a direct-API backend system —
@@ -72,8 +76,8 @@ the deferred multi-source-overlap case only.
   exhaustive field reference; `SKILLS.md` is the agent skill doc;
   CLAUDE.md is operator notes for Claude sessions. (The 2026-06-03 cleanup
   removed `TECHNICAL.md`, `DECISIONS.md`, `BUILDER-REQUESTS.md`,
-  `plan_sketch.md`, and the `docs/` folder; `TODO.md` was merged into this
-  file.)
+  `plan_sketch.md`, and the `docs/` folder; `WISHLIST.md` was merged into
+  this file.)
 
 ## High-priority post-Stage-5c audit findings (2026-05-06)
 
@@ -122,7 +126,7 @@ Architectural findings from the second-round agent audit. The cluster of small-w
 
 - [x] **(30) `_make_final_fan_out_node` polling barrier** — _closed as not-a-defect, 2026-05-20._ Original framing (it "fights LangGraph's scheduler", a native fan-in aggregator would replace it) was **wrong**. LangGraph 1.0.7 research: there is no native count-based "wait for N `Send` branches" barrier. Fan-out children are `Send`-dispatched and finish across *different* super-steps (variable-length inline retry loops), and the only native idiom for Send fan-in is state-reducer accumulation — which the final node already does (`child_outputs` + the manifest check). `defer=True` waits for the *whole graph*, not this fan-out, so it's the wrong tool. The hand-rolled barrier is doing the only thing possible. Revisit only if a concrete defect surfaces.
 
-- [ ] 🚨 **(31) `--resume` discards the checkpointer instead of trusting it** (`cli/main.py:269-291`). Reads `channel_values` from prior checkpoint, builds a cleaned state dict, calls `cp.adelete_thread(thread_id)`, then re-streams from initial-state-like dict. Effectively replays the whole graph (the runs-counter in `test_resume_fan_out.py` still pins this: `_read_runs("a") == 2` after resume). The visible symptom of `completed_nodes` accumulating duplicates was masked by #32 (set-union reducer, 2026-05-19), but bodies still re-execute. Re-reading the design landscape post-#32: the LangGraph-native "pass thread_id to astream" pattern assumes the graph paused mid-execution (via `interrupt()`); a graph that returned terminal-with-failures has nothing to resume from natively. Fully resolving the DAG case requires picking one of three API shapes in WISHLIST #26 (skip-completed-via-prior-run channel, `--resume-from <node>`, JSONL-driven skip). Defer until that design call lands.
+- [ ] 🚨 **(31) `--resume` discards the checkpointer instead of trusting it** (`cli/main.py:269-291`). Reads `channel_values` from prior checkpoint, builds a cleaned state dict, calls `cp.adelete_thread(thread_id)`, then re-streams from initial-state-like dict. Effectively replays the whole graph (the runs-counter in `test_resume_fan_out.py` still pins this: `_read_runs("a") == 2` after resume). The visible symptom of `completed_nodes` accumulating duplicates was masked by #32 (set-union reducer, 2026-05-19), but bodies still re-execute. Re-reading the design landscape post-#32: the LangGraph-native "pass thread_id to astream" pattern assumes the graph paused mid-execution (via `interrupt()`); a graph that returned terminal-with-failures has nothing to resume from natively. Fully resolving the DAG case requires picking one of three API shapes in TODO #26 (skip-completed-via-prior-run channel, `--resume-from <node>`, JSONL-driven skip). Defer until that design call lands.
 
 - [x] **(32) `completed_nodes` / `failed_nodes` use `operator.add` reducer** — _delivered, 2026-05-19._ Switched to `_merge_sets` (set-union); TypedDict annotations changed from `list[str]` to `set[str]`. Migration covered 9 source emission sites (`[node_id]` → `{node_id}`), the inline-retry-loop accumulator (`.append` → `.add`), and ~30 test assertions (`== ["p1"]` → `== {"p1"}`). The wave-pattern test lost its `dispatcher_fires == 2` assertion (now impossible to express in state since set-union dedupes); the `dispatcher::q_gamma` presence assertion is the load-bearing regression check that remains. JSONL event derivation untouched (events fire per super-step, not per state entry). Masks the visible symptom of `--resume` accumulation but doesn't fix the underlying replay logic — see #31.
 
@@ -248,7 +252,7 @@ they have capability-wise different shapes:
   **Migration option once `cli` lands.** Run `cli` + `acp` in parallel
   for a release or two; if nothing trips on the difference, retire
   `transport: acp` (deletes the backend, the conftest pre-flight, the
-  npm dependency note, the soak concerns in WISHLIST 49/53/54). Frees
+  npm dependency note, the soak concerns in TODO 49/53/54). Frees
   roughly the process-tree-cleanup surface and ~400 lines.
 
   **Text-pipe CLIs are NOT in scope for `transport: cli`.** Tools like
@@ -262,7 +266,7 @@ they have capability-wise different shapes:
      Zero code.
   2. `transport: cli` backend — focused add (~200 lines + tests).
      Stands on its own.
-  3. Contracts arc lands (existing WISHLIST: *Schema enforcement at
+  3. Contracts arc lands (existing TODO: *Schema enforcement at
      backend boundary*, *Schema sources*, *Schema-first templates*).
      Independent of the transport work, and the gating piece for
      **making API mode useful for producer-shaped nodes via
@@ -676,7 +680,7 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
 
 ## Features
 
-- [ ] **Agent skills draft creation primitive** — surfaced 2026-05-06. Authors today encode "small reusable instruction modules" (skill drafts — short Markdown bundles describing a tool/role/workflow + example invocations) inline as prompt files plus per-node Jinja context. As more workflows reuse the same skill across nodes, three patterns emerge: (a) duplicate the .md across prompts, (b) `{% include %}` it, (c) handcraft a meta-prompt that asks Claude to first synthesize a skill from constraints and then apply it. (c) is the interesting case — it's the "draft creation" half of an agent-skill lifecycle (draft → apply → critique → revise) that doesn't have a first-class shape today. **What an `agent_skill:` block could look like**: a node-level declaration that the prompt produces a structured skill artifact (path, name, description, invocation example), and downstream nodes can reference it as `{{skills.<name>}}` for inclusion. Pairs with output_contract for the artifact-on-disk form, and with the WISHLIST "Schema enforcement at backend boundary" item for typing the draft. **Open questions**: should the skill be persisted across runs (cross-thread `BaseStore`?) or is it per-workflow scratch? Should the schema enforce a draft → apply → critique → revise loop, or stay loose and let authors compose? Probably investigate against a concrete example workflow (e.g., `examples/agent_skill_draft/` writing a "research-summary" skill once and reusing it across multiple summarize nodes) before designing the schema.
+- [ ] **Agent skills draft creation primitive** — surfaced 2026-05-06. Authors today encode "small reusable instruction modules" (skill drafts — short Markdown bundles describing a tool/role/workflow + example invocations) inline as prompt files plus per-node Jinja context. As more workflows reuse the same skill across nodes, three patterns emerge: (a) duplicate the .md across prompts, (b) `{% include %}` it, (c) handcraft a meta-prompt that asks Claude to first synthesize a skill from constraints and then apply it. (c) is the interesting case — it's the "draft creation" half of an agent-skill lifecycle (draft → apply → critique → revise) that doesn't have a first-class shape today. **What an `agent_skill:` block could look like**: a node-level declaration that the prompt produces a structured skill artifact (path, name, description, invocation example), and downstream nodes can reference it as `{{skills.<name>}}` for inclusion. Pairs with output_contract for the artifact-on-disk form, and with the TODO "Schema enforcement at backend boundary" item for typing the draft. **Open questions**: should the skill be persisted across runs (cross-thread `BaseStore`?) or is it per-workflow scratch? Should the schema enforce a draft → apply → critique → revise loop, or stay loose and let authors compose? Probably investigate against a concrete example workflow (e.g., `examples/agent_skill_draft/` writing a "research-summary" skill once and reusing it across multiple summarize nodes) before designing the schema.
 
 
 - [x] **Fan-out + recursive-subgraph composition** — _landed, Stage 5b
@@ -930,9 +934,11 @@ Audit of where we shadow LangGraph functionality. Most of our code is genuinely 
 
 ---
 
-# Deferred defects & cleanups (consolidated from TODO)
+# Deferred defects & cleanups
 
-Review-surfaced fixes with a diagnosis attached, deferred because the fix is non-trivial or a judgment call. Merged here from the former `TODO.md` (2026-06-03 doc consolidation).
+Review-surfaced fixes with a diagnosis attached, deferred because the fix
+is non-trivial or a judgment call. (The feature-wants above were folded
+in from the former `WISHLIST.md` in the 2026-06-03 consolidation.)
 
 ## Builder-required functionality gaps
 
@@ -953,7 +959,7 @@ dodge ACP process leaks" plan is **not currently available**.
 
 Fault-recovery, not skip-completed: completed nodes re-run (LLM phases
 diverge on re-run), expensive for multi-hour builds. Known limitation —
-`WISHLIST.md` items 26/31 (the `--resume` rewrite). Behavior now
+`TODO.md` items 26/31 (the `--resume` rewrite). Behavior now
 documented in README/SKILLS/CLAUDE; the skip-completed fix is the open
 work.
 

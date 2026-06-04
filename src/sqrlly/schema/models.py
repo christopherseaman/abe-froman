@@ -321,7 +321,7 @@ class LlmPreset(BaseModel):
     invocation shape, not vendor. The api transport (direct Anthropic /
     OpenAI / DeepSeek) was removed in the 0.2 strip experiment.
     Additional ``cli`` providers (codex / gemini / custom) are
-    on the roadmap (WISHLIST 36); restoring a transport means
+    on the roadmap (TODO 36); restoring a transport means
     extending these literals AND adding a factory builder row.
     """
     model_config = ConfigDict(extra="forbid")

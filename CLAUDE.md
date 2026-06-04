@@ -13,7 +13,7 @@ repo. Narrative documentation lives elsewhere:
   dispatch table, route-predicate namespace.
 - **`SKILLS.md`** — agent skill doc: instructions for an AI coding
   agent authoring and running sqrlly workflows (Codex skill format).
-- **`WISHLIST.md`** — open work (prioritized + non-prioritized) plus the
+- **`TODO.md`** — open work (prioritized + non-prioritized) plus the
   consolidated deferred-defects/cleanups log (each with a diagnosis).
 - **`CHANGELOG.md`** — release history.
 
@@ -257,7 +257,7 @@ mapping (we're testing our wrapping code, not the SDK).
   `completed_nodes` short-circuit (nodes.py:583, :684), so completed
   nodes **re-execute** (outputs refreshed; LLM nodes may diverge from
   the original run). State stays internally consistent. A true
-  skip-completed resume is the pending `--resume` rewrite (WISHLIST
+  skip-completed resume is the pending `--resume` rewrite (TODO
   26/31). Docs (README/SKILLS) describe the real semantics.
 - **Subgraph event prefix is one level** — `runner`/`SubgraphLogger`
   prefix child events `parent::child`; a 2-level nest shows the
@@ -268,7 +268,7 @@ mapping (we're testing our wrapping code, not the SDK).
   format is ignored on `--resume`; re-run from scratch.
 - **ACP soak under load** — process-tree cleanup is fixed for the
   test scenario, but a multi-hour run with `max_parallel_jobs > 1`
-  hasn't been validated end-to-end (WISHLIST 49).
+  hasn't been validated end-to-end (TODO 49).
 - **`_route_sender` is last-write-wins** — set by every Command
   emission from a `_route_<id>` dispatcher (with empty preamble
   when `include_eval` is off). Templates that reference

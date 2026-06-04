@@ -86,7 +86,7 @@ class ACPBackend:
 
     Spawns lazily on first send_prompt, reuses for subsequent calls.
 
-    Process-tree cleanup (Phase 4 / WISHLIST 49–54): the SDK's
+    Process-tree cleanup (Phase 4 / TODO 49–54): the SDK's
     ``spawn_agent_process`` exposes the spawned ``npx`` process but
     NOT its descendant tree (``node`` → ``claude``). Without explicit
     teardown, ``__aexit__`` returns before the children settle and

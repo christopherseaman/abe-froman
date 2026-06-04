@@ -35,7 +35,7 @@ The direct-API backends (Anthropic / OpenAI / DeepSeek / custom
 OpenAI-compatible endpoints) were removed in 0.2.x while the project
 consolidates around Claude Code; restoring `transport: api` remains
 on the roadmap, and additional `transport: cli` providers (codex /
-gemini) are tracked in WISHLIST 36.
+gemini) are tracked in TODO 36.
 
 **Auth is per-CLI, not sqrlly's job.** Each CLI you point sqrlly at
 handles its own credentials independently — log in once with

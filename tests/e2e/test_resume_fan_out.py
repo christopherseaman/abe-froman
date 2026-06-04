@@ -20,7 +20,7 @@ write, but the body still re-executes — the runs-counter pins it.
 This is correct for goto-driven re-fires within a single run (audit
 fix #19 deliberately enabled it for the wave pattern) but wrong for
 the canonical cross-run resume use case (retry only the failed node).
-The semantics are underspecified; see WISHLIST item (26) for three
+The semantics are underspecified; see TODO item (26) for three
 candidate API shapes. This test pins actual behavior so unintended
 changes surface as failures.
 """
@@ -180,7 +180,7 @@ class TestResumeFromCheckpoint:
         assert result_2["failed_nodes"] == set()
 
         # Current resume semantics re-execute already-completed nodes.
-        # See WISHLIST (26) for the design discussion. When `--resume`
+        # See TODO (26) for the design discussion. When `--resume`
         # is given a "skip completed" mode, flip this assertion to
         # ``== 1`` and pin the new behavior.
         assert _read_runs(tmp_path, "a") == 2

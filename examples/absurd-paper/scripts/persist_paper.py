@@ -3,7 +3,7 @@
 
 Invoked as a command node with Jinja-templated args — upstream node
 output flows through argv rather than any ACP Write tool. Avoids the
-Write/Bash path-traversal hang documented in WISHLIST while still
+Write/Bash path-traversal hang documented in TODO while still
 demonstrating the "text-to-file" reconciliation pattern.
 
 Usage: persist_paper.py <content> <dest_path>

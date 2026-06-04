@@ -1,4 +1,4 @@
-"""Process-tree cleanup test for ACPBackend (Phase 4 / WISHLIST 49–54).
+"""Process-tree cleanup test for ACPBackend (Phase 4 / TODO 49–54).
 
 The ACP adapter spawns ``npx → node → claude``; the SDK's
 ``__aexit__`` returns before the descendants settle, so long-running

@@ -79,7 +79,7 @@ def all_deps_completed(node: Node, state: WorkflowState) -> bool:
     `Command(goto)` does NOT suppress a node's static out-edges
     (verified empirically), so there is no clean way to make the
     Decision node a static-edge join predecessor without per-node
-    marker nodes that cost more than this guard. See WISHLIST #33
+    marker nodes that cost more than this guard. See TODO #33
     (closed not-a-defect, 2026-05-20).
     """
     completed = state.get("completed_nodes", set())
@@ -456,7 +456,7 @@ def _scope_dep_outputs_for_gate(
     ``build_context``'s scoping). But a "gate-only" phase — a node
     with ``evaluation:`` and no ``execute:`` and no ``depends_on:`` —
     has nothing to scope to and gets the full set of completed-node
-    outputs (the WISHLIST bug case: gate-only phases need a useful
+    outputs (the TODO bug case: gate-only phases need a useful
     signal somewhere).
     """
     node_outputs = state.get("node_outputs", {}) or {}
