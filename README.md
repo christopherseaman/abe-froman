@@ -143,7 +143,7 @@ the backend surfaces a clear error at the first prompt call — never
 as a pre-flight check (a pre-flight would forbid workflows that
 install the toolchain in an earlier script node).
 
-Full reference (including `CommandPreset` for custom script interpreters): [docs/schema-reference.md](https://github.com/christopherseaman/sqrlly/blob/main/docs/schema-reference.md).
+Full reference (including `CommandPreset` for custom script interpreters): [SCHEMA.md](https://github.com/christopherseaman/sqrlly/blob/main/SCHEMA.md).
 
 ## CLI
 
@@ -180,15 +180,14 @@ Each example directory ships a checked-in `view.html` (authoring view) and, wher
 
 ## Documentation
 
-- **[docs/schema-reference.md](https://github.com/christopherseaman/sqrlly/blob/main/docs/schema-reference.md)** — every Settings / Node / Execute / preset / route / evaluation field, the URL dispatch table, and the route-predicate namespace.
-- **[TECHNICAL.md](https://github.com/christopherseaman/sqrlly/blob/main/TECHNICAL.md)** — three-layer architecture, pipeline flow, state model, key invariants.
+- **[SCHEMA.md](https://github.com/christopherseaman/sqrlly/blob/main/SCHEMA.md)** — every Settings / Node / Execute / preset / route / evaluation field, the URL dispatch table, and the route-predicate namespace.
 - **[SKILLS.md](https://github.com/christopherseaman/sqrlly/blob/main/SKILLS.md)** — agent skill doc: instructions for an AI coding agent authoring and running sqrlly workflows.
 
 ## Contributing
 
 - **Three-layer split** — `schema/` (Pydantic models) → `compile/` (YAML → LangGraph) → `runtime/` (executors, backends). Layer rules enforced at CI time by an AST import check.
 - **No mocks of external systems** — tests run real subprocesses, real `git worktree`, and real backends.
-- See **[TECHNICAL.md](https://github.com/christopherseaman/sqrlly/blob/main/TECHNICAL.md)** for architecture and contributor reading order.
+- **Layer rules** — `tests/architecture/test_layers.py` enforces the import boundaries; `CLAUDE.md` has the architecture sketch + contributor reading order.
 
 ```bash
 uv run pytest tests/ --ignore=tests/acp     # ~940 tests

@@ -8,17 +8,13 @@ repo. Narrative documentation lives elsewhere:
 
 - **`README.md`** — what the project is, install, quickstart, concept
   tour, CLI overview, examples gallery (PyPI-facing front page).
-- **`docs/schema-reference.md`** — the exhaustive field-by-field
-  schema reference (Settings / Node / Execute / presets / route /
-  evaluation), URL dispatch table, route-predicate namespace.
-- **`TECHNICAL.md`** — three-layer architecture, pipeline flow, state
-  model, key invariants, contributor reading order.
+- **`SCHEMA.md`** — the exhaustive field-by-field schema reference
+  (Settings / Node / Execute / presets / route / evaluation), URL
+  dispatch table, route-predicate namespace.
 - **`SKILLS.md`** — agent skill doc: instructions for an AI coding
   agent authoring and running sqrlly workflows (Codex skill format).
-- **`WISHLIST.md`** — open work, prioritized + non-prioritized.
-- **`TODO.md`** — review-surfaced defects/cleanups deferred for
-  focused work (each with a diagnosis). Distinct from WISHLIST
-  (feature wants).
+- **`WISHLIST.md`** — open work (prioritized + non-prioritized) plus the
+  consolidated deferred-defects/cleanups log (each with a diagnosis).
 - **`CHANGELOG.md`** — release history.
 
 Read those when narrative context is needed; this file stays focused on
@@ -45,7 +41,8 @@ YAML → Pydantic Graph → build_workflow_graph() → compiled LangGraph
                                 pass retry fail   (router reads state; no reclassify)
 ```
 
-See `TECHNICAL.md` for the full layered breakdown.
+The three-layer breakdown is in "Project Layout" below; layer rules are
+enforced by `tests/architecture/test_layers.py`.
 
 ## Build & Test
 
@@ -241,7 +238,7 @@ mapping (we're testing our wrapping code, not the SDK).
   `_dispatch_binary` still require `file://` and halt on a remote scheme
   ("Remote script execution not yet wired"). `allow_remote_scripts`
   gates the fetch in preparation only. Documented in
-  `docs/schema-reference.md`, `TECHNICAL.md`, and `SKILLS.md`.
+  `SCHEMA.md` and `SKILLS.md`.
 - **Per-model backpressure under downgrade** — Foreman acquires the
   semaphore for the node's *original* model. If `PromptExecutor`
   downgrades opus → sonnet mid-call (on `OverloadError`), the sonnet
@@ -320,6 +317,7 @@ mapping (we're testing our wrapping code, not the SDK).
 | Layer rule violation | `tests/architecture/test_layers.py` errors point to the offending file |
 | Transient-error → `OverloadError` mapping | `src/sqrlly/runtime/executor/backends/_overload.py::maybe_raise_overload` (status-code set + `ACP_OVERLOAD_SUBSTRINGS`) |
 
-When in doubt, read `TECHNICAL.md` Section 11 ("Key non-obvious
-invariants") before changing compile or runtime layer code — five of
-six edge cases bite contributors who haven't seen them before.
+When in doubt before changing compile or runtime layer code, re-read the
+"Known limitations" section above and the `tests/architecture/test_layers.py`
+rules — several non-obvious invariants there bite contributors who
+haven't seen them before.

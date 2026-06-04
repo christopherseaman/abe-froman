@@ -155,8 +155,8 @@ write a YAML file with `name`, `version`, `nodes`, and `settings`.
 
 Do not guess field names. Every model is `extra="forbid"` — a typo'd
 key is a hard validation error. The exhaustive field reference is
-`docs/schema-reference.md` (online:
-https://github.com/christopherseaman/sqrlly/blob/main/docs/schema-reference.md).
+`SCHEMA.md` (online:
+https://github.com/christopherseaman/sqrlly/blob/main/SCHEMA.md).
 
 ## Validate and run
 
@@ -267,7 +267,7 @@ edges, so branch targets may appear as unconnected nodes.
 - **Hyphens in node ids** — `{{my-id}}` parses as subtraction in a
   Jinja template. Always use underscores. `validate` warns about this.
 - **`extra="forbid"`** — an unknown key on any model is a hard error.
-  Confirm exact field names in `docs/schema-reference.md`.
+  Confirm exact field names in `SCHEMA.md`.
 - **Inline-route nodes are DAG leaves** — nothing may `depends_on` a
   node that has a `route:` block.
 - **Exactly one default preset** — if any `LlmPreset` exists in
@@ -284,6 +284,5 @@ edges, so branch targets may appear as unconnected nodes.
 
 - Install this skill into a repo: `sqrlly init --skill` → writes
   `.agents/skills/sqrlly/SKILL.md` at the repo root (repo-aware).
-- Full schema: `docs/schema-reference.md`
-- Architecture: `TECHNICAL.md`
+- Full schema: `SCHEMA.md`
 - Worked examples: `examples/` — start with `examples/jokes/`.

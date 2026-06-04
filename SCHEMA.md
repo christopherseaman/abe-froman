@@ -1,8 +1,7 @@
 # sqrlly — Workflow Schema Reference
 
 The complete field-by-field reference for a sqrlly workflow YAML. For an
-orientation and quickstart, see the [README](../README.md); for
-architecture, see [TECHNICAL.md](../TECHNICAL.md).
+orientation and quickstart, see the [README](README.md).
 
 All defaults below are the actual defaults declared on the Pydantic
 models in `src/sqrlly/schema/models.py` and `src/sqrlly/schema/params.py`.

@@ -26,7 +26,7 @@ _WORKFLOW_YAML = """\
 # Edit `prompts/hello.md` to change the prompt. To add quality gates,
 # routing, fan-out, subgraphs, or more presets:
 #   https://github.com/christopherseaman/sqrlly/blob/main/README.md
-#   https://github.com/christopherseaman/sqrlly/blob/main/docs/schema-reference.md
+#   https://github.com/christopherseaman/sqrlly/blob/main/SCHEMA.md
 
 name: "My sqrlly workflow"
 version: "0.1.0"

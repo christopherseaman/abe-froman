@@ -64,8 +64,7 @@ packages = ["src/sqrlly"]
 # worktree carries a tracked `.env.example` that the `!.env.example`
 # un-ignore rule otherwise leaks into the sdist. Exclude it (plus
 # checkpoint DBs, scratch dirs, and internal dev docs) explicitly.
-# README / CHANGELOG / TECHNICAL / LICENSE stay — they are
-# user-facing.
+# README / CHANGELOG / SCHEMA / LICENSE stay — they are user-facing.
 exclude = [
     "/.sqrlly",
     "/.sqrlly/**",
@@ -79,10 +78,6 @@ exclude = [
     "/.env",
     "/CLAUDE.md",
     "/WISHLIST.md",
-    "/TODO.md",
-    "/BUILDER-REQUESTS.md",
-    "/DECISIONS.md",
-    "/plan_sketch.md",
     "/example_workflow.json",
 ]
 
