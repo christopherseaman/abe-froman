@@ -3,6 +3,25 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.10] — gate_evaluated dimension-block attribution
+
+### Added
+
+- **`dimension_thresholds` on `gate_evaluated`.** For a `dimensions:`
+  gate, the JSONL event now carries the configured per-dimension floors
+  alongside the per-dimension `scores`, so a consumer can attribute which
+  dimension blocked a gate without re-reading the workflow YAML
+  (`scores[d] < dimension_thresholds[d]`). Single-dimension gates are
+  unaffected (the field is omitted). Closes a builder QoL request from the
+  gate-observability thread (0.5.7–0.5.8).
+
+### Changed
+
+- Internal: deduplicated the `worktree_group`-exclusivity validator shared
+  by `Settings` and `Node` into one module-level helper; corrected two
+  stale comments (`promote.py` copy-status, `foreman.py` docstring). No
+  behavior change.
+
 ## [0.5.9] — doc consolidation
 
 ### Changed

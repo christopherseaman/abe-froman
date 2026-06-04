@@ -64,9 +64,13 @@ def _emit_update_events(emitter: Any, update: dict[str, Any]) -> None:
                 "score": result.get("score", 0.0),
             }
             # Multi-dim gates: emit per-dimension scores so viewers see
-            # the actual signal, not the 0.0 top-level placeholder.
+            # the actual signal, not the 0.0 top-level placeholder, plus the
+            # configured per-dimension floors so a consumer can attribute
+            # which dimension blocked without reading the YAML.
             if result.get("scores"):
                 event["scores"] = result["scores"]
+            if result.get("dimension_thresholds"):
+                event["dimension_thresholds"] = result["dimension_thresholds"]
             # Surface the pass decision + its inputs (recorded by
             # _evaluation_result_payload) so a consumer distinguishes a pass
             # from a non-blocking warn-continue without recomputing.

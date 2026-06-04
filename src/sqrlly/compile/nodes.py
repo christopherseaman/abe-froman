@@ -304,6 +304,10 @@ def _evaluation_result_payload(
     if evaluation is not None:
         if dims:
             passed = all(scores.get(d.field, 0.0) >= d.threshold for d in dims)
+            # Echo the per-dimension floors so a consumer can attribute which
+            # dimension blocked: the overall `threshold` is not what's enforced
+            # for a dims gate (the per-dimension mins are).
+            payload["dimension_thresholds"] = {d.field: d.threshold for d in dims}
         else:
             passed = eval_result.score >= evaluation.threshold
         payload["passed"] = passed

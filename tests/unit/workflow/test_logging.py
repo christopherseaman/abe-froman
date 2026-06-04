@@ -163,6 +163,29 @@ class TestLogUpdate:
         assert events[0]["event"] == "gate_evaluated"
         assert events[0]["scores"] == {"rigor": 0.8, "humor": 0.5}
 
+    def test_gate_event_surfaces_dimension_thresholds(self):
+        """Per-dimension floors flow through so a consumer can attribute which
+        dimension blocked without reading the YAML."""
+        buf = StringIO()
+        logger = JsonlLogger(buf)
+        logger.log_update({
+            "evaluations": {
+                "p": [{
+                    "invocation": 0,
+                    "result": {
+                        "score": 0.0,
+                        "scores": {"rigor": 0.8, "humor": 0.4},
+                        "dimension_thresholds": {"rigor": 0.6, "humor": 0.5},
+                        "passed": False,
+                    },
+                    "timestamp": "t",
+                }],
+            },
+        })
+        event = json.loads(buf.getvalue().strip())
+        assert event["event"] == "gate_evaluated"
+        assert event["dimension_thresholds"] == {"rigor": 0.6, "humor": 0.5}
+
     def test_detects_retry(self):
         buf = StringIO()
         logger = JsonlLogger(buf)

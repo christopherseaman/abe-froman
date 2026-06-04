@@ -250,7 +250,10 @@ edges, so branch targets may appear as unconnected nodes.
   full output text — capture that from the node itself if you need it.
 - A failed `run` exits non-zero and lists the failed nodes.
 - A node that keeps retrying is failing its gate — inspect the
-  `gate_evaluated` events for the `score` (and per-dimension `scores`).
+  `gate_evaluated` events for the `score` (and, for a `dimensions:`
+  gate, per-dimension `scores` plus `dimension_thresholds` — the
+  configured per-dimension floors, so you can see which dimension
+  blocked without reading the YAML).
 - `--dry-run` traces topology without calling backends or running
   scripts; use it to confirm the graph shape before a real run.
 - `--resume` is a **fault-recovery re-run**, not a skip-completed

@@ -47,6 +47,22 @@ class TestEvaluationResultPayload:
     def test_no_evaluation_omits_passed(self):
         payload = _evaluation_result_payload(EvaluationResult(score=0.5), None)
         assert "passed" not in payload
+
+    def test_dimension_thresholds_echoed_when_multidim(self):
+        """Per-dimension floors are echoed so a consumer can attribute which
+        dimension blocked (overall threshold alone is ambiguous for dims)."""
+        ev = Evaluation(
+            validator="g.py",
+            dimensions=[{"field": "rigor", "min": 0.6}, {"field": "humor", "min": 0.5}],
+        )
+        result = EvaluationResult(score=0.55, scores={"rigor": 0.7, "humor": 0.4})
+        payload = _evaluation_result_payload(result, ev)
+        assert payload["dimension_thresholds"] == {"rigor": 0.6, "humor": 0.5}
+
+    def test_dimension_thresholds_omitted_single_dim(self):
+        ev = Evaluation(validator="g.py", threshold=0.7)
+        payload = _evaluation_result_payload(EvaluationResult(score=0.8), ev)
+        assert "dimension_thresholds" not in payload
 from sqrlly.runtime.gates import EvaluationResult
 from sqrlly.runtime.result import ExecutionResult
 from sqrlly.schema.models import Node, Evaluation
