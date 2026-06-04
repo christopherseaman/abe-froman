@@ -27,7 +27,8 @@ _STATUS: dict[str, str] = {
     "D": "deleted",
     # Rename: report the destination as modified; source disappears.
     "R": "modified",
-    # Copy: destination is new content.
+    # C is only emitted under status.renames=copies, which we don't set, so
+    # this never fires today; kept to mirror git's documented porcelain codes.
     "C": "added",
 }
 

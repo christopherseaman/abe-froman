@@ -214,7 +214,7 @@ class ForemanExecutor:
           so every member of the group, and resumed runs, reuse the same tree
           without any uuid suffix. An ``is_dir`` check skips ``git worktree add``
           when the tree already exists (sibling races or prior-run resume).
-        - Per-node trees use ``base/.sqrlly/wt-<safe_id>-<uuid8>`` (unchanged).
+        - Per-node trees use ``base/.sqrlly/wt-<safe_id>-<uuid8>``.
 
         The node_id→path write is done by ``_acquire_worktree``, not here —
         ``_worktrees`` must only be keyed by real node ids.

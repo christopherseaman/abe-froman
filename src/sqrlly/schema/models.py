@@ -88,6 +88,20 @@ def _normalize_worktree(value: Any) -> Any:
     return mode
 
 
+def _check_worktree_group_exclusive(
+    worktree: str | None, worktree_group: str | None
+) -> None:
+    """A ``worktree_group`` already implies a shared tree, so pairing it with
+    an explicit ``isolated``/``off`` mode is contradictory. Shared by the
+    Settings and Node after-validators."""
+    if worktree_group is not None and worktree in ("isolated", "off"):
+        raise ValueError(
+            "worktree_group cannot be combined with worktree="
+            f"{worktree!r}: a group already implies a shared tree "
+            "(omit worktree, or set it to auto)"
+        )
+
+
 class RouteCase(BaseModel):
     """One case in a route ladder.
 
@@ -436,12 +450,7 @@ class Settings(BaseModel):
 
     @model_validator(mode="after")
     def _worktree_group_exclusive(self) -> "Settings":
-        if self.worktree_group is not None and self.worktree in ("isolated", "off"):
-            raise ValueError(
-                "worktree_group cannot be combined with worktree="
-                f"{self.worktree!r}: a group already implies a shared tree "
-                "(omit worktree, or set it to auto)"
-            )
+        _check_worktree_group_exclusive(self.worktree, self.worktree_group)
         return self
 
     max_subgraph_depth: int = 10  # cap on recursive subgraph nesting (Stage 4c)
@@ -521,12 +530,7 @@ class Node(BaseModel):
 
     @model_validator(mode="after")
     def _worktree_group_exclusive(self) -> "Node":
-        if self.worktree_group is not None and self.worktree in ("isolated", "off"):
-            raise ValueError(
-                "worktree_group cannot be combined with worktree="
-                f"{self.worktree!r}: a group already implies a shared tree "
-                "(omit worktree, or set it to auto)"
-            )
+        _check_worktree_group_exclusive(self.worktree, self.worktree_group)
         return self
 
     def effective_timeout(self, settings: Settings) -> float | None:
