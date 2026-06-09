@@ -1,139 +1,47 @@
 # TODO
 
-The single consolidated backlog: feature wants (prioritized +
-non-prioritized) followed by deferred defects/cleanups (each with a
-diagnosis). `WISHLIST.md` was folded in here on 2026-06-03.
+The single consolidated backlog: open feature wants and deferred
+defects/cleanups (each with a diagnosis). Completed work lives in
+`CHANGELOG.md` + git history — this file tracks only what's still open.
 
-> **⚠️ Historical note (post-0.2.x "transport: api strip").** Several
-> delivered (`[x]`) items below describe a direct-API backend system —
-> `backends/anthropic.py`, `backends/openai.py`, `auto_detect_executor`,
-> `Settings.executor`, DeepSeek, `StubBackend` — that was **removed** in
-> the 0.2.x transport rework. Only `transport: acp` and `transport: cli`
-> (provider `anthropic`) exist today; LLM config lives in
-> `settings.presets`. Those items are retained as history — ignore their
-> implementation specifics (and any "default executor → auto-detect"
-> claim, e.g. the "Default executor should be real" item, which the
-> preset cutover superseded). Test-count figures in older items are
-> point-in-time; current is ~941.
+## Worktree composition (design model)
 
-## Worktree composition (design north star)
+The shipped model (v1 0.5.3, v2 0.5.4–0.5.6) is **fork → produce →
+read/share → promote → GC**: foreman forks a per-node worktree;
+`output_contract` validates produced files where the node runs;
+shared/named `worktree_group` trees give cross-node reads;
+`Node.promote` applies a single worktree's git delta to the base
+(discover-by-default, glob-filterable via `output_contract`);
+`settings.worktree_gc: on_success` reclaims trees end-of-run.
+Isolation is chosen per scope via `settings.worktree` / `Node.worktree`
+(`auto`/`isolated`/`off`) or `worktree_group` (the two mutually
+exclusive per scope), resolved node → subgraph → graph.
 
-Surfaced by the adapter port (2026-05-30), refined into a deliberate
-design (2026-06-02): sqrlly has worktree **fork** (foreman gives each
-node an isolated git worktree) and data flows as **stdout /
-`node_outputs`** — but the *file* side of the lifecycle was missing.
-The coherent model is **fork → produce → read/share → promote → GC**.
-The design splits cleanly into a **control surface** (where each node
-runs) and a **tree lifecycle** (what happens to trees after):
-
-| Stage | What | Status |
-|---|---|---|
-| **Fork** | per-node isolated worktree | have it (`ForemanExecutor`) |
-| **Control surface** | choose isolation per node / subgraph / graph | **v1 shipped (0.5.3):** `settings.worktree` + `Node.worktree` = `auto` / `isolated` / `off`, inherited via `merge_settings`. **v2 (planned):** named **groups** — `worktree_group` so N nodes share one tree |
-| **Produce** | nodes write file artifacts where they run | `output_contract` validates in the run dir (worktree or base) |
-| **Read / share** | a node sees another node's files | **shared/named trees give this for free** (same tree); cross-*isolated*-tree read stays path-based (**AP4** keys the worktree map by child id) |
-| **Promote** | get a tree's results out to the base / `output_directory` | **planned: git-delta promotion** — apply one worktree's git diff to the base. **Discover by default** (no contract → full delta, incl. deletes), **glob-filterable** via `output_contract` (git pathspec). Single-source clean; **multi-source-overlap merge is the one deferred rabbit hole** |
-| **GC** | reclaim worktrees | **planned: opt-in** `settings.worktree_gc: never` (default) `\| on_success`, end-of-run only (preserves retry-reuse + resume-rehydrate) |
-
-**Resolution of the design fork (AP3 vs B3):** promotion is **neither
-pure file-copy (AP3) nor octopus-merge (B3)** — it is **git-delta apply
-of a single source**, which handles unanticipated footprints (bugfix /
-refactor: git computes the diff, copy can't even express a deletion)
-while staying out of the merge rabbit hole. The **only** deferred piece
-is reconciling *multiple* isolated trees whose diffs **overlap** — the
-true 3-way merge — revisited only when a concrete workflow proves it
-unavoidable (and even then likely a content-aware acceptance gate, not
-blind `git merge`).
-
-**Control-surface design (v2 groups).** `worktree` becomes a fixed
-`Literal["auto","isolated","off"]` (typo-safe); a separate
-`worktree_group: str` names a shared tree. The two are **mutually
-exclusive** per scope (both set → validation error via
-`model_fields_set`). Resolution is **pure scope specificity**: node →
-subgraph → graph; the most-specific scope that declares *either* a mode
-or a group wins wholesale (group-vs-mode is never a same-scope
-conflict). `merge_settings` gains one special case: a child authoring
-either field clears the inherited sibling. Each grouped node still
-records its own `node.id → shared path` in `node_worktrees` (so fan-in
-pairing and resume-rehydrate keep working); foreman maps `node.id →
-group key` internally.
-
-(Shipped across 0.5.4–0.5.6; the build plan has been removed in the
-2026-06-03 doc cleanup.)
-
-Related (see the consolidated deferred-defects log below): promotion
-(supersedes AP3), GC (B4), glob contracts (B5). **AP2** (isolation
-opt-out) + silent-degrade fix landed in **0.5.3**; **worktree groups** +
-**AP4** (keyed map) in **0.5.4**; **subgraph fan-out per-branch
-isolation** (child-is-the-unit) in **0.5.5**. **B3** (octopus-merge) is
-the deferred multi-source-overlap case only.
-
----
-
-- [x] **Documentation** — _landed, post-Stage-5b; consolidated
-  2026-06-03._ Audience-split docs: README is the user/contributor entry
-  point (install, quickstart, schema, examples); `SCHEMA.md` is the
-  exhaustive field reference; `SKILLS.md` is the agent skill doc;
-  CLAUDE.md is operator notes for Claude sessions. (The 2026-06-03 cleanup
-  removed `TECHNICAL.md`, `DECISIONS.md`, `BUILDER-REQUESTS.md`,
-  `plan_sketch.md`, and the `docs/` folder; `WISHLIST.md` was merged into
-  this file.)
-
-## High-priority post-Stage-5c audit findings (2026-05-06)
-
-Three parallel reviews (schema/compile, runtime, cli/tests/docs) ran
-right after Stage 5c landed. Trivial dead-code and stale-doc fixes
-already shipped in `e51d8b2`. Items 1 and 2 below are tackled in the
-follow-up; items 3+ are real cleanup wins held for explicit decisions.
-
-- [x] **(1) `_Capture` test backend violation** — _fixed._ Extracted `prepend_eval_preamble(rendered, context) -> str` as a pure helper in `runtime/executor/prompt.py`; unit-tested directly via `TestPrependEvalPreamble` (no backend involvement). The e2e test `tests/e2e/test_inline_route_with_eval.py` rewritten to assert on `state["_route_eval_preamble"]` and `state["_route_sender"]` only (real subprocess + real script gate; no `PromptBackend` instrumentation).
-- [x] **(2) `apply_preamble` sum-type return** — _fixed._ `PromptExecutor.apply_preamble` now raises `FileNotFoundError` for missing preamble files and returns plain `str` on the success path. `_dispatch_prompt` catches the exception once at the boundary and translates to `ExecutionResult(success=False, error=...)`.
-- [x] **(3) `auto_detect_executor` silent fallthrough on `ANTHROPIC_API_KEY`** — _delivered alongside StubBackend removal._ The dedicated `AnthropicBackend` (`runtime/executor/backends/anthropic.py`) now resolves first in the auto-detect chain (Anthropic key → DeepSeek key → ACP), so `ANTHROPIC_API_KEY` no longer silently falls through. Without any backend resolvable, `auto_detect_executor()` raises `RuntimeError` naming all three remediation paths.
-- [x] **(4) `Route.validate_shape` rejects `else_` without `cases:`** — _delivered (commit `f563935`)._ `schema/models.py::Route.validate_shape` now raises `ValueError("Route with 'else:' requires 'cases:' — use 'goto:' shorthand for unconditional dispatch")` for the bare-else_ form. Authors pick the unambiguous `goto:` shorthand or the full `cases:` + `else:` ladder.
-- [x] **(5) `EvaluationResult.score=0.0` for multi-dim evals** — _delivered (decided 2026-05-06)._ The threshold check is well-formed for multi-dim — it uses per-dim `result.scores.<field>` clauses and never reads `result.score` for routing. The JSONL-log confusion is purely cosmetic: a passing multi-dim gate emits `score=0.0` in events. Bonus runtime fix in `_parse_evaluation_output`: when JSON has dim_scores but no top-level `score`, derive `score = min(dim_scores)` so the headline matches the weakest-link semantics already in `dimensions[].min`. Two existing tests pinning the 0.0 default flipped to assert the derived value.
-- [x] **(6) `_PrefixingProxy.emit` duplicates `SubgraphLogger.emit` verbatim** — _delivered alongside `stream_mode="updates"`._ The `_PrefixingProxy` class was removed entirely; with the snapshot path gone, the prefix is applied directly to `node_name` before dispatch in `SubgraphLogger.log_update`, so there's only one place that knows about prefixing now.
-- [x] **(7) `FanOut.enabled: false` silently no-ops the block** — _delivered (decided 2026-05-06)._ Dropped the `enabled` field entirely; the presence of the `fan_out:` block IS the activation. To disable fan-out, remove the block. `FanOut` got `extra="forbid"` so legacy YAML carrying `enabled: true|false` fails at `validate` time with a clear ValidationError pointing at the unsupported field. Breaking schema change documented in CHANGELOG; author migration is "delete the line."
-- [x] **(8) `_dispatch_prompt` stub fallback when `_prompt_executor is None` is unreachable in production** — _delivered alongside StubBackend removal._ The branch was replaced with a `RuntimeError` naming the offending node id and the missing-backend cause. No more silent fake output if a custom harness wires `DispatchExecutor` without a `prompt_backend`.
-- [x] **(9) `_make_final_fan_out_node` imports `_read_manifest` from `compile/graph.py` at function-body scope** — _delivered._ Extracted `_read_manifest` to `compile/_manifest.py`. Both `compile/graph.py` (fan-out router) and `compile/dynamic.py` (final-node aggregator) import from the shared module; no more cross-private imports between sibling files. Test import path updated.
-- [x] **(10) `Graph.validate_node_references` does 4–5 unrelated checks in one 56-line function** — _delivered._ Decomposed into four `@model_validator(mode="after")` methods: `_validate_unique_ids`, `_validate_depends_on`, `_validate_route_targets`, `_validate_routes_not_depended_on`. Each carries one concern; failure messages are unchanged so existing tests stay green.
-- [x] **(11) Worktree `is_dir()` recheck in `ForemanExecutor._acquire_worktree`** — _kept (decided 2026-05-06 during audit triage)._ The recheck looked YAGNI within a single run, but it's load-bearing for the rehydrate-resume path: when checkpoint state carries a worktree path that was manually deleted between runs, the recheck triggers re-creation rather than handing the runner a stale path. `tests/unit/runtime/test_foreman.py::test_rehydrated_but_deleted_worktree_is_recreated` pins the behavior. Closing as kept-by-design rather than removed.
-- [x] **(12) `monkeypatch.setattr` on `factory.shutil.which` in `test_factory.py`** — _delivered (decided 2026-05-06)._ Closed as document-only: the patch is sanctioned orchestration instrumentation (we choose which environment-shape branch the resolver sees; we are not faking what an external system would respond). Updated `feedback_no_fake_backends.md` with the narrow exception language. Bonus: added `test_npx_resolved_via_real_shutil_which_against_test_artifact` that exercises the same auto-detect path using a real `monkeypatch.setenv("PATH", ...)` pointing at a tmp dir with a non-functional `npx` script — runs against real `shutil.which`. New tests should prefer this PATH-manipulation style when a single binary is the gate; the function-patch style stays available for tests that gate multiple binaries simultaneously.
-
-## Post-merge findings (2026-05-06, native-events + Anthropic + stubectomy branch)
-
-- [x] **(14) `Settings.executor` rejects unknown strings at schema time** — _delivered (commit `f563935`)._ `schema/models.py::Settings.executor` is now `Literal["acp", "anthropic", "custom", "deepseek", "openai"] | None`. Typo'd values fail at `validate` time rather than late at `run`. The `custom` choice covers OpenRouter / Ollama / LM Studio / LiteLLM / Azure OpenAI / vLLM via `CUSTOM_API_KEY` + `CUSTOM_API_BASE_URL`.
-- [x] **(15) `AnthropicBackend` empty-text-block edge case** — _delivered (commit `f563935`)._ The text-block filter now drops empty-text blocks before the `if not text_parts:` check (`anthropic.py:128-133`: `... and getattr(block, "text", "")`). An all-empty-text response now triggers the loud "no non-empty text block" failure path instead of silently returning `ExecutionResult(output="")`.
-- [x] **(16) `_OVERLOAD_EXCEPTION_NAMES` includes speculative class names** — _delivered (commit `f563935`)._ Dropped the speculative `OverloadedError` entry from the frozenset and replaced the "(newer SDK versions)" comment with a verified-against-0.99 note. Final set: `RateLimitError` / `APIConnectionError` / `APITimeoutError` / `InternalServerError` — all observed in the live SDK.
-- [x] **(17) `_is_overload_status` duplicated between `openai.py` and `anthropic.py`** — _delivered, post-merge audit._ Extracted `runtime/executor/backends/_overload.py::maybe_raise_overload(exc, *, class_names)` shared by both backends. Each backend keeps only its provider-specific class-name set as a frozenset constant.
-- [x] **(18) Subgraph state isolation lacked unit-level coverage after `test_subgraph_isolation_no_parent_state_leak` was deleted in the stubectomy** — _delivered, post-merge audit._ Restored the test using `_ECHO`-rendered script-args (`leak={{parent_only}}|input={{from_parent}}`) as the observable. Mutation-tested: leaking parent's `node_outputs` into the subgraph's `node_inputs` flips the assertion with a clear "leak=PARENT_VALUE" diagnostic. Real subprocess only.
-- [x] **(19) Resume-mode `# Skip if already completed` guard turned `Command(goto=...)` into silent no-op** — _delivered._ Three guards (`compile/nodes.py::_make_execution_node`, `compile/nodes.py::_make_evaluation_node`, `compile/dynamic.py::_make_subphase_node`) all originated in the pre-LangGraph-checkpointer era (commit `1ec9ed3`, 2026-03-20) when the homegrown JSON-envelope resume rehydrated `completed_phases` into state and re-ran the graph. After the migration to `AsyncSqliteSaver` on 2026-04-17, the guards became dead defensive code — checkpointer resume picks up at super-step boundaries, so already-completed nodes don't re-fire from dep edges. With Stage 5c routes, the guards became actively wrong: `Command(goto=X)` is a deliberate re-fire, but the guard suppressed body execution. Removing the three lines unlocks the wave-driven dynamic-task pattern (a fan-out parent re-entered via a route now re-reads its manifest from current state and dispatches the next wave). The `failed_nodes` checks are kept — those guard against re-attempting a hard-failed node and are semantically distinct.
-- [x] **(20) DeepSeek live tests (`tests/unit/runtime/test_openai_backend.py::TestDeepSeekLive`) flake** — _diagnosed 2026-05-06: transient upstream blip, not a deterministic bug._ Re-probing confirmed `deepseek-v4-flash` IS in the live catalog (`client.models.list()` returns it alongside `deepseek-v4-pro`) and a direct send completes in ~1.7s. The 30s timeout observed during the test run was DeepSeek server-side load/queueing, not a bug in our code, model name, or the post-Stage-5c branch's changes. No code change required. If recurrent, gate the live tests behind an opt-in `pytest.mark.live` marker rather than chasing a fix to a non-deterministic symptom.
-- [x] **(21) Live alias-drift detection for `_MODEL_ALIASES`** — _delivered 2026-05-06 alongside the DeepSeek diagnosis._ Anthropic's vendor IDs (`claude-sonnet-4-6` etc.) can drift if Anthropic releases a new headline model under the same family name. New live test (`tests/unit/runtime/test_anthropic_backend.py::TestAnthropicLive::test_alias_table_resolves_in_live_catalog`) queries `client.models.list()` and fails with a clear remediation message ("update _MODEL_ALIASES to the current headline IDs") when an alias points at a deprecated vendor ID. Skipped automatically when no Anthropic key is on disk. Gives us a per-CI-run drift signal whenever a key is configured.
+The one **deferred** piece is reconciling *multiple* isolated trees
+whose diffs **overlap** (true 3-way / octopus merge) — see **B3**
+below; revisited only when a concrete workflow proves it unavoidable,
+and even then likely a content-aware acceptance gate rather than blind
+`git merge`.
 
 ## Post-Stage-5d audit findings (2026-05-08, eval/decision-split branch)
-
-Three low-priority findings from the parallel framework / DRY-KISS-YAGNI / test-doctrine sweep that ran alongside the eval/decision split. The high/medium findings (test fakes, joke-test placement, `_run_eval_core`, `run_evaluation_and_outcome` signature, lazy-init mixin, `OverloadedError` cleanup) all landed in this branch.
-
-- [x] **(27) `_route_targets()` recomputed per render** — _delivered._ `_route_targets(graph)` was called once per `render_mermaid` plus once per terminal node in the `_routes_to_end` loop. Now computed once at the top of `render_mermaid` and threaded into `_classify_endpoints(graph, routes)` and `_routes_to_end(routes, node_id)`. Pure local refactor; existing 25 view tests pass unchanged.
-
-- [x] **(28) Subgraph wrapper duplicates dep-join logic** — _delivered._ `make_subgraph_node` in `compile/subgraph.py` had a hand-rolled dep-join (manual `completed`/`failed` set construction + inline error-update shape). Replaced with the shared `check_dep_failed` + `all_deps_completed` helpers from `compile/nodes.py`. **Bonus bug fix**: the wrapper still carried the `if parent_id in completed_nodes: return {}` re-entry guard that was removed from `_make_execution_node` / `_make_evaluation_node` / `_make_subphase_node` in audit fix #19 — same bug, fourth location the audit missed. With the wave pattern, a `Command(goto=parent_subgraph_node)` would have silently no-op'd instead of re-invoking. Now consistent with execution-node behavior; `failed_nodes` guard kept (short-circuits hard-failed nodes, semantically distinct).
 
 - [ ] 🤞 **(29) `_make_combined_eval_decide_node` is residual debt from the eval/decision split** (`compile/nodes.py`) — top-level gated nodes use the clean Eval + Decision pair, but **dynamic gated parents** stayed on the combined factory because their downstream `_make_dynamic_router` needs `completed_nodes`/`failed_nodes` already in state when it issues `Send(...)` for fan-out. Folding fan-out branch eval into the new pattern would let us delete the combined factory entirely, but requires either (a) graph-level loops over Send branches (LangGraph doesn't support) or (b) a parallel inline-Decision loop that duplicates the new node-factory logic. Defer until fan-out branch authoring patterns surface real pain.
 
 ## Post-Phase-B audit findings (2026-05-08, framework alignment + test doctrine sweep)
 
-Architectural findings from the second-round agent audit. The cluster of small-win items (live markers, ImportError skip, layer-test enforcement, runner try/finally, OVERLOAD names co-location, await_with_timeout helper, three test-content tightenings) landed as commit `5de1166`. The four below are real but defer for design discussion or LangGraph-constraint reasons.
+> **Two closures kept as "don't re-attempt this" notes** (both closed
+> 2026-05-20 as not-a-defect): **(30)** there is no native LangGraph
+> count-based "wait for N `Send` branches" barrier (`defer=True` waits
+> for the whole graph, not one fan-out), so the hand-rolled poll in
+> `_make_final_fan_out_node` is the only option. **(33)**
+> `NamedBarrierValue` joins work only for static `add_edge`
+> predecessors — `Command(goto)` and conditional edges bypass them, and
+> `goto` does NOT suppress a node's static out-edges — so
+> `all_deps_completed`'s manual barrier is correct, not removable
+> (the native-join alternative needs a synthetic marker node per gated
+> node: strictly more complexity).
 
-- [x] **(30) `_make_final_fan_out_node` polling barrier** — _closed as not-a-defect, 2026-05-20._ Original framing (it "fights LangGraph's scheduler", a native fan-in aggregator would replace it) was **wrong**. LangGraph 1.0.7 research: there is no native count-based "wait for N `Send` branches" barrier. Fan-out children are `Send`-dispatched and finish across *different* super-steps (variable-length inline retry loops), and the only native idiom for Send fan-in is state-reducer accumulation — which the final node already does (`child_outputs` + the manifest check). `defer=True` waits for the *whole graph*, not this fan-out, so it's the wrong tool. The hand-rolled barrier is doing the only thing possible. Revisit only if a concrete defect surfaces.
-
-- [ ] 🚨 **(31) `--resume` discards the checkpointer instead of trusting it** (`cli/main.py:269-291`). Reads `channel_values` from prior checkpoint, builds a cleaned state dict, calls `cp.adelete_thread(thread_id)`, then re-streams from initial-state-like dict. Effectively replays the whole graph (the runs-counter in `test_resume_fan_out.py` still pins this: `_read_runs("a") == 2` after resume). The visible symptom of `completed_nodes` accumulating duplicates was masked by #32 (set-union reducer, 2026-05-19), but bodies still re-execute. Re-reading the design landscape post-#32: the LangGraph-native "pass thread_id to astream" pattern assumes the graph paused mid-execution (via `interrupt()`); a graph that returned terminal-with-failures has nothing to resume from natively. Fully resolving the DAG case requires picking one of three API shapes in TODO #26 (skip-completed-via-prior-run channel, `--resume-from <node>`, JSONL-driven skip). Defer until that design call lands.
-
-- [x] **(32) `completed_nodes` / `failed_nodes` use `operator.add` reducer** — _delivered, 2026-05-19._ Switched to `_merge_sets` (set-union); TypedDict annotations changed from `list[str]` to `set[str]`. Migration covered 9 source emission sites (`[node_id]` → `{node_id}`), the inline-retry-loop accumulator (`.append` → `.add`), and ~30 test assertions (`== ["p1"]` → `== {"p1"}`). The wave-pattern test lost its `dispatcher_fires == 2` assertion (now impossible to express in state since set-union dedupes); the `dispatcher::q_gamma` presence assertion is the load-bearing regression check that remains. JSONL event derivation untouched (events fire per super-step, not per state entry). Masks the visible symptom of `--resume` accumulation but doesn't fix the underlying replay logic — see #31.
-
-- [x] **(33) `all_deps_completed` manual polling barrier** — _closed as not-a-defect, 2026-05-20._ Original framing (native LangGraph multi-edge join would replace it) doesn't survive scrutiny. Two findings from the team review:
-  1. LangGraph 1.0.7's `NamedBarrierValue` join works only for pure static `add_edge` predecessors — `Command(goto)` and conditional edges both bypass it (verified against source).
-  2. **Empirically tested**: `Command(goto=X)` does NOT suppress a node's static out-edges — both fire. So the clean conversion ("Decision emits a plain dict + static edge on pass/fail, `Command(goto)` only on retry") is impossible: the static edge into the join target would fire on every retry cycle, tripping the barrier prematurely.
-  The only native-join-compatible design is per-gated-node **marker nodes** (`_settled_<dep>`, reached only on terminal outcomes, carrying the static edge). That adds ~40-60 lines + a synthetic node per gated node — strictly more complexity than the 10-line `all_deps_completed` guard it would remove. `all_deps_completed` is non-idiomatic but correct, small, and doing a job LangGraph genuinely lacks a cleaner primitive for. Revisit only if a concrete defect surfaces.
+- [ ] 🚨 **(31) `--resume` discards the checkpointer instead of trusting it** (`cli/main.py:269-291`). Reads `channel_values` from prior checkpoint, builds a cleaned state dict, calls `cp.adelete_thread(thread_id)`, then re-streams from initial-state-like dict. Effectively replays the whole graph (the runs-counter in `test_resume_fan_out.py` still pins this: `_read_runs("a") == 2` after resume). The visible symptom of `completed_nodes` accumulating duplicates was masked by the set-union reducer (2026-05-19), but bodies still re-execute. Re-reading the design landscape: the LangGraph-native "pass thread_id to astream" pattern assumes the graph paused mid-execution (via `interrupt()`); a graph that returned terminal-with-failures has nothing to resume from natively. Fully resolving the DAG case requires picking one of three API shapes in TODO #26 (skip-completed-via-prior-run channel, `--resume-from <node>`, JSONL-driven skip). Defer until that design call lands.
 
 ## Hardening — structural footgun checks (2026-05-20)
 
@@ -146,17 +54,8 @@ the compile/validate boundary. Warn at minimum; hard-error only where
 the construct is unambiguously broken.
 
 - [~] **(34) Compile-time footgun checks for documented gotchas** —
-  partial. Warning channel + hyphenated-id check delivered 2026-05-20.
-  - [x] **Warning channel** — `compile/lint.py::collect_warnings`
-    (pure, langgraph-free) + `cli/main.py::_emit_warnings` printing
-    yellow `warning:` lines to stderr. Wired into both `validate` and
-    `run` (covers `--dry-run`).
-  - [x] **Hyphenated node IDs** — `collect_warnings` flags any
-    top-level node id or fan-out final-node id containing `-`
-    (subtraction footgun), suggesting the underscore rename. Chose the
-    structural ID-only check over a template scan: pure, zero-I/O,
-    safe on every `run`. Top-level config only — subgraph configs are
-    not loaded.
+  partial. Warning channel (`compile/lint.py::collect_warnings`) +
+  hyphenated-node-id check delivered 2026-05-20. Remaining:
   - [ ] 🤞 **`{{sender_id}}` on a non-goto-reachable node** —
     `_route_sender` is last-write-wins; a node reached by a static
     `depends_on` edge *after* an inline-route hop elsewhere can
@@ -164,117 +63,20 @@ the construct is unambiguously broken.
     `{% if sender_id %}`. Deferred — needs topology reachability
     analysis and is lower confidence (may be noisy).
 
-## Transport / backend design (2026-05-27)
+## Transport / backend design
 
-Design discussion surfaced during PyPI launch. The current backend
-axis treats `transport: api` and `transport: acp` as equivalents, but
-they have capability-wise different shapes:
-
-- **API backends** (`anthropic`, `openai`, `deepseek`, `custom`) are
-  text → text. The model has no filesystem, no tool use, no local
-  context. Workflow nodes that assume an agent with worktree access
-  (most of them) silently degrade to "transform input text into
-  output text." Honest fit is *stateless transforms* (classify,
-  score, JSON-shape a piece of text) — not producer nodes.
-- **ACP backend** is the agent-with-local-context shape the project
-  was designed around.
-
-- [~] **(35) `transport: cli` + ACP value reassessment** — partial.
-  _Investigation closed + cli implementation landed in 0.3.0
-  (commits 7855731..ad12c89). See findings in
-  the transport-parallelism investigation (doc removed 2026-06-03)._ Both
-  transports coexist; ACP retirement is **deferred** pending real
-  workflow soak (current default in the jokes example is cli, acp
-  available via `--preset acp`). Original investigation note
-  retained below for context.
-  **Open investigation gating priority:** is `cli` *additive* (a third
-  transport alongside acp) or *replacement* (consolidate on cli, retire
-  acp)? Until we know, scope and breakage profile are unclear, which
-  lowers priority. Four questions to answer empirically (see
-  the transport-parallelism investigation (doc removed 2026-06-03) for the
-  detailed plan):
-
-  1. **`new_session()` cost:** does ACP's `new_session()` reset
-     context *in-process* (server-side state op, ~ms — think Claude
-     Code's `/clear`) or *fork a fresh process* (full cold-start)?
-     The first lets sqrlly clear context per node with no cold-start
-     hit, preserving the process-warmth advantage. The second
-     collapses ACP's edge over CLI.
-  2. **Real cold-start numbers:** audit estimates (5s CLI / 7s ACP)
-     are structural, not measured. Direct `time` runs on `claude -p`
-     and ACP `_ensure_initialized` would settle the N-node crossover.
-     Working hypothesis: actual numbers are lower than estimates.
-  3. **Per-branch ACP for real parallelism:** foreman allocating one
-     `ACPBackend` per `(preset, branch_id)` instead of per preset.
-     Worktrees are already per-branch — not blocked there. Worth
-     measuring vs CLI projection.
-  4. **Optional context retention** (`settings.context_mode:
-     isolated | shared`): pipelines (research → outline → write)
-     might genuinely benefit from accumulated conversation history.
-     If retained as an opt-in, ACP gains a user-visible
-     differentiator CLI can't trivially replicate.
-
-  **`transport: cli` (agent-CLI subprocess).** Add a third transport
-  shape: `subprocess.run([cli_for(provider), …print-mode flags,
-  "--model", model], input=prompt, …)`. Same "agent with local
-  context" capability as ACP, but a plain subprocess — no stream
-  protocol, no process-tree cleanup, no `aclose` warnings, no
-  soak-under-load concern. Provider table: `anthropic` → `claude -p`,
-  `openai` → `codex exec` (pin syntax at impl time), `google` →
-  `gemini -p` (adds `google` to the provider literal). Escape hatch:
-  `transport: cli, provider: custom, cli_command: "aider --message
-  {{prompt}}"` mirrors the existing `api_base_url` constraint
-  pattern on `transport: api, provider: custom`.
-
-  **ACP value-add reassessment.** What ACP currently buys that
-  `transport: cli` wouldn't:
-  - Session persistence across prompts — *doesn't matter* in
-    sqrlly's independent-per-node model; no warm state to reuse.
-  - Streaming `session_update` events (tool calls in flight, plan
-    updates) — *could matter* if we grew "live progress in the JSONL
-    log"; not surfaced today (we only keep the final text).
-  - Programmatic per-tool permission control — *could matter* for
-    policy enforcement; not used today (we auto-approve everything
-    in `_ACPCallbacks.request_permission`).
-  - Declarative MCP servers via `new_session(mcp_servers=[...])` —
-    CLI equivalent is `--mcp-config`. Same capability, different
-    surface. We pass `[]` today.
-  - Multi-vendor portability — ACP is a Zed-designed *protocol*, in
-    theory implementable by codex / gemini. As of 2026-05 only
-    `claude-code-acp` ships publicly. *Hypothetical* until that
-    changes.
-
-  None of these are load-bearing today. ACP earns its weight only if
-  (a) we surface mid-flight events to the log, or (b) other vendors
-  ship ACP servers. Until either, ACP is the protocol whose stream we
-  don't consume.
-
-  **Migration option once `cli` lands.** Run `cli` + `acp` in parallel
-  for a release or two; if nothing trips on the difference, retire
-  `transport: acp` (deletes the backend, the conftest pre-flight, the
-  npm dependency note, the soak concerns in TODO 49/53/54). Frees
-  roughly the process-tree-cleanup surface and ~400 lines.
-
-  **Text-pipe CLIs are NOT in scope for `transport: cli`.** Tools like
-  `ollama run` / `llm` / llama.cpp's `main` are text-in/text-out with
-  no agent shape — they belong in `transport: api` + `provider:
-  custom` against the tool's OpenAI-compatible HTTP server (Ollama,
-  vLLM, llama.cpp all ship one).
-
-  **Order of operations** if any of this becomes real work:
-  1. Doc-only: README/SKILLS clarifies the API-vs-agent distinction.
-     Zero code.
-  2. `transport: cli` backend — focused add (~200 lines + tests).
-     Stands on its own.
-  3. Contracts arc lands (existing TODO: *Schema enforcement at
-     backend boundary*, *Schema sources*, *Schema-first templates*).
-     Independent of the transport work, and the gating piece for
-     **making API mode useful for producer-shaped nodes via
-     structured returns**. The inline-context alternative (bake file
-     contents into prompts via `{{dep_id}}` extensions) is a smaller
-     patch but doesn't scale to large workdirs and re-eats tokens on
-     every retry.
-  4. Revisit `transport: acp` retirement.
+- [~] **(35) ACP retirement decision** — `transport: cli` landed 0.3.0;
+  both transports coexist (jokes example defaults to cli, acp via
+  `--preset acp`). ACP retirement is **deferred** pending real workflow
+  soak. ACP earns its weight today only if (a) we surface mid-flight
+  `session_update` events to the JSONL log (not consumed today — we keep
+  only final text) or (b) another vendor ships an ACP server (only
+  `claude-code-acp` exists as of 2026-05). Until either, retiring
+  `transport: acp` would delete the backend + conftest pre-flight + npm
+  dep note + soak concerns (~400 lines). Open sub-question for the soak:
+  does ACP's `new_session()` reset context in-process (cheap) or fork a
+  fresh process (collapses the warmth advantage over CLI)? Settle by
+  measurement before committing either way.
 
 - [ ] **(36) `transport: cli` provider expansion** — cheap future
   wins once item 35's `provider: anthropic` (`claude -p`) lands.
@@ -304,47 +106,9 @@ they have capability-wise different shapes:
 
 ## Coverage gaps from post-Stage-5c audit (2026-05-06)
 
-Five gaps surfaced when auditing test/example coverage of recently-
-landed features. Tracked separately from the audit-finding numbers
-above because they're additive (no production-code change) rather
-than fixes to existing code.
-
-- [x] **(22) Wave-driven dynamic-task pattern lacked an example and
-  a permanent test.** The pattern was proven via a one-shot spike
-  (`.temp/wave_spike.py`) but had no examples-gallery entry and no
-  e2e regression test. Delivered `examples/wave_planner/` (workflow
-  + 4 deterministic Python scripts + README) and
-  `tests/e2e/test_wave_pattern.py` (mutation-tested: temporarily
-  re-adding the resume-mode `completed_nodes` guard at
-  `compile/nodes.py::_make_execution_node` reproduces the original
-  regression as a `GraphRecursionError`). Folded
-  `memory_threshold_pct` into the example's settings as documentation
-  surface for that feature. Spike file deleted as part of the
-  example landing.
-- [x] **(23) Live-backend e2e round-trip** — _delivered._
-  `tests/e2e/test_live_backend_roundtrip.py` exercises the full CLI
-  pipeline (Click runner + `AsyncSqliteSaver` + `DispatchExecutor` +
-  real backend) against `examples/jokes/workflow.yaml` parametrized
-  over all four backends (`anthropic` / `deepseek` / `openai` /
-  `custom`). Marked `pytest.mark.live`; per-backend skip when the
-  matching API key is absent — runs cleanly offline (zero
-  parametrized cases execute) and gradually fills in coverage as
-  keys get configured. Asserts only structural properties (exit 0,
-  both nodes complete) so it stays robust to model output drift.
-- [x] **(24) DeepSeek model-availability drift** — _delivered._
-  `tests/unit/runtime/test_openai_backend.py::test_alias_table_resolves_in_live_catalog`
-  (line 69-92) mirrors the Anthropic test: queries `client.models.list()`
-  against DeepSeek with the test-pinned `deepseek-v4-flash`; fails
-  with a clear "update the test fixture" diagnostic when the model
-  retires. Skipped when no DeepSeek key is on disk.
-- [x] **(25) Resume-from-checkpoint e2e** — _delivered._
-  `tests/e2e/test_resume_fan_out.py` exercises a real
-  `AsyncSqliteSaver` round-trip across two phases with mid-chain
-  failure injection. The runs-counter side-channel pins exactly how
-  many times each node body executes. Surprising finding: ``a``'s
-  counter goes from 1 to 2 — see (26) below.
 - [ ] 🚨 **(26) `--resume` semantics are underspecified for goto-driven
-  workflows** — _surfaced by (25); design question, not a bug._
+  workflows** — _design question, not a bug; surfaced by the
+  resume-from-checkpoint e2e (`tests/e2e/test_resume_fan_out.py`)._
   Today `--resume` is a bare boolean: state comes from the SQLite
   checkpoint at `<workdir>/.sqrlly-checkpoint.db`, thread_id is
   derived from `(config.name, workdir)`. cli/main.py loads the
@@ -400,18 +164,6 @@ than fixes to existing code.
 
 ## Simplification candidates (surfaced by 2026-04-17 refactor-done review)
 
-- [x] **Unify gate-eval via outcome-as-routing-signal** — _landed, Stages 3 + 3b._ Top-level phases use the data-driven model from `compile/evaluation.py` (`Criterion`, `Route`, `walk_routes`, `gate_to_routes`). `classify_gate_outcome` walks routes; `state.evaluations: {node_id: [EvaluationRecord]}` is the single source of truth for scores/feedback. Stage 3b (branch `stage-3b-evaluation-node`) completed the picture: gated top-level phases are a graph pair (`phase` execution node → `_eval_{phase}` evaluation node via `_make_evaluation_router`); gated subphase templates evaluate inline within the Send-dispatched subphase node (graph-level self-loops strip `_subphase_item` at the super-step boundary, so inline retry is the only shape that preserves per-branch identity); legacy `gate_scores`/`gate_feedback` state channels removed outright. Subphase gates honor `max_retries`, write `EvaluationRecord`s with real `invocation` counters, and log per-dimension scores.
-
-- [x] **Phase → Node terminology + Recursive subgraphs + Join nodes** — _landed, Stage 4 (branch `stage-4-node-recursive-subgraphs`)._ Hard cutover on YAML and Python: `phases:`→`nodes:`, `Phase`→`Node`, `WorkflowConfig`→`Graph`, `dynamic_subphases:`→`fan_out:`, `final_phases:`→`final_nodes:`, `quality_gate:`→`evaluation:` (alias dropped). State channels and helpers renamed to match (`phase_outputs`→`node_outputs`, `_make_phase_node`→`_make_execution_node`, etc.). Stage 4b: `execution: { type: join }` no-op topology marker. Stage 4c: `Node.config:` references another graph YAML; recursively compiled via `add_node(node.id, compiled_subgraph)`. State projection via explicit `inputs:`/`outputs:` declarations; subgraph runs in isolation. Compile-time cycle detection + `settings.max_subgraph_depth=10` cap. 488 tests passing.
-
-- [x] **Split Evaluation from Decision** — _delivered (Stage 5d, 2026-05-08)._ Top-level gated nodes now compile to `exec → _eval_<id> → _decide_<id>` with plain edges. The Eval node body writes only `state.evaluations[node_id]` (an EvaluationRecord); the new Decision node reads that record, classifies the outcome via `classify_evaluation_outcome`, and returns `Command(update={completed/failed/retries/errors}, goto=target)`. `_make_evaluation_router` deleted; `add_conditional_edges` for the eval pair removed entirely. Mirrors the existing `_make_inline_route_node` Command pattern.
-
-    The four unlock cases (refinement, multi-eval consensus, human-in-the-loop, cross-phase evaluation) are all now *topologically expressible*: an author or downstream tool can insert nodes between Eval and Decision (e.g. consume the EvaluationRecord, emit a revised draft, then route to Decision OR back to executor). First-class authoring API for these patterns (e.g. an `evaluation: { refine: <node_id> }` schema) is iteration 2 — separate plan.
-
-    **Subphase inline retry loops** (`compile/dynamic.py::_make_fan_out_node`) stay untouched — independent subsystem with its own per-Send-branch state model. **Dynamic gated parents** keep the pre-Stage-5d combined factory (`_make_combined_eval_decide_node`) because their downstream is a conditional-edge dynamic_router that needs `completed_nodes`/`failed_nodes` already in state; inserting a Decision node there would fragment manifest dispatch. Both deferrals documented inline.
-
-    Tests: 14 new in `test_decision_node.py` (Command emission per outcome + guards + subphase resolver + history-latest); existing `test_evaluation_node.py` migrated to assert eval-only contract; `test_evaluation_router` class deleted (router gone); `test_graph_shape.py` topology tests updated to expect plain `eval → decide` edges with no conditional edges. 878 tests total green (was 875).
-
 - [ ] **Collapse `runtime/executor/backends/` → `runtime/backends/`** — 4-level nesting (`runtime/executor/backends/acp.py`) for 4 small files. Semantic loss: current nesting signals that only `PromptExecutor` uses backends. If we land the anthropic/openai backends (below), the signal still holds but less strongly — multiple executor types might route through one backends/ module. Low value, low risk; defer until a second executor family justifies the flattening.
 
 - [ ] **Fold `compile/dynamic.py` into `compile/nodes.py`** — 182 LOC would bring `nodes.py` to ~530 LOC. The split is defensive today: `_make_fan_out_node` has legitimately divergent semantics (no dep check, no output contract, no retry routing). **Worth revisiting after** the gate-eval unification above — if the gate block is gone and the final remaining divergence is "Send-triggered vs. normal-invocation," the split stops earning its keep.
@@ -419,8 +171,6 @@ than fixes to existing code.
 - [ ] **Move `_detect_cycles` + `_find_terminal_phases` → `schema/models.py`** — topology validation belongs with the config model. Blockers: `schema/` is currently langgraph-free Pydantic-only; moving these functions in would require no imports from `langgraph`, which they already don't have. Clean move. Low priority — they're stable and small.
 
 ## Test doctrine cleanup
-
-- [x] **Remove `StubBackend` from production code** — _delivered._ `runtime/executor/backends/stub.py` deleted; the factory's `"stub"` branch dropped; `auto_detect_executor()` raises `RuntimeError` with concrete remediation instead of falling back to fake output; `DispatchExecutor._dispatch_prompt` raises when no backend wired (no more silent `[prompt-stub]` placeholder). Stand-in tests migrated to `_ECHO` script execution; `prompt_length` substitution stand-ins deleted (Jinja rendering covered at the unit level by `tests/unit/runtime/test_prompt.py::TestRenderTemplate`). Breaking changes documented in CHANGELOG — `--executor stub` and `executor: stub` no longer accepted.
 
 - [ ] **Resolve MemoryBackend / ErrorBackend / SleepyBackend / TrackingBackend policy conflict** — `tests/unit/runtime/test_prompt.py` has `MemoryBackend` + `ErrorBackend` used by ~14 orchestration tests; `tests/unit/runtime/test_foreman.py::TestPerModelBackpressure` has `SleepyBackend` + `TrackingBackend`. All four are hand-written Protocol doubles that strict reading of `feedback_no_fake_backends.md` forbids. They instrument `PromptExecutor` / `ForemanExecutor` orchestration (template, preamble, timeout, token threading; per-model concurrency caps) — NOT Claude behavior — so the strict interpretation may be wrong.
     - Three options (detailed at `/home/christopher/.claude/plans/memory-backend-policy.md`):
@@ -431,11 +181,11 @@ than fixes to existing code.
 
 ## Top priority after simplification refactor
 
-- [x] **Reconsider dependency/ordering model** — _delivered, post-Stage-5d._ Every sub-bullet has landed: (a) phases as a YAML construct are gone — schema is `nodes:` + `fan_out:` (Stage 4); `cli/migrate.py` carries the one-time legacy YAML migrator. (b) QualityGate-as-special is gone — `evaluation:` is a sub-config on any Node, and Stage 5d split it into separate `_eval_<id>` + `_decide_<id>` nodes in the compiled graph. (c) retry-with-context is the route chosen by the Decision node via `Command(goto=exec_id)` with retry context surfaced through `_route_eval_preamble` and `inject_retry_reason`. (d) escalation tiers do not exist — single `retries:` budget; `rg "escalated|super_escalated|retry_tier" src/` returns zero hits. Naming cleanup pass (2026-05-15) renamed remaining internal `subphase` tokens to `branch` and dropped the dead `_subphase_id_resolver`.
-
-- [x] **ACP test flakiness** — _closed for now, 2026-05-15._ Likely-root-cause fix landed in `5de1166` (Python 3.14 ACP `aclose()` warning handled via `/proc`-walk descendant reaping in `ACPBackend.close()`). Two consecutive `tests/acp/` runs on 2026-05-15: 14/14 each, 150s and 160s — close enough timings to rule out race-amplified hangs in this environment. Reopen if symptoms return; the parent item below (soak-test under load with `max_parallel_jobs > 1`) is the formal validation gate.
-
-- [x] **ACP process-tree leaks / zombie subprocesses under long runs** — _initial fix landed in post-Stage-5b. `ACPBackend.close()` now captures descendants from `/proc/<pid>/task/<pid>/children` BEFORE `__aexit__` (so re-parented orphans stay tracked), runs graceful shutdown under a 5s `wait_for`, then SIGTERM→0.5s→SIGKILLs each captured PID. Teardown assertion `tests/acp/test_acp_cleanup.py::test_close_reaps_descendant_tree` watches a 15-PID descendant tree disappear within 3s of close. **Open: soak-test under load** — needs a multi-hour run with `max_parallel_jobs > 1` against the absurd-paper workflow before this can be fully ticked off._
+> ACP process-tree cleanup landed (post-Stage-5b `ACPBackend.close()`
+> reaps the descendant tree; flakiness closed 2026-05-15). The **open**
+> residual is the soak-test gate: a multi-hour run with
+> `max_parallel_jobs > 1` against the absurd-paper workflow (also TODO
+> 49 / the ACP-retirement soak in #35).
 
 - [ ] **Worktree garbage collection**
     - Today: `ForemanExecutor` never removes trees under `<workdir>/.sqrlly/` — disk + inodes accumulate indefinitely across runs
@@ -462,24 +212,11 @@ Building the 13-phase demo surfaced issues not previously cataloged. Kept here a
     - Phases still complete in these runs — the error is logged but recovery happens somewhere. Suggests the SDK is raising and the dispatcher is retrying or dropping.
     - Needs root-cause diagnosis. Possibly related to background tasks per the supervisor traceback, or to in-flight session state while a new prompt arrives.
 
-### Orchestrator join semantics
-
-- [x] **Multi-gated-predecessor join bug** — _Stage 1, 2026-04-17._ `_make_phase_node::node_fn` now returns `{}` when any dep is missing from `completed_phases`. LangGraph re-fires the node on each subsequent pred completion; missing-pred returns turn the node into a natural join barrier. `examples/absurd-paper/` runs cleanly with natural topology (commit `593d1c3`). Regression test: `tests/e2e/test_orchestrator.py::TestParallelExecution::test_multi_gated_predecessor_joins_correctly`.
-
-- [x] **Subphase context doesn't inherit parent's upstream deps** — _Stage 2a, 2026-04-17._ `_make_subphase_node` now calls `build_context(parent_phase, state)` before layering in item fields, so subphase templates see the full upstream chain. Regression test: `tests/e2e/test_dynamic.py::TestManifestFieldPropagation::test_subphase_context_inherits_parent_deps`.
-
-- [x] **Final-phase output unreachable from downstream non-fan-out phases** — _Stage 2b, 2026-04-17._ `build_context` now synthesizes `{dep}_subphases` and `{dep}_subphase_worktrees` directly from `state.subphase_outputs` / `state.phase_worktrees`. Any downstream (final or otherwise) depending on a dynamic parent sees the same aggregate. `_make_final_phase_node` collapsed from ~25 LOC to a thin alias. Regression test: `tests/e2e/test_dynamic.py::TestManifestFieldPropagation::test_downstream_sees_subphase_aggregate`.
-
 ### Data-flow gaps
 
-- [x] **Command phase `args` are not Jinja-templated** — _Stage 2c, 2026-04-17._ `CommandExecutor.execute` now renders each arg through `render_template(arg, context)` before building `cmd`. Plain strings pass through. `command` itself is not templated (security: keeps binary choice static). Regression tests: `tests/unit/runtime/test_command_executor.py::TestCommandExecutor::test_args_are_jinja_rendered` and `test_args_without_templating_render_literally`.
-    - Separately: consider also templating `env` additions or piping dep outputs to stdin for command phases — would unlock simple Python-script "aggregator" phases.
-
-- [x] **Gate validators can't see dep outputs; gate-only phases have no useful signal** — _delivered 2026-05-08._ `runtime/gates.py::run_evaluation_*` now accept `dep_outputs` / `dep_structured_outputs` / `dep_worktrees` kwargs threaded through `compile/nodes.py::run_evaluation_and_outcome`. Script gates project them to `DEPS_JSON` / `DEPS_STRUCTURED_JSON` / `DEPS_WORKTREES_JSON` env vars. LLM gates bind each dep by id directly in the Jinja context (matches `build_context`'s convention) plus `_deps` / `_dep_structured` aggregates. Dep scoping mirrors `build_context`: gates see their node's declared `depends_on` outputs only; gate-only phases (no execute, no deps) see all completed outputs (the bug case). Tests: 8 new in `test_gates.py::TestGateDepOutputs` + `TestGateScopingByDeps`, plus `tests/e2e/test_gates_dep_access.py` proves a gate-only phase can validate upstream content end-to-end without the `$WORKDIR` filesystem-read workaround. Subphase gates in `compile/dynamic.py::_make_fan_out_node` were left untouched — independent subsystem with its own context model; revisit when use cases surface.
+- [ ] **Template `env` additions / pipe dep outputs to stdin for command nodes** — command-node `args` are Jinja-rendered today; extend the same to `env` values and add optional stdin piping of dep outputs, which would unlock simple Python-script "aggregator" nodes.
 
 ### Observability
-
-- [x] **Multi-dim gate `score` logged as 0.0 even when dimensions pass** — _Stage 3, 2026-04-17._ `gate_evaluated` events now source from `state.evaluations` (real evaluation records) and carry a `scores` dict with per-dimension values alongside the top-level `score`. Regression test: `tests/unit/workflow/test_logging.py::TestLogSnapshot::test_detects_multidim_gate`.
 
 - [ ] **LLM gates inherit PromptBackend flakiness with misleading 0.0 fallback**
     - `runtime/gates.py::evaluate_gate_llm` returns `GateResult(score=0.0, feedback="gate backend error: ...")` when the backend call fails. The backend error rolls up as a gate failure (score=0.0) rather than a phase error. On a bad ACP turn, a phase with a passing output can be retried or failed purely due to gate-dispatch flake.
@@ -500,59 +237,6 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
     - Enables: synthesis-gate blocking merge (if gate fails, changes never fold back); reset semantics for the escalation tiers above
 
 ## Sharing readiness (surfaced 2026-05-27, post-0.3.x publish)
-
-- [x] **`sqrlly init <dir>`** — _delivered 0.4.0._ Scaffolds
-  `workflow.yaml` + `prompts/hello.md` with a CLI-transport default
-  preset. Embedded strings in `cli/init.py`; refuses to clobber an
-  existing workflow.yaml. README's Quickstart leads with the init
-  flow. Future: `--template <name>` for richer starting points (jokes,
-  pipeline, fan-out).
-
-- [x] **Live terminal workflow state + aliveness indicator** —
-  _delivered 0.4.2 (renderer scaffold) + 0.4.3 (squirrel scene)._
-  `runtime/terminal.py::TerminalRenderer` + `SquirrelScene`. Auto-
-  enables on TTY; `--quiet` to suppress. Per-node status grid plus a
-  walking-squirrel header scene with pile/stash sized from event
-  state. Known limitation: route-only workflows (no `depends_on`)
-  show all nodes as "running" from start — heuristic uses
-  `depends_on` only. Future work to track route-based flow.
-
-  Original spec retained below as the design source-of-truth.
-
-  The JSONL event stream already emits everything needed
-  (`workflow_start`, `node_completed`, `gate_evaluated`,
-  `node_retried`, `node_failed`, `workflow_end`); the missing piece
-  is a terminal renderer subscribing to the same source as
-  `JsonlLogger`. **Workflow events, not LLM-token streaming** — sqrlly
-  does not surface per-model-token output and has no plans to.
-
-  Shape:
-  - A per-node status line ("waiting / running / passed / retrying /
-    failed") updated in place via TTY ANSI escapes.
-  - A small aliveness indicator: a clock-driven animation
-    (~100 ms tick) running continuously so a long node — a slow
-    model call, a stuck subprocess — still shows motion. **Themed
-    candidate:** a sqrlly-aligned mini-scene of a squirrel walking
-    between a pile of nuts (left) and loose nuts (right). The
-    *squirrel's walk* is clock-driven aliveness — back and forth
-    independent of events. *Event-driven overlays* on the same scene
-    carry structural meaning: a nut falls into the loose pile when a
-    node enters waiting/running, gets added to the left pile on
-    `node_completed`, gets eaten/dropped on `node_failed`. Bonus a
-    tree on the side that drops fresh nuts as new work is queued —
-    bikeshedding territory. The split matters: **aliveness keeps
-    ticking regardless of workflow activity; the rest of the scene
-    reflects actual state.**
-  - TTY-aware: skip animation when stdout is piped or redirected;
-    fall through to plain per-line output for log-friendly capture.
-  - Honors a possible `--quiet` / `--verbose` flag; the existing
-    silent default could become opt-out.
-
-  Implementation sketch: new `runtime/terminal.py` with a class
-  subscribing to the same event source `JsonlLogger` already
-  consumes. ~150–250 LOC including TTY detection + color via
-  `click.style`. No backend-layer changes; the contract between
-  `PromptBackend.send_prompt` and its callers stays as-is.
 
 - [ ] **ASCII box-art workflow viz (`sqrlly graph --ascii`)** —
   terminal-renderable alternative to the current Mermaid output for
@@ -575,39 +259,15 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
 
 ## Forward-looking — surfaced during 2026-04-18 architecture plan
 
-- [x] **Implicit Join + explicit JoinNode primitive** — _landed, Stage 4b._ Implicit join was already free via LangGraph's super-step semantics (multi-pred nodes naturally synchronize). Stage 4b added `execution: { type: join }` as the explicit form for author readability at fan-in points; dispatcher routes it to a no-op handler returning `ExecutionResult(success=True, output="")`. Composes with `evaluation:` (gates run against the empty join output) and downstream consumers (build_context reads the join's empty output like any other dep).
-
-- [x] **Multi-step fan-out children** — _landed, Stage 5b
-  (branch `stage-5b-execute-url`)._ Closed by the same URL-suffix
-  dispatch model the rest of the orchestrator uses: a
-  `fan_out.template.execute.url` ending in `.yaml`/`.yml` runs as a
-  subgraph per Send branch; `.md`/`.txt`/`.prompt` as a prompt;
-  `.py`/`.js`/`.sh` as a script; bare path as a binary. One field
-  (`execute.url`), one rule (URL extension). No separate
-  `fan_out.config:` shape needed — the `template:` block is the
-  shape; the URL inside it picks the mode. Per-child subgraph e2e
-  coverage in `tests/e2e/test_fan_out_subgraph.py`.
-
-- [x] **Subgraph with defined entry/exit nodes as a first-class primitive** — _landed, Stage 4c._ A subgraph declared via `Node.config:` is loaded as a `Graph` (identical schema), recursively compiled, and added as a node in the parent via `add_node(node.id, compiled_subgraph)`. State projection across the boundary is explicit via `inputs:` / `outputs:` declarations. Reusable subgraph libraries are a real concept now: the same YAML runs both standalone and as a subgraph reference.
-
-- [x] **Workflow run visualization tool** — _delivered 2026-05-08
-  (MVP)._ `sqrlly view <yaml> [--log <jsonl>] [--out <path>]
-  [--direction TB|LR|BT|RL]` emits a self-contained HTML page with
-  custom Mermaid emission (not LangGraph's, for layout control and
-  author-perspective output skipping synthetic `_eval_<id>` /
-  `_route_<id>` nodes). Authoring mode (no log): topology + per-
-  node config inspector. Debug mode (with log): adds status overlay
-  (passed/failed/retried/untouched), goto-re-fire chip
-  (`fired N×`), retry chip, last-error display, full event slice.
-  Layout uses a Mermaid subgraph block with invisible spine edges
-  `START ~~~ workflow ~~~ END` for predictable direction. Bonus
-  fix: runner's `log_update(None)` crashed on Command-only nodes;
-  guard added.
-
-  Iteration 2 still on the table (deferred): time-slider replay,
-  `--follow` live mode, explicit `goto_fired` / `send_dispatched`
-  events for animated arrows, drill-down to per-node worktree
-  commits (depends on the integrated checkpoint story).
+> Shipped here (see CHANGELOG): implicit join + `execution: { type:
+> join }` (Stage 4b); multi-step fan-out children via `execute.url`
+> extension dispatch (Stage 5b); subgraphs with declared entry/exit via
+> `Node.config:` (Stage 4c); the `sqrlly view` HTML run-visualization
+> tool (2026-05-08 MVP). Viz **iteration 2** is still deferred:
+> time-slider replay, `--follow` live mode, explicit
+> `goto_fired`/`send_dispatched` events for animated arrows, and
+> drill-down to per-node worktree commits (depends on the checkpoint
+> story below).
 
 - [ ] **Author-declared checkpoints + worktree commits + cross-run
   resume semantics** — _surfaced 2026-05-08 while reframing (26)._
@@ -663,8 +323,6 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
 
 ## Architectural moves
 
-- [x] **Nodes as proper langgraph subgraphs** — _landed, Stage 4c._ A node with `config:` recursively compiles the referenced graph YAML and adds it as a node via LangGraph's native `add_node(name, compiled_subgraph)`. State projection is explicit (`inputs:` / `outputs:`); subgraph runs in isolation. Open questions resolved: subgraph never sees parent's full state, only what `inputs:` projects in; `{{dep}}` substitution works the same way at every level because graphs and subgraphs share one schema.
-
 - [ ] **Flexible output contracts**
     - Glob patterns: `required_files: ["docs/*.md", "reports/**/*.pdf"]`
     - Size / non-empty checks: `{path: "out.json", min_bytes: 10}`
@@ -674,25 +332,9 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
     - Forbidden files to catch leftover artifacts
     - Tree-shape constraints (e.g. "≥N files under `reports/`")
 
-## Correctness
-
-- [x] **Subphase quality gates with retries** — _landed, Stage 3b (branch `stage-3b-evaluation-node`)._ Subphase gates honor `max_retries` via an inline retry loop inside `_make_subphase_node`. Graph-level self-loops can't work for Send-dispatched branches (LangGraph merges branches at super-step boundaries, stripping `_subphase_item`), so the retry loop lives inside the node body. Evaluation records accumulate per-branch with real `invocation` counters; e2e test `tests/e2e/test_dynamic.py::TestDynamicGates::test_subphase_gate_triggers_retry` proves both `p::x` and `p::y` retry independently.
-
 ## Features
 
 - [ ] **Agent skills draft creation primitive** — surfaced 2026-05-06. Authors today encode "small reusable instruction modules" (skill drafts — short Markdown bundles describing a tool/role/workflow + example invocations) inline as prompt files plus per-node Jinja context. As more workflows reuse the same skill across nodes, three patterns emerge: (a) duplicate the .md across prompts, (b) `{% include %}` it, (c) handcraft a meta-prompt that asks Claude to first synthesize a skill from constraints and then apply it. (c) is the interesting case — it's the "draft creation" half of an agent-skill lifecycle (draft → apply → critique → revise) that doesn't have a first-class shape today. **What an `agent_skill:` block could look like**: a node-level declaration that the prompt produces a structured skill artifact (path, name, description, invocation example), and downstream nodes can reference it as `{{skills.<name>}}` for inclusion. Pairs with output_contract for the artifact-on-disk form, and with the TODO "Schema enforcement at backend boundary" item for typing the draft. **Open questions**: should the skill be persisted across runs (cross-thread `BaseStore`?) or is it per-workflow scratch? Should the schema enforce a draft → apply → critique → revise loop, or stay loose and let authors compose? Probably investigate against a concrete example workflow (e.g., `examples/agent_skill_draft/` writing a "research-summary" skill once and reusing it across multiple summarize nodes) before designing the schema.
-
-
-- [x] **Fan-out + recursive-subgraph composition** — _landed, Stage 5b
-  (branch `stage-5b-execute-url`)._ A `fan_out.template.execute.url`
-  ending in `.yaml`/`.yml` runs the referenced subgraph **per Send
-  branch**: each manifest item drives one subgraph invocation, and the
-  subgraph's terminal output flows back as that branch's
-  `child_outputs[parent::item_id]`. Cycle detection walks the URL-
-  reference DAG at parent compile time. Demo:
-  `examples/absurd-paper/reviewer_pool` now runs draft → critique
-  per reviewer via `subgraphs/single_review.yaml`. e2e coverage in
-  `tests/e2e/test_fan_out_subgraph.py` (4 tests).
 
 - [ ] **Tournament pattern — divergent fan-out + synthesizing merge**
     - Pattern: spawn N candidate solutions in parallel, each potentially with **different params/modes** (different model tier, different temperature, different persona/prompt, different provider), then synthesize: a judge picks one as the winning baseline, and a merger incorporates the strongest parts of the losing candidates into that baseline before returning the final result.
@@ -705,6 +347,22 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
     - **Iteration**: optional second round where the merged output competes against the original winner — refines until score plateaus. Wraps neatly with the existing route node pattern (`when: "history['judge'][-1]['score'] >= 0.9 → __end__; else: tournament"`).
     - **Demo to deliver alongside**: a small `examples/tournament/` workflow generating 3 alternative drafts of the same paragraph (one with sonnet+formal, one with sonnet+playful, one with haiku+terse), judging which lead reads best, and merging the winning lead with the better-detail-paragraphs from the losers.
     - **Pairs with**: per-node llm config (so per-candidate `params.llm` works); scope-aware settings (so a tournament-as-subgraph inherits sensibly); `add_messages` reducer (for in-phase refinement loops if iterating).
+
+- [ ] **Mode-per-node / per-branch execution config in fan-out** —
+  _carve-out of the Tournament-pattern item above (2026-06-09)._ Today
+  `fan_out.template.execute` is a single shape applied to every Send
+  branch: the manifest can vary per-branch *context* (`{{style}}`) but
+  not per-branch *mode* — model tier, temperature, prompt-vs-agent-vs-
+  script dispatch, provider/preset. Open question: let each branch
+  select its own mode by sourcing it from the manifest, e.g.
+  `params.llm.model: "{{model}}"` or a per-branch
+  `execute.preset: "{{preset}}"`. This is the exact schema gap the
+  Tournament pattern names ("per-candidate execution config"); pulling
+  it out as its own item because mode-per-node is useful beyond
+  tournaments (mixed-tier fan-out for cost, A/B of prompt vs agent
+  shape per branch). Pairs with per-node llm config + scope-aware
+  settings. Depends on the "agent definition as an execution shape"
+  question below if "mode" is to include an agent shape.
 
 - [ ] **Output caching / skip-if-unchanged**
     - Make-style incrementality (not provided by langgraph checkpointers)
@@ -744,26 +402,6 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
 
 ### Backend-selection ergonomics (high priority)
 
-- [x] **Scope-aware settings resolution (prerequisite for everything below)** — _landed post-Stage-5b. `runtime/settings_merge.merge_settings` uses Pydantic v2 `model_fields_set` so child YAML's explicit fields win, parent's flow through. `NodeExecutor.execute` Protocol gained `settings_override: Settings | None`; threaded through `DispatchExecutor` (every read site of `self._settings`), `ForemanExecutor` (per-model semaphore selection), and `PromptExecutor` (`apply_preamble`, `execute_rendered.model_downgrade_chain`). Compile layer: `build_workflow_graph(effective_settings=)`, `_make_execution_node`, `_make_evaluation_node`, `run_evaluation_and_outcome`, fan-out factories all take and propagate. `make_subgraph_node` and `make_fan_out_subgraph_invoker` accept `parent_settings` and call `compile_fn(..., effective_settings=merge_settings(parent, sub))`. Tested by 10 unit tests + 6 e2e (incl. real-subprocess `default_timeout` proof: subgraph override lets `sleep 1.5` pass under parent's 1s; reverse polarity kills `sleep 2`). Critical bug caught en route — the inner `compile_fn` closure was forwarding the OUTER scope's settings into recursive build calls instead of the inner scope's; the artifact-driven sleep test pinned it._
-
-- [x] **Default executor should be real, not stub** — _landed post-Stage-5b. `auto_detect_executor()` in `factory.py` walks `ANTHROPIC_API_KEY` (placeholder) → DeepSeek key (env or `~/.pi/agent/auth.json`) → `npx` on PATH → `stub` with a `UserWarning` naming concrete remediation. `Settings.executor: str | None = None` (was `"stub"`); the CLI does `executor or settings.executor or auto_detect_executor()`. Explicit `-e stub` or `executor: stub` in YAML never triggers the fallback warning — stub stays usable for offline testing, just no longer the default. Manual artifact gate: `sqrlly run examples/jokes/workflow.yaml` (no `-e` flag) now auto-picks DeepSeek (since the key is on disk) and produces real output (not `[prompt-stub]`)._
-
-- [x] **Named presets (was: three orthogonal axes for LLM execution)** — _delivered, 2026-05-19, three commits: ba85287 (schema foundation), 8f1a3d0 (runtime wiring), this rework's final commit (cutover)._ Honest re-scope: the matrix is mostly diagonal (acp implies agent; api implies prompt), so the "three axes" framing was retired in favor of **two axes** (transport + provider/model) bundled into named ``settings.presets``. Nodes reference one via ``params.preset:``; the preset marked ``default: true`` applies otherwise; ``--preset/-p`` CLI flag overrides. Hard cutover — ``Settings.executor``, ``Settings.default_model``, ``Node.model``, ``PromptParams.model``, ``--executor/--model`` CLI flags, and ``sqrlly migrate`` subcommand all removed. The ``migrate.py`` module remains as an internal utility; one-time migration walked all ``examples/`` workflows automatically. 914 tests passing. Subgraph preset inheritance via the existing scope-aware ``model_fields_set`` path (subgraph without ``presets:`` inherits parent's; subgraph with ``presets:`` replaces; key-wise additive merge deferred).
-
-- [x] **Command presets — named interpreters for script nodes (was: D4
-  discriminated union)** — _delivered, 2026-05-20, two commits: `eb6aeb5`
-  (schema) + dispatch/tests commit._ `settings.presets` is now a
-  `kind`-discriminated union of `LlmPreset` + `CommandPreset`. A script
-  node names a command preset via `params.preset:`; dispatch runs the
-  preset's command string (`shlex.split` + `{{file}}`/`{{args}}` token
-  placeholders, default-append when absent) instead of the
-  extension-map interpreter. Resolved design (Q1-Q5): `default` is
-  LLM-only (no `default` on CommandPreset; script nodes opt in by name);
-  command preset and `execute.mode` are mutually exclusive (validated);
-  `SubprocessParams.preset` added; callable discriminator defaults
-  absent `kind` to `llm` (zero migration). `examples/command_preset/`
-  demonstrates `uv run`.
-
 - [ ] **Soft-deprecate `execute.mode`'s interpreter values** — follow-up
   to command presets. `execute.mode` accepts `python` / `node` / `tsx` /
   `bash` (force a script interpreter) alongside `prompt` / `subgraph` /
@@ -781,16 +419,7 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
   `url_base`, `workflow_root`, `file_base`. Captured per the
   command-preset discussion; not urgent.
 
-### Backends to add (lower priority once axes above land)
-
-- [x] **Direct Anthropic API backend** — _landed alongside StubBackend removal._ `runtime/executor/backends/anthropic.py` (~160 LOC) implements `PromptBackend` via `AsyncAnthropic`. Generic model alias table (`sonnet` / `opus` / `haiku` → vendor IDs) with pass-through for explicit pins. `OverloadError` mapping for transient failures (status 429 / 502 / 503 / 504 / 529 + class-name fallback `RateLimitError` / `APIConnectionError` / `APITimeoutError` / `InternalServerError` / `OverloadedError`). Optional dep — install with `uv sync --extra anthropic`. Auto-detect picks it first.
-
-- [x] **OpenAI-compatible backend** — _landed post-Stage-5b. `runtime/executor/backends/openai.py` (~105 LOC) implements the `PromptBackend` Protocol via the `openai` SDK with overridable `base_url`. Validated end-to-end against DeepSeek (`base_url=https://api.deepseek.com/v1`, model `deepseek-v4-flash`) — auto-detect picks it up via `~/.pi/agent/auth.json`. Maps 429/502/503/504/529 + `RateLimitError` + `APIConnectionError` → `OverloadError` (activates the existing model-downgrade chain). Optional dep — install with `uv sync --extra openai`. Three-axis LLM config sketch above is still TODO; this backend is the first concrete demo that decouples provider/model from the ACP transport. Unlocks OpenAI, Azure OpenAI, Ollama, vLLM, llama.cpp, LM Studio, LiteLLM via the same backend with `base_url` overrides._
-
-- [ ] **Wire `OverloadError` through `ACPBackend`**
-    - Translate ACP 429 / 529 / overload codes so the existing downgrade path fires with ACP too
-
-- [ ] **`claude -p` (Claude Code CLI print-mode) backend** — a third option alongside `ACPBackend` (JSON-RPC over stdio) and `AnthropicBackend` (HTTP SDK). `claude -p "prompt"` is Claude Code's non-interactive surface: single-shot completion, but runs through the **locally-configured Claude Code session** (its MCP servers, allowed tools, project-local settings.json). That's the differentiator vs. `AnthropicBackend` — the prompt has the user's existing tool/MCP environment available without our needing to re-plumb any of it. Fits the deferred three-axes model as `protocol: claude-cli + mode: prompt + provider: anthropic`. Implementation sketch: ~80 LOC `ClaudeCliBackend` that shells out to `claude -p`, captures stdout, maps non-zero exit + known stderr patterns to `OverloadError`. Auto-detect chain entry: `claude` on PATH (sibling to today's `npx @zed-industries/claude-code-acp` check). Open design question: how to thread per-call model selection — `claude -p --model sonnet "..."` exists but isn't always honored if the session is pre-bound; needs probing against the installed version.
+### Backends to add
 
 - [ ] **Streaming on `PromptBackend`**
     - Optional `async stream_prompt(...) -> AsyncIterator[str]`
@@ -800,11 +429,7 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
 
 - [ ] **`Command` objects for node-level routing** — paired with the Evaluation/Decision split (top of file). A node returns `Command(update=..., goto=...)` instead of writing state and being routed by a downstream conditional edge. Removes router closures across `compile/graph.py` and makes the topology self-describing — the destination lives in the node return, not in a separate function reading state we just wrote.
 
-- [x] **`stream_mode="updates"` in runner + logging** — _delivered._ `runtime/runner.py` now drives logging from `astream(stream_mode=["updates", "values"])` (tuple form supported in LangGraph 1.0.7); `compile/subgraph.py` switches its two `astream` call sites the same way. `JsonlLogger.log_snapshot(prev, curr)` was replaced with `log_update(node_name, update)`; `_PrefixingProxy` deleted (the prefix is now applied to `node_name` before dispatch). The 6 emitted event types and their schemas are unchanged for downstream consumers.
-
 - [ ] **Interrupts / human-in-the-loop** — `interrupt()` + `Command(resume=...)` from langgraph. Free on the existing checkpointer; enables author/operator approval nodes, manual quality gates, draft review. New execution type (`type: human_review`) or `evaluation.mode: human` schema option.
-
-- [x] **Subgraphs with declared entry/exit** — _landed, Stage 4c (no separate execution type)._ User clarified during planning: graphs and subgraphs are definitionally identical, so a node references another graph YAML via `config:` rather than getting tagged as a `subgraph` type. Recursion falls out naturally. See "Nodes as proper langgraph subgraphs" above.
 
 - [ ] **`add_messages` reducer for in-phase refinement loops** — multi-turn draft → critique → revise within a single phase using LangGraph's native message-list reducer. Phase-local `messages` channel; no ACP round-trip per turn for pure model revision.
 
@@ -814,38 +439,31 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
 
 - [ ] **`ToolNode` as a new execution type** — when a phase should hand the model a tool list and have LangGraph route tool calls natively, rather than running a single prompt through ACP. New `execution: { type: tool, tools: [...] }`.
 
+- [ ] **Agent definition as an execution shape — and is it still a
+  thing in LangGraph?** — _surfaced 2026-06-09._ Two coupled open
+  questions. **(1) Within modes/presets:** can an "agent" (system
+  prompt + tool list + persona + model) be declared once and selected
+  the way a node selects a preset today — i.e. *agent definition within
+  a mode*? That would let nodes (and fan-out branches, see "Mode-per-
+  node" in Features) pick an agent shape instead of only prompt/script/
+  subgraph/binary. **(2) Verify-first:** is "agent definition" still a
+  first-class concept in current LangGraph? The prebuilt agent
+  abstraction (`create_react_agent`) has moved across `langgraph.prebuilt`
+  / `langchain` between versions — pin the actual surface in the
+  installed LangGraph (1.0.x) before designing anything. If it still
+  ships a usable agent primitive, decide whether sqrlly adopts it as a
+  new execution type (pairs with the `ToolNode` item above) or keeps
+  the URL-extension dispatch table. Research-gated; no schema change
+  until the LangGraph surface is confirmed.
+
 - [ ] **`BaseStore` for cross-run memory** — distinct from checkpointer (per-thread). Shared memory across workflow runs — e.g., "last week's gate was lenient, tighten this week." Optional store wired alongside `AsyncSqliteSaver`.
 
 - [ ] **`RetryPolicy` for transport-level retries** — layer `RetryPolicy(max_attempts=N, retry_on=OverloadError)` on executor-invoking nodes. Complements our eval-score-driven semantic retries; separates infrastructure flakes (rate limits, ACP drops) from content judgment. Closely related to "LLM gates inherit PromptBackend flakiness" above — fixes the same class of bug from a different angle.
 
-## Stage 5c — inline route (delivered + deferred)
+## Stage 5c — inline route (deferred items)
 
-- [x] **Inline `Node.route` forward-edge dispatch** — _landed,
-  Stage 5c (branch `feat/inline-route`)._ `Route` is a first-class
-  block on `Node`; goto-shorthand (`goto: <str | list[str]>`) and
-  conditional ladder (`cases: + else:`) shapes. Compiles to
-  `Command(goto=...)` (scalar) or `Command(goto=[...])` (list →
-  static fan-out via LangGraph 1.x native multi-edge). Standalone
-  form (route + no execute) replaces the legacy
-  `execute: { type: route, ... }`; synthetic post-execute form
-  (route + execute) registers a `_route_<id>` dispatcher fired
-  after the execute body (and eval, if present). `migrate.py`
-  lifts old YAML automatically. `EvaluationResult.reasons` (per-
-  dimension `<dim>_reason` capture) and `build_eval_preamble`
-  (neutral structural formatter, no "failed" framing) live in
-  `runtime/gates.py` and feed both the same-node retry path
-  (via `inject_retry_reason` → `{{_retry_reason}}`) and the
-  inline-route goto path (via synthetic dispatcher →
-  `state._route_eval_preamble` → `_dispatch_prompt` auto-prepend).
-  Sender bindings (`{{sender_id}}`, `{{sender}}`,
-  `{{sender_structured}}`, `{{sender_worktree}}`) and the
-  `{{evals}}` always-on global are surfaced by `build_context`.
-  Route namespace adds `evals[id]`, `passed(id)`, `score(id)`,
-  `scores(id)` helpers (`compile/route.py::build_safe_funcs`).
-  760 tests green; example `examples/pipeline_style/workflow.yaml`
-  demonstrates pipeline-style forward-edge authoring.
-
-### Deferred from Stage 5c
+Inline `Node.route` forward-edge dispatch shipped in Stage 5c (see
+CHANGELOG). Remaining deferred follow-ups:
 
 - [ ] **Per-case `params.inputs` projection** — let a route case
   shape the goto target's input bindings beyond the always-on
@@ -919,17 +537,9 @@ unless flagged otherwise.
 
 ## Reimplementation debt (drop in favor of native LangGraph)
 
-Audit of where we shadow LangGraph functionality. Most of our code is genuinely complementary (timeouts, semantic retries, concurrency caps, custom reducers) — these two items are not.
-
-- [x] **Stop diffing state in `runtime/logging.py`** — _delivered._ Snapshot-compare path deleted. Events key directly on the `node_name → update` pairs the stream emits. Removed `_PrefixingProxy` along with `log_snapshot`; the new `log_update(node_name, update)` is shared by `JsonlLogger` and `SubgraphLogger` via a free helper.
 - [~] **Stop hand-writing router closures** — partial. `_make_evaluation_router` deleted (Stage 5d Eval/Decision split — Decision nodes emit `Command(goto=...)` directly). `_subphase_id_resolver` deleted (2026-05-15, was dead code). Still open: the dynamic-router closure and conditional-edge scaffolding it feeds in `compile/graph.py` for dynamic gated parents (blocked on item #29).
 
-**Not reimplementation** (clarified during audit, kept for reference):
-
-- Eval-score-driven retries (ours) vs `RetryPolicy` (exception-driven) — complementary, not duplicative.
-- `_merge_dicts` / `_merge_evaluations` reducers — LangGraph offers no dict-merge or per-key list-append natively.
-- Timeouts (`asyncio.wait_for`), concurrency caps (`asyncio.Semaphore`), worktree pool — outside LangGraph's scope.
-- Thread ID derivation from `(workflow_name, workdir)` — policy choice, not a feature we shadow.
+> **Not reimplementation — don't "fix" these:** eval-score retries vs `RetryPolicy` (complementary, exception- vs content-driven); `_merge_dicts`/`_merge_evaluations` reducers (no native dict-merge / per-key list-append); timeouts / concurrency caps / worktree pool (outside LangGraph's scope); thread-id derivation from `(workflow_name, workdir)` (policy, not a shadowed feature).
 
 
 ---
@@ -974,40 +584,19 @@ workflow proves it unavoidable; even then likely a content-aware
 acceptance gate, not blind `git merge`. The `build-<N>-snapshot-*`
 branch convention is a builder Phase-9 concern, not v2.
 
-### ✅ Promotion — git-delta apply, single-source (supersedes AP3, SHIPPED v2)
+### ✅ Promotion + auto-GC — SHIPPED 0.5.4–0.5.6
 
-`Node.promote` applies one worktree's git delta vs its fork point to the
-base (`runtime/promote.py`): **discover by default** (full delta incl.
-edits/deletes — handles unanticipated footprints like a bugfix);
-**glob-filterable** via `output_contract.required_files` (git pathspec).
-Single-source onto an unmoved base = clean; multi-source-overlap = B3
-(deferred). Runs before GC, top-level nodes only. Build plan:
-the worktree-v2 build (shipped 0.5.4–0.5.6).
-
-Residual low-pri: (1) when several nodes share a `worktree_group` and
-each sets `promote`, the shared tree is promoted once per member
-(idempotent double-copy) — dedupe by tree path if it ever matters;
-(2) `promote` on fan-out children / subgraph inner nodes is not wired
-(top-level only) — extend if a consumer needs it; a `collect_warnings`
-advisory for `promote` on a fan-out/group node would close the footgun.
-
-Advisory test gaps (each mechanism tested in isolation; combinations
-inferred): promote+GC in one run; `worktree_group` across `--resume`
-(deterministic `wt-group-<name>` + per-member `node_worktrees`
-rehydrate). Add integration coverage when convenient.
-
-### B4 — No worktree / branch GC
-
-### B4 — No worktree GC (PLANNED v2)
-
-Foreman never removes worktrees, so proliferation is a real risk once
-groups multiply trees. Design (2026-06-02): opt-in
-`settings.worktree_gc: never` (default) `| on_success`, **end-of-run
-only** (never mid-run — preserves retry-reuse and resume-rehydrate),
-reclaiming each *distinct* tree (per-node + each group tree once, from
-`foreman.worktree_map()`). On failure, keep everything so `--resume`
-works. Build plan:
-the worktree-v2 build (shipped 0.5.4–0.5.6).
+`Node.promote` (git-delta apply, discover-by-default, glob-filterable
+via `output_contract`, top-level nodes only, runs before GC) and opt-in
+end-of-run `settings.worktree_gc: never|on_success` both shipped (closes
+the old B4 auto-GC gap; the `sqrlly worktree list/prune` CLI subcommands
+remain open — see "Worktree garbage collection" above). Open residuals:
+(1) shared `worktree_group` + per-member `promote` promotes the tree
+once per member (idempotent double-copy) — dedupe by tree path if it
+matters; (2) `promote` on fan-out children / subgraph inner nodes is
+unwired (a `collect_warnings` advisory would close the footgun).
+Advisory test gaps: promote+GC in one run; `worktree_group` across
+`--resume`.
 
 ### B5 — `output_contract` globs are literal (folded into promotion)
 
@@ -1017,6 +606,31 @@ filter-mode — one matcher for declared globs and `git diff` discovery.
 Semantics shift: a glob means "at least one match exists" (a literal
 path is still a valid glob matching itself, so existing contracts are
 unaffected). Tracked in the worktree-v2 build plan.
+
+### B6 — Isolated worktrees are source-only; gitignored deps break in-branch gates
+
+_Surfaced 2026-06-09, before the expensive builder run._ Isolated
+worktrees fork **source only** — `node_modules` (and any gitignored
+build deps) don't come along. So an in-branch mechanical gate like
+`tsc --noEmit` has nothing to compile against: the type-check fails for
+lack of dependencies, not for a real type error. Blocks the build-smoke
+gate that's meant to run *before* the multi-hour LLM build. Open
+decision (shapes the in-branch gate design — resolve before kicking off
+B1 build-smoke):
+
+- **Share base `node_modules` into each branch worktree** (symlink, or
+  ACP `--add-dir` / cwd extension) — **current lean.** Cheap; keeps the
+  gate in-branch where the edited source actually lives, so the check
+  sees uncommitted edits.
+- **Run the mechanical gate from the base post-fork** — base has its
+  `node_modules`, but it sees committed source only; a branch's
+  uncommitted edits aren't visible unless promoted first, so the signal
+  is weaker / out of sync with the branch.
+
+Cross-ref: this is a **read/share** gap (worktree-composition north
+star: fork → produce → read/share → promote → GC) specific to
+*non-source* deps — promotion (git-delta) handles source, not
+gitignored artifacts. Pairs with B1 scaffolding + build-smoke.
 
 ## Low-priority / judgment calls
 
@@ -1064,66 +678,25 @@ under worktree isolation** + assorted papercuts. Resolved upstream
 logging → 0.5.1 `node_model`; fan-out `final_nodes` gate retry → 0.5.0;
 per-gate model → `evaluation.model`.
 
+> Shipped from this port (see CHANGELOG): **AP2** worktree isolation
+> control (`settings.worktree`/`Node.worktree`, 0.5.3); **AP3**
+> cross-worktree output collection (superseded by git-delta promotion);
+> **AP4** fan-in worktree pairing (`{{<parent>_branch_map}}` + per-branch
+> subgraph worktrees, 0.5.4–0.5.5); **C1** `output_contract` on
+> `FanOutFinalNode` (0.5.2); the `--version` flag (0.5.2).
+
 ### 🤞 AP1 — worktree-aware fan-out manifest source (highest value)
 
-`fan_out` manifest sources (`compile/_manifest.py`): (a) raw `json.loads`
-of the parent node's **entire** stdout (no fence/embedded-array
-tolerance); (b) `manifest_path` resolved against `state["workdir"]` (the
-**base** workdir, `_manifest.py:88`) — not a node worktree. Under
-isolation neither works for a file-producing parent: (a) an LLM parent
-that also writes files can't reliably emit whole-stdout-as-array
-(2-leaf smoke → "manifest resolved to zero items"); (b) the parent
-writes `manifest.json` into its **worktree**, but `manifest_path` reads
-the base workdir, so they never meet. **Desired:** a worktree-aware
-`manifest_path` / `manifest_from_file:` that resolves against the
-**parent's worktree**, so a fan-out consumes a manifest the parent
-*writes* (structured artifact, not LLM stdout). Also: have
-`_read_manifest` extract a fenced/embedded JSON array from stdout
-(defensive), not require bare-JSON whole output.
+`_read_manifest` now tolerates a fenced/embedded JSON array in parent
+stdout (shipped 0.5.2). The **remaining, higher-value half**: a
+worktree-aware `manifest_path` / `manifest_from_file:` that resolves
+against the **parent's worktree** (today `manifest_path` resolves
+against the base workdir, `compile/_manifest.py`), so a fan-out can
+consume a manifest the parent *writes* as a structured artifact under
+isolation rather than emitting it as whole-stdout JSON.
 
-✅ **Partially done (0.5.2):** `_read_manifest` now strips a ``` fence /
-extracts the embedded JSON array-or-object from stdout. The
-**worktree-aware `manifest_path`** (resolve against the parent's
-worktree) is the remaining, higher-value half.
+### 🤞 AP5 — schema papercut (C5)
 
-### ✅ AP2 — worktree isolation control (DONE, v1 / 0.5.3)
-
-Was: implicit-on isolation silently broke shared-file workflows; the
-only opt-out was a non-git workdir. **Shipped in 0.5.3:**
-`settings.worktree` + `Node.worktree` (`auto` / `isolated` / `off`),
-inherited via `merge_settings`. `off` runs the node in the shared base
-workdir (and, since gates run there too, lets a script gate read the
-node's files directly). The silent-degrade opt-out is closed; the
-explicit-intent escape hatch is `worktree: off`. (The >1-node-shared-
-dir lint was not built — the explicit field makes intent declared, so
-the lint is lower value; revisit if needed.)
-
-### ✅ AP3 — cross-worktree output collection (SUPERSEDED by promotion)
-
-The "auto-copy each worktree's `output_contract` files into
-`output_directory`" idea is replaced by **git-delta promotion** (see
-the Promotion entry above): apply a worktree's git diff to the base,
-discover-by-default, glob-filterable. File-copy survives only as the
-non-git fallback. The 2026-06-02 design retired AP3-as-copy because
-copy can't express deletions or unanticipated footprints.
-
-### ✅ AP4 — fan-in worktree pairing (DONE, v2 / 0.5.4 + 0.5.5)
-
-Added the keyed `{{<parent>_branch_map}}` = `{id: {output, worktree}}`
-(additive; legacy `{{<parent>_branch_worktrees}}` list retained). The
-inline fan-out child `node_worktrees` write gap was closed in 0.5.4
-(`dynamic.py:210-211`). The **subgraph** fan-out gap (builder-reported:
-all branches shared one inner-node tree → `branch_map.worktree` null)
-was fixed in 0.5.5 — each branch now gets its own worktree (child-is-the-
-unit; `make_fan_out_subgraph_invoker` + `_BranchScopedExecutor` +
-`foreman.acquire_branch_worktree`). Build plan:
-the subgraph-fan-out build (shipped 0.5.5).
-
-### 🤞 AP5 — schema papercuts (C1/C5)
-
-- **C1 ✅ (0.5.2):** `output_contract` added to `FanOutFinalNode` and
-  threaded into the final node's synthetic `Node`, so it's enforced via
-  the standard execution path.
 - **C5:** `depends_on` can't name an inline fan-out final-node id
   (`_validate_depends_on` only knows top-level ids; workaround: depend on
   the fan-out parent). Fix: allow/document depending on a final-node id.
@@ -1135,8 +708,6 @@ the subgraph-fan-out build (shipped 0.5.5).
   gate JSON.
 - **`required_files` globs** — literal today; support globs (== B5 /
   the "flexible output contracts" builder want).
-- **`--version` flag ✅ (0.5.2)** — `@click.version_option` on the CLI
-  group (reads package metadata).
 - **Py 3.14 langchain warning** — `Core Pydantic V1 functionality…` on
   every `uv run`; cosmetic now, real if langchain drops the V1 shim;
   pin/track the dep.

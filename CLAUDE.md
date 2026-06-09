@@ -51,7 +51,7 @@ uv sync                                      # core deps
 npm i -g @zed-industries/claude-code-acp     # for ACP backend / acp tests
 # `claude` CLI on PATH                       # for cli backend / cli tests
 
-uv run pytest tests/ --ignore=tests/acp --ignore=tests/cli -v   # ~940 tests, ~50s
+uv run pytest tests/ --ignore=tests/acp --ignore=tests/cli -v   # ~1k tests, ~50s
 uv run pytest tests/acp -v                   # ACP tests, ~2 min, requires npm package above
 uv run pytest tests/cli -v                   # CLI tests, ~15s, requires `claude` on PATH
 uv run pytest -m live -v                     # restored live-roundtrip (cli-only)
@@ -215,68 +215,50 @@ These guide all new tests; violations should be flagged in review.
     backend.
 
 The `feedback_no_fake_backends.md` memory expands on (1): no fake
-`PromptBackend` doubles; real ACP / real subprocess only. The narrow
-exception is patching the OpenAI SDK's HTTP layer in
-`tests/unit/runtime/test_openai_backend.py` to verify our error
-mapping (we're testing our wrapping code, not the SDK).
+`PromptBackend` doubles; real ACP / real subprocess only. The one
+sanctioned exception is orchestration instrumentation (e.g. patching
+`factory.shutil.which` to choose which environment-shape branch the
+resolver sees) — distinct from faking what an external system returns.
 
 ## Known limitations
 
 - **Hyphenated node IDs in Jinja templates** — `{{research-phase}}`
-  parses as subtraction. Use underscores in IDs that need template
-  substitution. `validate` / `run` now emit an advisory warning for
-  any hyphenated node id (`compile/lint.py`).
-- **`graph` / `view` don't draw route edges** — `cli/main.py::graph`
-  renders `compiled.get_graph().draw_mermaid()`, which only sees the
-  static LangGraph. Inline-route targets are emitted at run time as
-  `Command(goto=...)`, so a routed node's branch targets appear as
-  unconnected nodes (no edges). Inherent to the routing implementation;
-  the diagram shows static topology only. Flagged in SKILLS.md.
-- **Remote script/binary execution not wired** — `base_url` /
-  `http(s)://` urls fetch-and-run for *prompt* nodes
-  (`_dispatch_prompt` → `fetch_url`), but `_dispatch_script` /
-  `_dispatch_binary` still require `file://` and halt on a remote scheme
-  ("Remote script execution not yet wired"). `allow_remote_scripts`
-  gates the fetch in preparation only. Documented in
-  `SCHEMA.md` and `SKILLS.md`.
-- **Per-model backpressure under downgrade** — Foreman acquires the
-  semaphore for the node's *original* model. If `PromptExecutor`
-  downgrades opus → sonnet mid-call (on `OverloadError`), the sonnet
-  semaphore is not acquired for that call. Intent, not enforcement
-  under downgrade.
+  parses as subtraction; use underscores. `validate`/`run` emit an
+  advisory warning (`compile/lint.py`).
+- **`graph` / `view` don't draw route edges** — they render the static
+  LangGraph only; inline-route targets are runtime `Command(goto=...)`,
+  so a routed node's branch targets appear edge-less. Inherent to the
+  routing implementation.
+- **Remote script/binary execution not wired** — `http(s)://` urls
+  fetch-and-run for *prompt* nodes only; `_dispatch_script` /
+  `_dispatch_binary` require `file://` and halt on a remote scheme.
+  `allow_remote_scripts` gates the fetch in preparation only.
+- **Per-model backpressure under downgrade** — Foreman holds the
+  semaphore for the node's *original* model; an `OverloadError`
+  opus→sonnet downgrade mid-call does not acquire the sonnet semaphore.
+  Intent, not enforcement under downgrade.
 - **Worktree cleanup is opt-in** — `settings.worktree_gc: on_success`
-  triggers end-of-run cleanup (success only; the CLI calls
-  `foreman.reclaim()` only when the run exits clean). The default
-  (`never`) keeps trees under `<workdir>/.sqrlly/` for inspection
-  and `--resume`. Manual cleanup with `git worktree remove <path>`
-  always works regardless of the setting.
-- **`--resume` is a fault-recovery re-run, not skip-completed** —
-  `cli/main.py` loads the prior checkpoint's `channel_values`, seeds a
-  *fresh* run with it, clears `failed_nodes`/`retries`/`errors`, and
-  deletes the thread. Execution/evaluation `node_fn`s have no
-  `completed_nodes` short-circuit (nodes.py:583, :684), so completed
-  nodes **re-execute** (outputs refreshed; LLM nodes may diverge from
-  the original run). State stays internally consistent. A true
-  skip-completed resume is the pending `--resume` rewrite (TODO
-  26/31). Docs (README/SKILLS) describe the real semantics.
-- **Subgraph event prefix is one level** — `runner`/`SubgraphLogger`
-  prefix child events `parent::child`; a 2-level nest shows the
-  *immediate* parent only (`mid::child`, not `top::mid::child`), so
-  child ids must be unique across sibling subgraphs to avoid log
-  collisions.
-- **Checkpointer migration** — Pre-refactor `.sqrlly-state.json`
-  format is ignored on `--resume`; re-run from scratch.
-- **ACP soak under load** — process-tree cleanup is fixed for the
-  test scenario, but a multi-hour run with `max_parallel_jobs > 1`
-  hasn't been validated end-to-end (TODO 49).
-- **`_route_sender` is last-write-wins** — set by every Command
-  emission from a `_route_<id>` dispatcher (with empty preamble
-  when `include_eval` is off). Templates that reference
-  `{{sender_id}}` should guard with `{% if sender_id %}` if they
-  could be reached via a static depends_on edge AFTER an inline-
-  route hop earlier in the same workflow (rare topology — a node
-  fed both by goto and by depends_on from a different branch — but
-  possible). Inside a goto-only target the var is always bound.
+  reclaims end-of-run on a clean exit; default `never` keeps trees under
+  `<workdir>/.sqrlly/` for inspection and `--resume`. `git worktree
+  remove <path>` always works manually.
+- **`--resume` is a fault-recovery re-run, not skip-completed** — it
+  reseeds a fresh run from the prior checkpoint's `channel_values` and
+  clears `failed_nodes`/`retries`/`errors`; node bodies have no
+  `completed_nodes` short-circuit, so completed nodes **re-execute**
+  (LLM nodes may diverge). State stays consistent. Skip-completed resume
+  is the pending rewrite (TODO 26/31).
+- **Subgraph event prefix is one level** — child events are prefixed
+  `parent::child` (immediate parent only), so child ids must be unique
+  across sibling subgraphs to avoid log collisions.
+- **Checkpointer migration** — pre-refactor `.sqrlly-state.json` is
+  ignored on `--resume`; re-run from scratch.
+- **ACP soak under load** — process-tree cleanup is fixed for the test
+  scenario, but a multi-hour run with `max_parallel_jobs > 1` is
+  unvalidated end-to-end (TODO 49).
+- **`_route_sender` is last-write-wins** — a node reachable by a static
+  `depends_on` edge AFTER an inline-route hop elsewhere can see a stale
+  `{{sender_id}}`; guard with `{% if sender_id %}` in that rare
+  topology. Inside a goto-only target the var is always bound.
 
 ## Environment quirks
 
@@ -290,16 +272,12 @@ mapping (we're testing our wrapping code, not the SDK).
 - **`tests/__init__.py` must NOT exist** — its presence breaks
   `from helpers import ...` and `from mock_executor import ...` in
   tests. Removing it is the supported state.
-- **Secret resolution** — generic resolver at
-  `runtime/secrets.py::resolve_secret(name, *, settings, settings_attr)`.
-  Layers: workflow YAML setting → `os.environ[name]` → project-local
-  `.env` file (auto-discovered by walking up from CWD). sqrlly
-  never reads from machine-global keystores. The api-transport strip
-  removed the only in-tree consumer of `resolve_secret` itself, but the
-  `.env` layer is still used in-tree by `url.py::_expand_vars` (header
-  `${VAR}` expansion), and `resolve_secret` remains available for
-  workflow-defined keys (e.g. a script node calling a third-party
-  service).
+- **Secret resolution** — `runtime/secrets.py::resolve_secret` layers
+  workflow YAML setting → `os.environ[name]` → project-local `.env`
+  (walking up from CWD); never machine-global keystores. In-tree the
+  `.env` layer is used by `url.py::_expand_vars` (header `${VAR}`
+  expansion); `resolve_secret` itself remains for workflow-defined keys
+  (e.g. a script node hitting a third-party service).
 - **`pyproject.toml`** marker for ACP tests: `acp` (used in
   `pytest -m`).
 
