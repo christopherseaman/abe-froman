@@ -24,6 +24,7 @@ def _build_acp(preset: "LlmPreset") -> PromptBackend:
         permission_mode=preset.permission_mode,
         allowed_tools=preset.allowed_tools,
         disallowed_tools=preset.disallowed_tools,
+        env=preset.env,
     )
 
 

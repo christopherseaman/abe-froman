@@ -144,3 +144,28 @@ class TestGetBackend:
 
     def test_no_backends_returns_none(self):
         assert DispatchExecutor().get_backend() is None
+
+
+class TestFactoryThreadsAcpEnv:
+    """ACPBackend construction is offline-safe (spawn deferred to first
+    send_prompt), so we can assert env wiring without launching the adapter."""
+
+    def test_build_acp_threads_env(self):
+        from sqrlly.runtime.executor.backends.factory import (
+            create_backend_from_preset,
+        )
+        backend = create_backend_from_preset(LlmPreset(
+            transport="acp", provider="anthropic", model="opus",
+            env={"CLAUDE_CODE_EFFORT_LEVEL": "max"},
+        ))
+        assert backend._env == {"CLAUDE_CODE_EFFORT_LEVEL": "max"}
+
+    def test_build_acp_default_env_is_empty(self):
+        from sqrlly.runtime.executor.backends.factory import (
+            create_backend_from_preset,
+        )
+        backend = create_backend_from_preset(LlmPreset(
+            transport="acp", provider="anthropic", model="opus",
+        ))
+        # Default empty env is stored as {} (threaded through unchanged).
+        assert backend._env == {}

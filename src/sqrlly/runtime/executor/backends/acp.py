@@ -105,9 +105,11 @@ class ACPBackend:
         permission_mode: str | None = None,
         allowed_tools: list[str] | None = None,
         disallowed_tools: list[str] | None = None,
+        env: dict[str, str] | None = None,
     ):
         self._program = program
         self._args = args
+        self._env = env
         self._callbacks = _ACPCallbacks(
             permission_mode=permission_mode,
             allowed_tools=allowed_tools,
@@ -128,8 +130,10 @@ class ACPBackend:
         async with self._init_lock:
             if self._initialized:
                 return
+            # Overlay the preset env; empty dict is falsy → None → inherit unchanged.
+            proc_env = {**os.environ, **self._env} if self._env else None
             self._ctx_manager = spawn_agent_process(
-                self._callbacks, self._program, *self._args
+                self._callbacks, self._program, *self._args, env=proc_env,
             )
             try:
                 self._conn, self._proc = await self._ctx_manager.__aenter__()
