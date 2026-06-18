@@ -69,6 +69,7 @@ node; a `params.preset` that names no preset in `settings.presets`.
 | `worktree` | `Literal["auto","isolated","off"]` | `"auto"` | Graph-level isolation **mode**, inherited graph→subgraph. `auto` = isolate each node in its own git worktree iff the workdir is a git repo (else no worktree). `isolated` = force a per-node worktree. `off` (alias `none`) = no worktree; the node runs in the shared base workdir. Bare YAML `off`/`on` booleans are accepted (`off`→`off`, `on`→`isolated`). A non-mode value is rejected (a shared-tree **name** goes in `worktree_group`, not here). Per-node override: `Node.worktree`. |
 | `worktree_group` | `str \| None` | `None` | Names a **shared worktree** so multiple nodes write into one tree (the "feature team" pattern). Mutually exclusive with an explicit `worktree` mode (`isolated`/`off`) — setting both is a validation error; `worktree` left at `auto` is fine. Inherited graph→subgraph; a child authoring either field clears the inherited sibling. Resolution is by scope specificity (node → subgraph → graph). |
 | `worktree_gc` | `Literal["never","on_success"]` | `"never"` | Opt-in worktree cleanup. `on_success` removes every allocated worktree (per-node and shared group trees, each once) after a **clean** run (no `failed_nodes`); `never` keeps them for inspection / `--resume`. GC is end-of-run only — never mid-run — so retry-reuse and resume rehydrate are unaffected. A failed run never GCs. |
+| `on_promote_conflict` | `"fail" \| "warn" \| "overwrite" \| "skip"` | `"warn"` | Resolution when two same-wave promoting nodes touch the same path. `warn` logs the overlap and applies last-write-wins (run stays green); `fail` aborts before any write; `overwrite` is silent last-write-wins; `skip` keeps the first promoting node's version (by `nodes` order) and drops the path from later nodes (their other paths still promote). Detection runs discover-first, so `fail` never half-promotes. |
 
 Both memory gates compose (AND) with each other and with the
 semaphores — every gate must allow dispatch. In-flight jobs are never
@@ -106,6 +107,7 @@ defaults to `llm`, so pre-`CommandPreset` YAML still parses).
 | `permission_mode` | `"default" \| "acceptEdits" \| "bypassPermissions" \| "plan" \| None` | `None` | Tool-use policy. `cli` → `--permission-mode`; `acp` → kind-gate in the permission callback (`bypassPermissions`=all, `acceptEdits`=edits+reads not execute, `default`/`plan`=read-only). |
 | `allowed_tools` | `list[str] \| None` | `None` | Tools to permit. `cli` → `--allowedTools` (exact claude names); `acp` → best-effort match vs tool kind/title. |
 | `disallowed_tools` | `list[str] \| None` | `None` | Tools to deny. `cli` → `--disallowedTools`; `acp` → best-effort denylist by kind/title. |
+| `env` | `dict[str, str]` | `{}` | Environment overlay for the spawned backend process (cli + acp), e.g. `CLAUDE_CODE_EFFORT_LEVEL`. Overlaid on the inherited environment at spawn; never replaces it. Per-node tuning is done by selecting a preset variant via `params.preset`. |
 | `cli_args` | `list[str] \| None` | `None` | **cli only** — extra args appended verbatim to the `claude` argv (escape hatch). Ignored by `acp`. |
 
 > Tool-use defaults (all unset): `cli` runs bare `claude -p` (no tools);
@@ -359,6 +361,8 @@ prompt template as `{{_retry_reason}}`.
 |---|---|---|---|
 | `base_directory` | `str` | required | Directory checked after the node runs. |
 | `required_files` | `list[str]` | `[]` | Literal paths (no glob) that must exist for the node to succeed, checked under `base_directory` in the node's run dir (its worktree in a git repo). |
+
+> `required_files` are interpreted relative to `base_directory` for **both** the existence check and the promote glob filter. A node with `base_directory: reference` and `required_files: [x.json]` validates and promotes `reference/x.json`.
 
 ---
 

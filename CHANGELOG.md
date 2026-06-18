@@ -3,6 +3,24 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased] — on_promote_conflict, LlmPreset.env, base_directory promote fix
+
+### Added
+
+- `settings.on_promote_conflict` (`fail | warn | overwrite | skip`, default
+  `warn`): cross-node promote conflict detection. Overlapping same-wave promote
+  footprints are detected discover-first; `warn`/`fail`/`skip`/`overwrite` choose
+  the resolution.
+- `LlmPreset.env`: per-preset environment overlay for LLM backend processes
+  (cli + acp), e.g. `CLAUDE_CODE_EFFORT_LEVEL`.
+
+### Fixed
+
+- `output_contract.base_directory` is now honored by the promote glob filter
+  (previously the existence check prepended it but the promote glob used
+  `required_files` raw, so a non-root `base_directory` passed validation but
+  promoted nothing).
+
 ## [0.5.10] — gate_evaluated dimension-block attribution
 
 ### Added
