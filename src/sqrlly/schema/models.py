@@ -452,6 +452,12 @@ class Settings(BaseModel):
     worktree: Literal["auto", "isolated", "off"] = "auto"
     worktree_group: str | None = None
     worktree_gc: Literal["never", "on_success"] = "never"
+    # Cross-node promote reconciliation when two same-wave promoting nodes
+    # touch the same path. `warn` (default): log the overlap, last-write-wins
+    # (run stays green). `fail`: abort before any write. `overwrite`: silent
+    # last-write-wins. `skip`: the first promoting node (in `nodes` order)
+    # keeps the path; later nodes drop it (their other paths still promote).
+    on_promote_conflict: Literal["fail", "warn", "overwrite", "skip"] = "warn"
 
     @field_validator("worktree", mode="before")
     @classmethod

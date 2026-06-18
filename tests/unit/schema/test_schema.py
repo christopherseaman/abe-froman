@@ -867,3 +867,21 @@ class TestNodeTimeout:
         s = Settings()
         p = Node(id="a", name="A")
         assert p.effective_timeout(s) is None
+
+
+class TestOnPromoteConflict:
+    def test_default_is_warn(self):
+        from sqrlly.schema.models import Settings
+        assert Settings().on_promote_conflict == "warn"
+
+    def test_accepts_all_four_modes(self):
+        from sqrlly.schema.models import Settings
+        for mode in ("fail", "warn", "overwrite", "skip"):
+            assert Settings(on_promote_conflict=mode).on_promote_conflict == mode
+
+    def test_rejects_unknown_mode(self):
+        import pytest
+        from pydantic import ValidationError
+        from sqrlly.schema.models import Settings
+        with pytest.raises(ValidationError):
+            Settings(on_promote_conflict="merge")
