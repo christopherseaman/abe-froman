@@ -13,7 +13,7 @@ from sqrlly.compile.graph import build_workflow_graph
 from sqrlly.compile.lint import collect_warnings
 from sqrlly.runtime.executor.dispatch import DispatchExecutor
 from sqrlly.runtime.foreman import ForemanExecutor
-from sqrlly.runtime.promote import promote
+from sqrlly.runtime.promote import PromoteConflictError, reconcile_promotions
 from sqrlly.runtime.runner import run_workflow
 from sqrlly.runtime.state import make_initial_state
 from sqrlly.schema.models import Graph
@@ -430,20 +430,37 @@ async def _execute_workflow(
             # error propagates (it is a data-loss path) rather than being
             # swallowed like reclaim's best-effort cleanup.
             if clean and isinstance(executor_obj, ForemanExecutor):
+                specs: list[tuple[str, str, list[str] | None]] = []
                 for node in config.nodes:
                     if not node.promote:
                         continue
                     tree = executor_obj.get_worktree(node.id)
                     if tree is None:
                         continue  # `off` node already wrote to the base workdir
-                    # output_contract.required_files doubles as the promote
-                    # pathspec filter when present; otherwise the full delta
-                    # is promoted (discover mode).
+                    # output_contract.required_files (base_directory-prepended)
+                    # doubles as the promote pathspec filter when present;
+                    # otherwise the full delta is promoted (discover mode).
                     globs = (
-                        node.output_contract.required_files
+                        node.output_contract.required_paths()
                         if node.output_contract else None
                     )
-                    promote(tree, workdir, globs=globs)
+                    specs.append((node.id, tree, globs))
+                if specs:
+                    try:
+                        plan = reconcile_promotions(
+                            specs, workdir,
+                            config.settings.on_promote_conflict,
+                        )
+                    except PromoteConflictError as e:
+                        raise click.ClickException(str(e)) from e
+                    if (plan.conflicts
+                            and config.settings.on_promote_conflict == "warn"):
+                        for path, nodes in sorted(plan.conflicts.items()):
+                            click.echo(click.style(
+                                f"warning: promote conflict on {path!r} — "
+                                f"promoted by {', '.join(nodes)}; "
+                                f"last-write-wins",
+                                fg="yellow"), err=True)
                 if config.settings.worktree_gc == "on_success":
                     await executor_obj.reclaim()
         finally:

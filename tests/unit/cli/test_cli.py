@@ -521,3 +521,75 @@ class TestCollectSubgraphPresets:
         )
         collected = _collect_subgraph_presets(parent, str(tmp_path))
         assert "leaf_preset" in collected
+
+
+class TestPromoteConflict:
+    def _init_repo(self, path):
+        import subprocess
+        subprocess.run(["git", "init", "-q", "-b", "main", str(path)], check=True)
+        subprocess.run(["git", "-C", str(path), "config", "user.email", "t@t"], check=True)
+        subprocess.run(["git", "-C", str(path), "config", "user.name", "t"], check=True)
+        (path / "README").write_text("init")
+        subprocess.run(["git", "-C", str(path), "add", "README"], check=True)
+        subprocess.run(["git", "-C", str(path), "commit", "-q", "-m", "init"], check=True)
+
+    def _scripts(self, tmp_path):
+        a = tmp_path / "wa.sh"
+        a.write_text("#!/bin/bash\nset -euo pipefail\necho AAA > shared.txt\necho a > a.txt\n")
+        a.chmod(0o755)
+        b = tmp_path / "wb.sh"
+        b.write_text("#!/bin/bash\nset -euo pipefail\necho BBB > shared.txt\necho b > b.txt\n")
+        b.chmod(0o755)
+        return a, b
+
+    def _cfg(self, repo, a, b, mode):
+        cfg = repo / "workflow.yaml"
+        cfg.write_text(
+            "name: ConflictTest\nversion: '1.0'\n"
+            "settings:\n"
+            f"  on_promote_conflict: {mode}\n"
+            "nodes:\n"
+            "  - id: writer_a\n    name: A\n    worktree: isolated\n    promote: true\n"
+            f"    execute:\n      url: {a}\n"
+            "  - id: writer_b\n    name: B\n    worktree: isolated\n    promote: true\n"
+            f"    execute:\n      url: {b}\n"
+        )
+        return cfg
+
+    def test_warn_last_write_wins_and_warns(self, runner, tmp_path):
+        repo = tmp_path / "warn"; repo.mkdir(); self._init_repo(repo)
+        a, b = self._scripts(tmp_path)
+        cfg = self._cfg(repo, a, b, "warn")
+        result = runner.invoke(cli, ["run", str(cfg), "--workdir", str(repo)])
+        assert result.exit_code == 0, result.output + result.stderr
+        assert (repo / "shared.txt").read_text().strip() == "BBB"
+        assert (repo / "a.txt").exists() and (repo / "b.txt").exists()
+        assert "promote conflict" in result.stderr
+        assert "shared.txt" in result.stderr
+
+    def test_skip_first_writer_wins(self, runner, tmp_path):
+        repo = tmp_path / "skip"; repo.mkdir(); self._init_repo(repo)
+        a, b = self._scripts(tmp_path)
+        cfg = self._cfg(repo, a, b, "skip")
+        result = runner.invoke(cli, ["run", str(cfg), "--workdir", str(repo)])
+        assert result.exit_code == 0, result.output + result.stderr
+        assert (repo / "shared.txt").read_text().strip() == "AAA"
+        assert (repo / "a.txt").exists() and (repo / "b.txt").exists()
+
+    def test_fail_aborts_nonzero_and_nothing_promoted(self, runner, tmp_path):
+        repo = tmp_path / "fail"; repo.mkdir(); self._init_repo(repo)
+        a, b = self._scripts(tmp_path)
+        cfg = self._cfg(repo, a, b, "fail")
+        result = runner.invoke(cli, ["run", str(cfg), "--workdir", str(repo)])
+        assert result.exit_code != 0
+        assert "Promote conflict" in result.stderr
+        assert not (repo / "shared.txt").exists()
+
+    def test_overwrite_silent_last_write_wins(self, runner, tmp_path):
+        repo = tmp_path / "ow"; repo.mkdir(); self._init_repo(repo)
+        a, b = self._scripts(tmp_path)
+        cfg = self._cfg(repo, a, b, "overwrite")
+        result = runner.invoke(cli, ["run", str(cfg), "--workdir", str(repo)])
+        assert result.exit_code == 0, result.output + result.stderr
+        assert (repo / "shared.txt").read_text().strip() == "BBB"
+        assert "promote conflict" not in result.stderr
