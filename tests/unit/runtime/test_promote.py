@@ -8,7 +8,9 @@ from sqrlly.runtime.promote import (
     discover_changes,
     plan_promotions,
     promote,
+    reconcile_promotions,
 )
+from sqrlly.schema.models import OutputContract
 
 
 def _repo(tmp):
@@ -20,8 +22,8 @@ def _repo(tmp):
     subprocess.run(["git","-C",str(tmp),"commit","-qm","init"],check=True)
 
 
-def _wt(tmp):
-    dest = tmp/".sqrlly"/"wt"
+def _wt(tmp, name="wt"):
+    dest = tmp/".sqrlly"/name
     dest.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(["git","-C",str(tmp),"worktree","add","-q",str(dest),"HEAD"],check=True)
     return dest
@@ -165,3 +167,81 @@ def test_plan_empty_footprints_no_conflict_any_mode():
         plan = plan_promotions({}, mode)
         assert plan.allowed == {}
         assert plan.conflicts == {}
+
+
+def _two_writers(tmp_path):
+    """Two worktrees: both write shared.txt (different content) + a unique file."""
+    _repo(tmp_path)
+    wa = _wt(tmp_path, "wa"); wb = _wt(tmp_path, "wb")
+    (wa/"shared.txt").write_text("AAA"); (wa/"a.txt").write_text("a")
+    (wb/"shared.txt").write_text("BBB"); (wb/"b.txt").write_text("b")
+    return [("writer_a", str(wa), None), ("writer_b", str(wb), None)]
+
+
+def test_reconcile_warn_last_write_wins_and_reports(tmp_path):
+    specs = _two_writers(tmp_path)
+    plan = reconcile_promotions(specs, str(tmp_path), "warn")
+    assert (tmp_path/"shared.txt").read_text() == "BBB"   # later writer wins
+    assert (tmp_path/"a.txt").read_text() == "a"
+    assert (tmp_path/"b.txt").read_text() == "b"
+    assert plan.conflicts == {"shared.txt": ["writer_a", "writer_b"]}
+
+
+def test_reconcile_skip_first_writer_wins(tmp_path):
+    specs = _two_writers(tmp_path)
+    reconcile_promotions(specs, str(tmp_path), "skip")
+    assert (tmp_path/"shared.txt").read_text() == "AAA"   # first writer kept
+    assert (tmp_path/"a.txt").read_text() == "a"
+    assert (tmp_path/"b.txt").read_text() == "b"          # non-conflicting still lands
+
+
+def test_reconcile_fail_aborts_before_any_write(tmp_path):
+    specs = _two_writers(tmp_path)
+    with pytest.raises(PromoteConflictError):
+        reconcile_promotions(specs, str(tmp_path), "fail")
+    # Nothing applied — discover-first means the raise precedes all copies.
+    # shared.txt and b.txt were never in the base repo.
+    # a.txt was in the base repo ("orig") and must not have been overwritten.
+    assert not (tmp_path/"shared.txt").exists()
+    assert (tmp_path/"a.txt").read_text() == "orig"
+    assert not (tmp_path/"b.txt").exists()
+
+
+def test_reconcile_disjoint_promotes_both(tmp_path):
+    _repo(tmp_path)
+    wa = _wt(tmp_path, "wa"); wb = _wt(tmp_path, "wb")
+    (wa/"a.txt").write_text("a"); (wb/"b.txt").write_text("b")
+    specs = [("writer_a", str(wa), None), ("writer_b", str(wb), None)]
+    plan = reconcile_promotions(specs, str(tmp_path), "warn")
+    assert plan.conflicts == {}
+    assert (tmp_path/"a.txt").read_text() == "a"
+    assert (tmp_path/"b.txt").read_text() == "b"
+
+
+def test_reconcile_glob_honors_base_directory(tmp_path):
+    """#4: globs from required_paths() (base_directory prepended) promote the
+    subdir file; the raw-required_files glob would promote nothing."""
+    _repo(tmp_path)
+    wt = _wt(tmp_path, "wc")
+    (wt/"reference").mkdir()
+    (wt/"reference"/"prd-context-map.json").write_text("{}")
+    contract = OutputContract(
+        base_directory="reference", required_files=["prd-context-map.json"],
+    )
+    reconcile_promotions(
+        [("ref", str(wt), contract.required_paths())], str(tmp_path), "warn",
+    )
+    assert (tmp_path/"reference"/"prd-context-map.json").read_text() == "{}"
+
+
+def test_reconcile_raw_required_files_glob_promotes_nothing(tmp_path):
+    """Documents the bug #4 fixes: the raw (un-prepended) pathspec matches
+    only a root-level file, so the subdir file is excluded."""
+    _repo(tmp_path)
+    wt = _wt(tmp_path, "wd")
+    (wt/"reference").mkdir()
+    (wt/"reference"/"prd-context-map.json").write_text("{}")
+    reconcile_promotions(
+        [("ref", str(wt), ["prd-context-map.json"])], str(tmp_path), "warn",
+    )
+    assert not (tmp_path/"reference"/"prd-context-map.json").exists()

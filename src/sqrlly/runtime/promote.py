@@ -128,6 +128,25 @@ class PromoteConflictError(Exception):
         )
 
 
+def reconcile_promotions(
+    specs: list[tuple[str, str, list[str] | None]], base: str, mode: str,
+) -> PromotionPlan:
+    """Discover each node's footprint, plan under ``mode``, then apply.
+
+    ``specs`` is ``[(node_id, worktree, globs), ...]`` in promote order.
+    Returns the ``PromotionPlan`` (so the caller can log ``plan.conflicts``).
+    Raises ``PromoteConflictError`` (``mode='fail'``) **before any file is
+    written** — discovery and planning precede every ``apply_changes``."""
+    footprints = {
+        node_id: discover_changes(worktree, globs)
+        for node_id, worktree, globs in specs
+    }
+    plan = plan_promotions(footprints, mode)
+    for node_id, worktree, _ in specs:
+        apply_changes(worktree, base, plan.allowed[node_id])
+    return plan
+
+
 def plan_promotions(
     footprints: dict[str, dict[str, str]], mode: str,
 ) -> PromotionPlan:
