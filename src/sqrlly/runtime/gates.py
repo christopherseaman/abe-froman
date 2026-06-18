@@ -473,10 +473,10 @@ def validate_output_contract(
     contract: OutputContract,
     workdir: str,
 ) -> list[str]:
-    """Check that all required files exist. Returns list of missing files."""
-    base = Path(workdir) / contract.base_directory
+    """Check that all required files exist. Returns list of missing files
+    (workdir-relative, ``base_directory`` prepended)."""
     missing = []
-    for f in contract.required_files:
-        if not (base / f).exists():
-            missing.append(str(Path(contract.base_directory) / f))
+    for rel in contract.required_paths():
+        if not (Path(workdir) / rel).exists():
+            missing.append(rel)
     return missing

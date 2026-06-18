@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Annotated, Any, Literal, Self, Union
 
 from pydantic import (
@@ -278,6 +279,15 @@ class OutputContract(BaseModel):
     model_config = ConfigDict(extra="forbid")
     base_directory: str
     required_files: list[str] = []
+
+    def required_paths(self) -> list[str]:
+        """Required files as workdir-relative POSIX paths, with
+        ``base_directory`` prepended. A single derivation so every consumer
+        constructs these paths identically (used by the existence check in
+        ``gates.validate_output_contract``). A ``base_directory`` of ``"."``
+        collapses to the bare filename."""
+        return [(Path(self.base_directory) / f).as_posix()
+                for f in self.required_files]
 
 
 class FanOutTemplate(BaseModel):

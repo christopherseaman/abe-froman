@@ -54,3 +54,23 @@ class TestValidateOutputContract:
         )
         missing = validate_output_contract(contract, str(tmp_path))
         assert missing == ["nonexistent/file.txt"]
+
+
+class TestRequiredPaths:
+    def test_prepends_base_directory(self):
+        contract = OutputContract(
+            base_directory="reference",
+            required_files=["prd-context-map.json", "sub/x.txt"],
+        )
+        assert contract.required_paths() == [
+            "reference/prd-context-map.json",
+            "reference/sub/x.txt",
+        ]
+
+    def test_dot_base_collapses_to_bare_name(self):
+        contract = OutputContract(base_directory=".", required_files=["x.json"])
+        assert contract.required_paths() == ["x.json"]
+
+    def test_empty_required_files(self):
+        contract = OutputContract(base_directory="reference", required_files=[])
+        assert contract.required_paths() == []
