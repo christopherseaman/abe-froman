@@ -1,7 +1,7 @@
 import subprocess
 from pathlib import Path
 import pytest
-from sqrlly.runtime.promote import discover_changes, promote
+from sqrlly.runtime.promote import apply_changes, discover_changes, promote
 
 
 def _repo(tmp):
@@ -71,3 +71,13 @@ def test_promote_creates_nested_dirs(tmp_path):
     (wt/"sub").mkdir(); (wt/"sub"/"deep.md").write_text("z")
     promote(str(wt), str(tmp_path))
     assert (tmp_path/"sub"/"deep.md").read_text() == "z"
+
+
+def test_apply_changes_applies_only_the_given_paths(tmp_path):
+    _repo(tmp_path); wt = _wt(tmp_path)
+    (wt / "a.txt").write_text("changed"); (wt / "new.md").write_text("hi")
+    # Hand a subset: only new.md should land; a.txt must stay at base's original.
+    applied = apply_changes(str(wt), str(tmp_path), {"new.md": "added"})
+    assert (tmp_path / "new.md").read_text() == "hi"
+    assert (tmp_path / "a.txt").read_text() == "orig"   # NOT overwritten
+    assert applied == ["new.md"]

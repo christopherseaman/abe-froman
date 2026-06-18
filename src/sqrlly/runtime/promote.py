@@ -75,11 +75,11 @@ def discover_changes(worktree: str, globs: list[str] | None = None) -> dict[str,
     return changes
 
 
-def promote(worktree: str, base: str, globs: list[str] | None = None) -> list[str]:
-    """Apply the worktree's discovered delta onto ``base``. Adds/edits are
-    copied; deletions are removed. Single-source: assumes ``base`` has not
-    diverged for these paths (it is the fork point). Returns applied paths."""
-    changes = discover_changes(worktree, globs)
+def apply_changes(worktree: str, base: str, changes: dict[str, str]) -> list[str]:
+    """Apply a discovered ``{path: kind}`` delta onto ``base``. Adds/edits
+    are copied; deletions are removed. Returns the applied paths. The
+    ``changes`` map is what ``discover_changes`` returns (optionally
+    filtered, e.g. by conflict reconciliation)."""
     for rel, kind in changes.items():
         dst = Path(base) / rel
         if kind == "deleted":
@@ -89,3 +89,10 @@ def promote(worktree: str, base: str, globs: list[str] | None = None) -> list[st
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dst)
     return list(changes)
+
+
+def promote(worktree: str, base: str, globs: list[str] | None = None) -> list[str]:
+    """Apply the worktree's discovered delta onto ``base`` (single-source).
+    Assumes ``base`` has not diverged for these paths (it is the fork
+    point). Returns applied paths."""
+    return apply_changes(worktree, base, discover_changes(worktree, globs))
