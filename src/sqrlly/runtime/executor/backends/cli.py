@@ -18,6 +18,7 @@ is kept for historical reasons but the set is shared by design.
 from __future__ import annotations
 
 import asyncio
+import os
 from typing import Any, Awaitable
 
 from sqrlly.runtime.executor.backends._overload import (
@@ -57,12 +58,14 @@ class CLIBackend:
         allowed_tools: list[str] | None = None,
         disallowed_tools: list[str] | None = None,
         cli_args: list[str] | None = None,
+        env: dict[str, str] | None = None,
     ):
         self._argv_prefix = argv_prefix
         self._permission_mode = permission_mode
         self._allowed_tools = allowed_tools
         self._disallowed_tools = disallowed_tools
         self._cli_args = cli_args
+        self._env = env
 
     def _tool_argv(self) -> list[str]:
         """Tool-permission flags appended to every invocation. Empty when
@@ -83,9 +86,13 @@ class CLIBackend:
         timeout: float | None = None,
     ) -> ExecutionResult:
         argv = [*self._argv_prefix, "--model", model, *self._tool_argv()]
+        # Overlay the preset env on the inherited environment; empty → None
+        # (inherit unchanged), preserving prior behavior exactly.
+        proc_env = {**os.environ, **self._env} if self._env else None
         proc = await asyncio.create_subprocess_exec(
             *argv,
             cwd=workdir,
+            env=proc_env,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

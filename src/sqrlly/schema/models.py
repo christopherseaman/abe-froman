@@ -370,6 +370,10 @@ class LlmPreset(BaseModel):
     # Escape hatch: extra args appended verbatim to the `claude` argv
     # (cli only) for anything the fields above don't cover.
     cli_args: list[str] | None = None
+    # Per-preset environment overlay for the spawned backend process
+    # (e.g. CLAUDE_CODE_EFFORT_LEVEL). Overlaid on os.environ at spawn —
+    # never replaces it. Mirrors SubprocessParams.env for script nodes.
+    env: dict[str, str] = {}
 
 
 class CommandPreset(BaseModel):

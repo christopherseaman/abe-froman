@@ -14,6 +14,7 @@ Coverage:
 - Timeout — the fake sleeps; ``asyncio.TimeoutError`` raises and the
   subprocess gets reaped (assertion via ``proc`` reference, but the
   backend reaps in its own ``except`` block).
+- Env injection — preset env overlays os.environ; empty inherits.
 """
 from __future__ import annotations
 
@@ -274,3 +275,53 @@ class TestCLIBackendWorkdir:
         # `pwd` resolves through symlinks; compare via realpath so
         # /tmp → /private/tmp on macOS et al. don't false-fail.
         assert os.path.realpath(result.output) == os.path.realpath(str(nested))
+
+
+class TestCLIBackendEnv:
+    @pytest.mark.asyncio
+    async def test_env_reaches_subprocess(self, tmp_path):
+        """Preset env var is visible to the spawned subprocess."""
+        fake = _write_fake(tmp_path, "claude-fake", '#!/bin/sh\necho "FOO=$FOO"\n')
+        backend = CLIBackend(argv_prefix=(str(fake),), env={"FOO": "bar"})
+        result = await backend.send_prompt("x", "sonnet", str(tmp_path))
+        assert result.output == "FOO=bar"
+
+    @pytest.mark.asyncio
+    async def test_empty_env_inherits_parent(self, tmp_path, monkeypatch):
+        """No preset env → subprocess inherits the parent environment unchanged."""
+        monkeypatch.setenv("INHERITED", "yes")
+        fake = _write_fake(
+            tmp_path, "claude-fake", '#!/bin/sh\necho "INHERITED=$INHERITED"\n',
+        )
+        backend = CLIBackend(argv_prefix=(str(fake),))  # no env → None → inherit
+        result = await backend.send_prompt("x", "sonnet", str(tmp_path))
+        assert result.output == "INHERITED=yes"
+
+    @pytest.mark.asyncio
+    async def test_env_overlays_without_wiping_inherited(self, tmp_path, monkeypatch):
+        """Preset env overlays os.environ without dropping inherited vars."""
+        monkeypatch.setenv("INHERITED", "keepme")
+        fake = _write_fake(
+            tmp_path, "claude-fake",
+            '#!/bin/sh\necho "FOO=$FOO INHERITED=$INHERITED"\n',
+        )
+        backend = CLIBackend(argv_prefix=(str(fake),), env={"FOO": "bar"})
+        result = await backend.send_prompt("x", "sonnet", str(tmp_path))
+        assert result.output == "FOO=bar INHERITED=keepme"
+
+
+class TestLlmPresetEnvWiring:
+    """env field default + factory threading into the CLI backend."""
+
+    def test_build_cli_threads_env(self):
+        from sqrlly.runtime.executor.backends.factory import create_backend_from_preset
+        from sqrlly.schema.models import LlmPreset
+        backend = create_backend_from_preset(LlmPreset(
+            transport="cli", provider="anthropic", model="sonnet", env={"X": "1"},
+        ))
+        assert backend._env == {"X": "1"}
+
+    def test_llm_preset_env_defaults_empty(self):
+        from sqrlly.schema.models import LlmPreset
+        p = LlmPreset(transport="cli", provider="anthropic", model="sonnet")
+        assert p.env == {}

@@ -34,6 +34,7 @@ def _build_cli(preset: "LlmPreset") -> PromptBackend:
         allowed_tools=preset.allowed_tools,
         disallowed_tools=preset.disallowed_tools,
         cli_args=preset.cli_args,
+        env=preset.env,
     )
 
 
