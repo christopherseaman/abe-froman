@@ -245,3 +245,26 @@ def test_reconcile_raw_required_files_glob_promotes_nothing(tmp_path):
         [("ref", str(wt), ["prd-context-map.json"])], str(tmp_path), "warn",
     )
     assert not (tmp_path/"reference"/"prd-context-map.json").exists()
+
+
+def test_discover_changes_excludes_pathspec(tmp_path):
+    _repo(tmp_path); wt = _wt(tmp_path, "wex")
+    (wt / "real.txt").write_text("keep")
+    (wt / "node_modules").mkdir()
+    (wt / "node_modules" / "dep.js").write_text("x")
+    assert "node_modules/dep.js" in discover_changes(str(wt))
+    changes = discover_changes(str(wt), excludes=["node_modules"])
+    assert "real.txt" in changes
+    assert not any(p.startswith("node_modules") for p in changes)
+
+
+def test_reconcile_threads_excludes(tmp_path):
+    _repo(tmp_path); wt = _wt(tmp_path, "wex2")
+    (wt / "real.txt").write_text("keep")
+    (wt / "node_modules").mkdir()
+    (wt / "node_modules" / "dep.js").write_text("x")
+    reconcile_promotions(
+        [("n", str(wt), None)], str(tmp_path), "warn", excludes=["node_modules"],
+    )
+    assert (tmp_path / "real.txt").read_text() == "keep"
+    assert not (tmp_path / "node_modules").exists()

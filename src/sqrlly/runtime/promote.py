@@ -34,12 +34,17 @@ _STATUS: dict[str, str] = {
 }
 
 
-def discover_changes(worktree: str, globs: list[str] | None = None) -> dict[str, str]:
+def discover_changes(
+    worktree: str, globs: list[str] | None = None,
+    excludes: list[str] | None = None,
+) -> dict[str, str]:
     """Return ``{path_relative_to_worktree: change_kind}`` for everything the
     worktree changed vs HEAD, including untracked adds and deletions.
 
-    ``globs`` (git pathspec, e.g. ``["prd/**", "*.md"]``) filters the set.
-    Change kinds are ``"added"``, ``"modified"``, or ``"deleted"``.
+    ``globs`` (git pathspec) filters to matches; ``excludes`` removes matches
+    (a git ``:(exclude)`` pathspec — prefix match, so ``"node_modules"`` drops
+    the dir/symlink and everything under it). Change kinds are ``"added"``,
+    ``"modified"``, or ``"deleted"``.
     """
     # -z uses NUL-terminated output, avoiding the path quoting that
     # --porcelain=v1 applies to paths containing spaces or special chars.
@@ -48,11 +53,16 @@ def discover_changes(worktree: str, globs: list[str] | None = None) -> dict[str,
     # the source so only the destination is recorded.
     cmd = ["git", "-C", worktree, "status", "--porcelain=v1", "-z",
            "--untracked-files=all"]
+    pathspecs: list[str] = []
     if globs:
         # :(glob) is required so that ** matches across path separators;
         # without it git treats ** as a literal path component and misses
         # root-level files.
-        cmd += ["--", *(f":(glob){g}" for g in globs)]
+        pathspecs += [f":(glob){g}" for g in globs]
+    if excludes:
+        pathspecs += [f":(exclude){e}" for e in excludes]
+    if pathspecs:
+        cmd += ["--", *pathspecs]
     out = subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
     tokens = out.split("\0")
     changes: dict[str, str] = {}
@@ -130,15 +140,16 @@ class PromoteConflictError(Exception):
 
 def reconcile_promotions(
     specs: list[tuple[str, str, list[str] | None]], base: str, mode: str,
+    excludes: list[str] | None = None,
 ) -> PromotionPlan:
     """Discover each node's footprint, plan under ``mode``, then apply.
 
     ``specs`` is ``[(node_id, worktree, globs), ...]`` in promote order.
-    Returns the ``PromotionPlan`` (so the caller can log ``plan.conflicts``).
-    Raises ``PromoteConflictError`` (``mode='fail'``) **before any file is
-    written** — discovery and planning precede every ``apply_changes``."""
+    ``excludes`` (git ``:(exclude)`` pathspecs) are filtered from EVERY node's
+    footprint. Returns the ``PromotionPlan``. Raises ``PromoteConflictError``
+    (``mode='fail'``) before any file is written."""
     footprints = {
-        node_id: discover_changes(worktree, globs)
+        node_id: discover_changes(worktree, globs, excludes=excludes)
         for node_id, worktree, globs in specs
     }
     plan = plan_promotions(footprints, mode)

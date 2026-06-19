@@ -885,3 +885,14 @@ class TestOnPromoteConflict:
         from sqrlly.schema.models import Settings
         with pytest.raises(ValidationError):
             Settings(on_promote_conflict="merge")
+
+
+class TestPromoteExclude:
+    def test_defaults_empty(self):
+        from sqrlly.schema.models import Settings
+        assert Settings().promote_exclude == []
+
+    def test_accepts_list(self):
+        from sqrlly.schema.models import Settings
+        assert Settings(promote_exclude=["node_modules", ".next/cache"]).promote_exclude \
+            == ["node_modules", ".next/cache"]

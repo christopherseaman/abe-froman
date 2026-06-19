@@ -462,6 +462,12 @@ class Settings(BaseModel):
     # last-write-wins. `skip`: the first promoting node (in `nodes` order)
     # keeps the path; later nodes drop it (their other paths still promote).
     on_promote_conflict: Literal["fail", "warn", "overwrite", "skip"] = "warn"
+    # Git pathspecs filtered out of EVERY promoting node's footprint (promote
+    # layer). Defense-in-depth beneath worktree-level excludes: keeps generated
+    # artifacts (node_modules, build caches) from being promoted into base even
+    # if they slip past a worktree's .git/info/exclude. Prefix-match, e.g.
+    # ["node_modules", ".next/cache"].
+    promote_exclude: list[str] = []
 
     @field_validator("worktree", mode="before")
     @classmethod

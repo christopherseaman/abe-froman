@@ -468,6 +468,7 @@ async def _execute_workflow(
                         plan = reconcile_promotions(
                             specs, workdir,
                             config.settings.on_promote_conflict,
+                            excludes=config.settings.promote_exclude or None,
                         )
                     except PromoteConflictError as e:
                         raise click.ClickException(str(e)) from e
