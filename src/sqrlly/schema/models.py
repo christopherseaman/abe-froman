@@ -468,6 +468,11 @@ class Settings(BaseModel):
     # if they slip past a worktree's .git/info/exclude. Prefix-match, e.g.
     # ["node_modules", ".next/cache"].
     promote_exclude: list[str] = []
+    # Read-only sharing: whole-dir symlinks of these base paths into each
+    # worktree (no in-worktree install). For read-only in-branch gates
+    # (tsc --noEmit, scoped tests). Each shared path also gets the
+    # info/exclude write so it stays out of the promote footprint.
+    worktree_share: list[str] = []
 
     @field_validator("worktree", mode="before")
     @classmethod

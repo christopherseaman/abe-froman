@@ -10,6 +10,7 @@ NOT hide a symlink named ``node_modules``); writing the bare path here does.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -54,3 +55,35 @@ def write_worktree_excludes(worktree: str, paths: list[str]) -> None:
             fh.write("\n")
         for p in to_add:
             fh.write(p + "\n")
+
+
+def materialize_shares(base: str, dest: str, shares: list[str]) -> None:
+    """Symlink each read-only share path from ``base`` into the worktree
+    ``dest`` (relative symlink), then write the worktree exclude so the link
+    stays out of the promote footprint. Raises if a configured share path is
+    absent in ``base`` (fail fast — a dangling link makes in-branch tooling
+    fail confusingly). Idempotent: a correct existing symlink is left as-is."""
+    for share in shares:
+        src = Path(base) / share
+        if not src.exists():
+            raise RuntimeError(
+                f"worktree_share path {share!r} does not exist in base "
+                f"{base!r} — install/build it before the run."
+            )
+        link = Path(dest) / share
+        target = os.path.relpath(src, link.parent)
+        if link.is_symlink():
+            if os.readlink(link) != target:
+                link.unlink()
+                link.parent.mkdir(parents=True, exist_ok=True)
+                os.symlink(target, link)
+        elif link.exists():
+            # A real tracked path collides with the share name — leave it.
+            continue
+        else:
+            link.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                os.symlink(target, link)
+            except FileExistsError:
+                pass  # race with a sibling acquiring the same group tree
+        write_worktree_excludes(dest, [share])

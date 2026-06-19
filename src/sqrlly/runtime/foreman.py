@@ -35,6 +35,7 @@ import psutil
 from sqrlly.runtime.executor.prompt import resolve_model
 from sqrlly.runtime.gates import scaffold_output_directory
 from sqrlly.runtime.result import ExecutionResult, NodeExecutor, PromptBackend
+from sqrlly.runtime.worktree_share import materialize_shares
 from sqrlly.schema.models import Node, Settings
 
 logger = logging.getLogger(__name__)
@@ -229,6 +230,7 @@ class ForemanExecutor:
             dest = dest_dir / f"wt-group-{safe}"
             if dest.is_dir() and (dest / ".git").exists():
                 # Shared live worktree already exists (sibling created it, or prior run).
+                materialize_shares(self._base, str(dest), self._settings.worktree_share)
                 return str(dest)
         else:
             safe = pool_key.replace("::", "__").replace("/", "_")
@@ -245,6 +247,7 @@ class ForemanExecutor:
                 f"foreman: 'git worktree add' failed for {pool_key}: "
                 f"{err.decode().strip()}"
             )
+        materialize_shares(self._base, str(dest), self._settings.worktree_share)
         return str(dest)
 
     async def reclaim(self) -> list[str]:

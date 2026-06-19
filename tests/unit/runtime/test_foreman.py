@@ -884,3 +884,28 @@ class TestMemoryBackPressure:
             )
         finally:
             await foreman.close()
+
+
+@pytest.mark.asyncio
+async def test_foreman_worktree_share_symlinks_into_new_tree(tmp_path):
+    """A worktree_share path is symlinked into each created worktree."""
+    import subprocess
+    from pathlib import Path
+    from sqrlly.runtime.foreman import ForemanExecutor
+    from sqrlly.schema.models import Settings
+    from mock_executor import MockExecutor
+    subprocess.run(["git", "init", "-q", "-b", "main", str(tmp_path)], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.email", "t@t"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "t"], check=True)
+    (tmp_path / "f.txt").write_text("x")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-qm", "i"], check=True)
+    (tmp_path / "node_modules").mkdir()
+    (tmp_path / "node_modules" / "d.js").write_text("lib")
+    fm = ForemanExecutor(
+        MockExecutor(), str(tmp_path),
+        settings=Settings(worktree="isolated", worktree_share=["node_modules"]),
+    )
+    wt = await fm.acquire_branch_worktree("b1")
+    assert (Path(wt) / "node_modules").is_symlink()
+    assert (Path(wt) / "node_modules" / "d.js").read_text() == "lib"
