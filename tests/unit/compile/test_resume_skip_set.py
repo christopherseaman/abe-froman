@@ -92,3 +92,30 @@ def test_cyclic_route_terminates():
         {"id": "b", "name": "b", "execute": {"url": "t.md"}, "route": {"goto": "a"}},
     ])
     assert compute_skip_set(g, {"a", "b"}, {"b"}, set()) == set()
+
+
+def _fan_graph():
+    return _g([
+        _exec("up"),
+        {"id": "fan", "name": "fan", "depends_on": ["up"],
+         "fan_out": {"manifest_path": "m.json",
+                     "template": {"execute": {"url": "t.md"}},
+                     "final_nodes": [{"id": "agg", "name": "agg",
+                                      "execute": {"url": "a.md"}}]}},
+    ])
+
+
+def test_fan_out_final_dirtied_when_parent_dirty():
+    # --resume-from up dirties fan (dependent of up) -> _final_fan_agg (dependent
+    # of fan). The synthetic final id must leave the skip set.
+    g = _fan_graph()
+    skip = compute_skip_set(g, {"up", "fan", "_final_fan_agg"}, set(), {"up"})
+    assert "_final_fan_agg" not in skip
+    assert skip == set()
+
+
+def test_fan_out_final_skippable_when_all_clean():
+    # Plain --resume, nothing dirty: the aggregation stays frozen (no re-agg).
+    g = _fan_graph()
+    skip = compute_skip_set(g, {"up", "fan", "_final_fan_agg"}, set(), set())
+    assert "_final_fan_agg" in skip

@@ -16,6 +16,12 @@ All notable changes to sqrlly are documented here. Format follows
 - `--resume-from <node>` (repeatable): re-run a node and everything downstream,
   freezing upstream. Implies `--resume`.
 
+### Fixed
+
+- On `--resume`, dirty gated nodes re-consult their fresh evaluation and dirty
+  fan-out aggregation nodes re-run (previously a re-run node could route/aggregate
+  from stale prior state when its parent was dirtied via `--resume-from`).
+
 ## [0.5.11] — on_promote_conflict, LlmPreset.env, base_directory promote fix
 
 ### Added

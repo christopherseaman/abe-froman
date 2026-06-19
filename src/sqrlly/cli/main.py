@@ -390,6 +390,7 @@ async def _execute_workflow(
             )
             state = {
                 **old,
+                "completed_nodes": skip,
                 "failed_nodes": set(), "retries": {}, "errors": [],
                 "workdir": workdir, "dry_run": False, "_resume_skip": skip,
             }

@@ -22,6 +22,8 @@ pre-0.6 full-replay behavior (``a`` re-executes).
 """
 from __future__ import annotations
 
+import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -130,6 +132,7 @@ async def _run_phase(
             )
             state = {
                 **old,
+                "completed_nodes": skip,
                 "failed_nodes": set(),
                 "retries": {},
                 "errors": [],
@@ -235,3 +238,180 @@ class TestResumeFromCheckpoint:
         assert _read_runs(tmp_path, "b") == 2   # rerun target
         assert _read_runs(tmp_path, "c") == 2   # downstream of b
 
+
+_ECHO = shutil.which("echo") or "/bin/echo"
+
+# Flippable validator: passes (1.0) unless eval_fail.txt exists in the workdir,
+# in which case it fails (0.0). CWD is the workdir when the validator subprocess
+# runs (mirrors the fail.txt marker pattern used by worker.py).
+_VALIDATOR_SRC = (
+    "import sys; from pathlib import Path; sys.stdin.read(); "
+    "print('0.0' if Path('eval_fail.txt').exists() else '1.0')"
+)
+
+
+def _build_gated_chain(workdir: Path) -> Graph:
+    """Linear chain up -> g, where g has a BLOCKING evaluation (script validator).
+
+    Used to pin the Decision node's `node_id in completed_nodes` guard: on
+    resume with g dirty, the Decision node must consult the FRESH eval result
+    (not short-circuit as pass). Pinned by flipping the validator to FAIL
+    between phases and asserting g ends in failed_nodes — impossible if the
+    Decision node short-circuits on stale completed_nodes.
+    """
+    worker = _worker_path(workdir)
+    validator = workdir / "validator.py"
+    validator.write_text(_VALIDATOR_SRC)
+    return Graph(
+        name="resume-gated",
+        version="0.1.0",
+        nodes=[
+            {
+                "id": "up", "name": "up",
+                "execute": {
+                    "url": _PYTHON,
+                    "params": {"args": [str(worker), "up"]},
+                },
+            },
+            {
+                "id": "g", "name": "g", "depends_on": ["up"],
+                "execute": {
+                    "url": _PYTHON,
+                    "params": {"args": [str(worker), "g"]},
+                },
+                "evaluation": {
+                    "validator": str(validator),
+                    "threshold": 0.9,
+                    "blocking": True,
+                    "max_retries": 0,
+                },
+            },
+        ],
+    )
+
+
+def _build_fanout_chain(workdir: Path) -> Graph:
+    """Fan-out chain: up -> fan (fans over one item) -> final_nodes=[agg].
+
+    Used to pin that `_final_fan_agg` re-runs when an ancestor is dirty
+    on resume (not frozen by the barrier's `node_id in completed_nodes`
+    guard).
+    """
+    worker = _worker_path(workdir)
+    manifest = json.dumps({"items": [{"id": "x"}]})
+    return Graph(
+        name="resume-fanout",
+        version="0.1.0",
+        nodes=[
+            {
+                "id": "up", "name": "up",
+                "execute": {
+                    "url": _PYTHON,
+                    "params": {"args": [str(worker), "up"]},
+                },
+            },
+            {
+                "id": "fan", "name": "fan", "depends_on": ["up"],
+                "execute": {
+                    "url": _ECHO,
+                    "params": {"args": ["-n", manifest]},
+                },
+                "fan_out": {
+                    "template": {
+                        "execute": {
+                            "url": _ECHO,
+                            "params": {"args": ["-n", "child-{{id}}"]},
+                        },
+                    },
+                    "final_nodes": [
+                        {
+                            "id": "agg", "name": "agg",
+                            "execute": {
+                                "url": _PYTHON,
+                                "params": {"args": [str(worker), "agg"]},
+                            },
+                        }
+                    ],
+                },
+            },
+        ],
+    )
+
+
+class TestResumeDirtyGuards:
+    """Pins that within-run guards (Decision node, fan-out final barrier) treat
+    dirty nodes as not-done when completed_nodes is reseeded to skip-only."""
+
+    @pytest.mark.asyncio
+    async def test_gated_node_reruns_eval_on_resume_from(self, tmp_path):
+        """up -> g(blocking eval). Phase 1 passes. Flip eval to FAIL, resume-from up.
+
+        Pins the Decision node's `node_id in completed_nodes` guard. Without
+        the R8 fix (`completed_nodes` reseeded to full prior set), the Decision
+        node short-circuits as pass (g stays completed) even though the fresh
+        validator now returns 0.0. With the fix, completed_nodes is seeded to
+        skip={} (g is dirty), so the Decision node reads the fresh failing eval
+        and routes to fail_blocking → g ends in failed_nodes.
+        """
+        config = _build_gated_chain(tmp_path)
+        db_path = str(tmp_path / ".checkpoint.db")
+        thread_id = "gated-resume"
+
+        # Phase 1: no eval_fail.txt → validator returns 1.0 → g completes.
+        result_1 = await _run_phase(
+            tmp_path, config, db_path, thread_id, resume=False,
+        )
+        assert result_1["completed_nodes"] == {"up", "g"}
+        assert _read_runs(tmp_path, "g") == 1
+
+        # Flip the validator to fail before phase 2.
+        (tmp_path / "eval_fail.txt").write_text("fail")
+
+        # Phase 2: --resume-from up → up and g are dirty.
+        # The Decision node MUST consult the fresh eval (0.0 < 0.9 threshold)
+        # and route to fail_blocking. If it short-circuits on stale
+        # completed_nodes, g would stay completed and this assertion fails.
+        result_2 = await _run_phase(
+            tmp_path, config, db_path, thread_id,
+            resume=True, resume_from=("up",),
+        )
+        assert "g" in result_2["failed_nodes"]
+        assert "g" not in result_2["completed_nodes"]
+        # Body re-ran (counter incremented on this run).
+        assert _read_runs(tmp_path, "g") == 2
+
+    @pytest.mark.asyncio
+    async def test_fan_out_final_reruns_on_resume_from_ancestor(self, tmp_path):
+        """up -> fan (fan-out, final_nodes=[agg]). Phase 1 completes cleanly.
+        Resume with resume_from=up.
+
+        Without Part A fix: _final_fan_agg is in prior_completed but the
+        planner's BFS can't reach it (synthetic id, not in config.nodes) →
+        it stays in skip → barrier sees it in completed_nodes → defers → agg
+        body frozen at 1.
+        Without Part B fix: barrier reads the fully reseeded completed_nodes
+        (includes _final_fan_agg) → defers → agg body frozen at 1.
+        With both fixes: _final_fan_agg is in dirty (via Part A wiring), not
+        in skip, not in seeded completed_nodes → barrier re-runs → agg body
+        count=2.
+        """
+        config = _build_fanout_chain(tmp_path)
+        db_path = str(tmp_path / ".checkpoint.db")
+        thread_id = "fanout-resume"
+
+        # Phase 1: full run.
+        result_1 = await _run_phase(
+            tmp_path, config, db_path, thread_id, resume=False,
+        )
+        assert "fan" in result_1["completed_nodes"]
+        assert "_final_fan_agg" in result_1["completed_nodes"]
+        assert _read_runs(tmp_path, "agg") == 1
+
+        # Phase 2: --resume-from up → fan and _final_fan_agg are dirty.
+        result_2 = await _run_phase(
+            tmp_path, config, db_path, thread_id,
+            resume=True, resume_from=("up",),
+        )
+        assert "_final_fan_agg" in result_2["completed_nodes"]
+        # Aggregation body re-ran.
+        assert _read_runs(tmp_path, "agg") == 2

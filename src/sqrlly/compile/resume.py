@@ -50,6 +50,16 @@ def compute_skip_set(
         for dep in n.depends_on:
             if dep in dependents:
                 dependents[dep].append(n.id)
+
+    # Fan-out final/aggregation nodes get synthetic ids (_final_<parent>_<f>)
+    # that aren't in config.nodes but ARE written to completed_nodes. Wire them
+    # as dependents of their parent so a dirty fan-out parent dirties its finals
+    # (else the planner can't reach them and they'd be wrongly skipped).
+    for n in config.nodes:
+        if n.fan_out and n.fan_out.final_nodes:
+            for f in n.fan_out.final_nodes:
+                dependents.setdefault(n.id, []).append(f"_final_{n.id}_{f.id}")
+
     route_adj = {n.id: _route_targets(n) for n in config.nodes}
     groups: dict[str, list[str]] = {}
     group_of: dict[str, str] = {}
