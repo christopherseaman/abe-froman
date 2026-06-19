@@ -83,3 +83,54 @@ def test_materialize_shares_idempotent(tmp_path):
     materialize_shares(str(tmp_path), str(wt), ["node_modules"])
     materialize_shares(str(tmp_path), str(wt), ["node_modules"])  # no raise
     assert (wt / "node_modules").is_symlink()
+
+
+import pytest as _pytest
+from sqrlly.runtime.worktree_share import ensure_setup
+
+
+@_pytest.mark.asyncio
+async def test_ensure_setup_runs_commands_writes_excludes_and_sentinel(tmp_path):
+    _repo(tmp_path); wt = _wt(tmp_path, "ws1")
+    await ensure_setup(
+        base=str(tmp_path), dest=str(wt),
+        commands=["sh -c 'echo hi > marker.txt'"],
+        excludes=["node_modules"], store_dir=None,
+    )
+    assert (wt / "marker.txt").read_text().strip() == "hi"
+    assert (wt / ".sqrlly" / "setup-ok").exists()
+    # exclude written: a node_modules dir would be hidden from the footprint
+    (wt / "node_modules").mkdir(); (wt / "node_modules" / "d.js").write_text("x")
+    assert not any(p.startswith("node_modules") for p in discover_changes(str(wt)))
+
+
+@_pytest.mark.asyncio
+async def test_ensure_setup_is_idempotent(tmp_path):
+    _repo(tmp_path); wt = _wt(tmp_path, "ws2")
+    cmds = ["sh -c 'echo x >> count.txt'"]
+    await ensure_setup(base=str(tmp_path), dest=str(wt), commands=cmds, excludes=[], store_dir=None)
+    await ensure_setup(base=str(tmp_path), dest=str(wt), commands=cmds, excludes=[], store_dir=None)
+    assert (wt / "count.txt").read_text().count("x") == 1  # ran once (sentinel)
+
+
+@_pytest.mark.asyncio
+async def test_ensure_setup_failure_raises_branch_fatal(tmp_path):
+    _repo(tmp_path); wt = _wt(tmp_path, "ws3")
+    with _pytest.raises(RuntimeError, match="setup failed"):
+        await ensure_setup(
+            base=str(tmp_path), dest=str(wt),
+            commands=["sh -c 'exit 3'"], excludes=[], store_dir=None, retries=0,
+        )
+    assert not (wt / ".sqrlly" / "setup-ok").exists()  # no sentinel on failure
+
+
+@_pytest.mark.asyncio
+async def test_ensure_setup_store_dir_env(tmp_path):
+    _repo(tmp_path); wt = _wt(tmp_path, "ws4")
+    await ensure_setup(
+        base=str(tmp_path), dest=str(wt),
+        commands=["sh -c 'echo $PNPM_HOME > store.txt'"],
+        excludes=[], store_dir=".sqrlly/.pnpm-store",
+    )
+    got = (wt / "store.txt").read_text().strip()
+    assert got.endswith(".sqrlly/.pnpm-store")  # absolute, under base
