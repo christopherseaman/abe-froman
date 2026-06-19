@@ -1,7 +1,10 @@
 """Worktree dependency-sharing helpers (runtime layer, langgraph-free).
 
-The load-bearing piece is ``write_worktree_excludes``: it appends paths to a
-worktree's ``info/exclude`` so shared/generated artifacts (node_modules, build
+The load-bearing piece is ``write_worktree_excludes``: it appends paths to the
+repository's SHARED ``info/exclude`` (the common git dir —
+``git rev-parse --git-path info/exclude`` returns the same file for the base
+repo and every linked worktree; git has no per-worktree exclude) so
+shared/generated artifacts (node_modules, build
 caches, in-tree generated clients) never appear in ``git status
 --untracked-files=all`` — i.e. never enter ``promote.discover_changes``'
 footprint, so ``apply_changes`` can't follow them into base. A real
@@ -19,7 +22,9 @@ from pathlib import Path
 
 
 def _info_exclude_path(worktree: str) -> Path:
-    """Resolve the worktree's git ``info/exclude`` file (absolute)."""
+    """Resolve the repo's shared ``info/exclude`` (absolute). Note: in a linked
+    worktree ``git rev-parse --git-path info/exclude`` resolves to the COMMON
+    git dir — the same file for the base repo and every worktree."""
     rel = subprocess.run(
         ["git", "-C", worktree, "rev-parse", "--git-path", "info/exclude"],
         capture_output=True, text=True, check=True,
@@ -38,10 +43,12 @@ def _ends_with_newline(p: Path) -> bool:
 
 
 def write_worktree_excludes(worktree: str, paths: list[str]) -> None:
-    """Append each path (trailing slash stripped) to the worktree's
+    """Append each path (trailing slash stripped) to the repo's shared
     ``info/exclude`` if not already a line. Bare (slash-less) entries match a
     symlink/dir of that name, which a ``foo/`` .gitignore rule does not.
-    Idempotent — safe to call on every worktree hand-back."""
+    Idempotent — safe to call on every worktree hand-back; because the file is
+    shared across all worktrees, the existing-line dedup keeps it from growing
+    on repeat calls."""
     if not paths:
         return
     exclude_file = _info_exclude_path(worktree)
@@ -62,7 +69,7 @@ def write_worktree_excludes(worktree: str, paths: list[str]) -> None:
 
 def materialize_shares(base: str, dest: str, shares: list[str]) -> None:
     """Symlink each read-only share path from ``base`` into the worktree
-    ``dest`` (relative symlink), then write the worktree exclude so the link
+    ``dest`` (relative symlink), then write the shared exclude so the link
     stays out of the promote footprint. Raises if a configured share path is
     absent in ``base`` (fail fast — a dangling link makes in-branch tooling
     fail confusingly). Idempotent: a correct existing symlink is left as-is."""
@@ -114,21 +121,24 @@ async def ensure_setup(
 ) -> None:
     """Idempotently run the worktree setup commands in ``dest``.
 
-    Sentinel-gated: skips when ``dest/.sqrlly/setup-ok`` matches the fingerprint.
-    Writes ``excludes`` to info/exclude BEFORE running commands (so a crash
-    mid-install can't leak). On non-zero exit after ``retries`` retries, raises
-    ``RuntimeError`` (fatal for the branch — a clear diagnosable failure, not a
-    misleading downstream gate failure). Writes the sentinel only on success.
-    (GC registration of ``dest`` is the caller's responsibility, before this is
-    awaited.)"""
+    Sentinel-gated: skips the (expensive) commands when ``dest/.sqrlly/setup-ok``
+    matches the fingerprint. ``excludes`` are written BEFORE the sentinel gate —
+    i.e. reconciled on every call (cheap + idempotent), so a newly-added exclude
+    path lands even when the command sentinel already matches. On non-zero exit
+    after ``retries`` retries, raises ``RuntimeError`` (fatal for the branch — a
+    clear diagnosable failure, not a misleading downstream gate failure). Writes
+    the sentinel only on success. (GC registration of ``dest`` is the caller's
+    responsibility, before this is awaited.)"""
     if not commands and not excludes:
         return
+    # Exclude write first — reconciled on every hand-back, independent of the
+    # command sentinel (cheap + idempotent), so an exclude-only change is not
+    # silently dropped and a crashed install can't leak artifacts.
+    write_worktree_excludes(dest, excludes)
     marker = Path(dest) / ".sqrlly" / "setup-ok"
     fp = setup_fingerprint(base, commands)
     if marker.exists() and marker.read_text().strip() == fp:
         return
-    # Exclude write first — even a crashed install must not leak artifacts.
-    write_worktree_excludes(dest, excludes)
     env = dict(os.environ)
     if store_dir is not None:
         store_abs = str((Path(base) / store_dir).resolve())

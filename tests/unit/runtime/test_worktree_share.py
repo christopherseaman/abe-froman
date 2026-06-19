@@ -129,8 +129,34 @@ async def test_ensure_setup_store_dir_env(tmp_path):
     _repo(tmp_path); wt = _wt(tmp_path, "ws4")
     await ensure_setup(
         base=str(tmp_path), dest=str(wt),
-        commands=["sh -c 'echo $PNPM_HOME > store.txt'"],
+        commands=[
+            "sh -c 'echo $PNPM_HOME > store.txt'",
+            "sh -c 'echo $npm_config_store_dir > store2.txt'",
+        ],
         excludes=[], store_dir=".sqrlly/.pnpm-store",
     )
     got = (wt / "store.txt").read_text().strip()
     assert got.endswith(".sqrlly/.pnpm-store")  # absolute, under base
+    # npm_config_store_dir is the load-bearing var pnpm reads; same store path
+    got2 = (wt / "store2.txt").read_text().strip()
+    assert got2.endswith(".sqrlly/.pnpm-store")
+    assert got2 == got
+
+
+@_pytest.mark.asyncio
+async def test_ensure_setup_reconciles_new_exclude_when_command_sentinel_matches(tmp_path):
+    _repo(tmp_path); wt = _wt(tmp_path, "ws5")
+    await ensure_setup(
+        base=str(tmp_path), dest=str(wt),
+        commands=["true"], excludes=["node_modules"], store_dir=None,
+    )
+    assert (wt / ".sqrlly" / "setup-ok").exists()
+    assert len(_exclude_lines(wt, "node_modules")) == 1
+    # Same commands + unchanged base HEAD → command sentinel still matches,
+    # but a newly-added exclude must still be reconciled.
+    await ensure_setup(
+        base=str(tmp_path), dest=str(wt),
+        commands=["true"], excludes=["node_modules", "dist"], store_dir=None,
+    )
+    assert len(_exclude_lines(wt, "dist")) == 1
+    assert len(_exclude_lines(wt, "node_modules")) == 1
