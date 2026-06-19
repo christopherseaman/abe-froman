@@ -609,6 +609,12 @@ def _make_execution_node(
     timeout = node.effective_timeout(settings)
 
     async def node_fn(state: WorkflowState) -> dict[str, Any]:
+        # Resume skip: a node frozen in the prior-run snapshot does not
+        # re-execute. Its completed_nodes/node_outputs are already reseeded,
+        # so downstream context and the deps join-barrier still see it.
+        skip = state.get("_resume_skip")
+        if skip and node.id in skip:
+            return {}
         for check in (check_dep_failed, check_dry_run):
             if (r := check(node, state)) is not None:
                 return r

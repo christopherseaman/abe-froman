@@ -187,3 +187,23 @@ class TestExecutionNodeClosure:
         assert "retries" not in update
         assert "failed_nodes" not in update
         assert update["node_outputs"]["p1"] == "[mock] p1 completed"
+
+    @pytest.mark.asyncio
+    async def test_resume_skip_freezes_body(self):
+        """A node id in _resume_skip is frozen: body does not run, no update."""
+        node = Node(id="p1", name="P1", execute=Execute(url="t.md"))
+        ex = MockExecutor()
+        nf = _make_execution_node(node, _config_with(node), ex)
+        update = await nf(make_initial_state(_resume_skip={"p1"}))
+        assert update == {}
+        assert ex.execution_order == []  # body never executed
+
+    @pytest.mark.asyncio
+    async def test_resume_skip_other_node_still_runs(self):
+        """A skip-set that doesn't name this node leaves it running."""
+        node = Node(id="p1", name="P1", execute=Execute(url="t.md"))
+        ex = MockExecutor()
+        nf = _make_execution_node(node, _config_with(node), ex)
+        update = await nf(make_initial_state(_resume_skip={"other"}))
+        assert ex.execution_order == ["p1"]
+        assert update["completed_nodes"] == {"p1"}
