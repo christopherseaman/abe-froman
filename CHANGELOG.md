@@ -3,6 +3,14 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased] — worktree dependency sharing
+
+### Added
+
+- `settings.worktree_share` — read-only base-dep symlinks into each worktree (for in-branch gates).
+- `settings.worktree_setup` (+ `worktree_setup_exclude`, `worktree_setup_store_dir`) — per-worktree dependency rehydrate (run e.g. `pnpm install` per branch); sentinel-gated, fatal-per-branch.
+- `settings.promote_exclude` — git pathspecs filtered from every promoting node's footprint.
+
 ## [0.6.0] — skip-completed resume
 
 ### Changed

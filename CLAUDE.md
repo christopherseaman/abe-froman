@@ -148,6 +148,7 @@ langgraph-free).
   remote URL gates.
 - `secrets.py` — `resolve_secret(name, *, settings, settings_attr)`
   (env → workflow YAML → project-local `.env`, walking up from CWD).
+- `worktree_share.py` — `write_worktree_excludes` / `materialize_shares` / `ensure_setup` (worktree dep sharing: info/exclude write, read-only symlinks, sentinel-gated rehydrate).
 - `executor/dispatch.py` — `DispatchExecutor` (10-row URL dispatch).
 - `executor/prompt.py` — `PromptExecutor` (template render, model
   downgrade).
@@ -275,6 +276,7 @@ resolver sees) — distinct from faking what an external system returns.
   `depends_on` edge AFTER an inline-route hop elsewhere can see a stale
   `{{sender_id}}`; guard with `{% if sender_id %}` in that rare
   topology. Inside a goto-only target the var is always bound.
+- **Worktree dep sharing** — gitignored base deps reach branch worktrees two ways: `settings.worktree_share` (read-only whole-dir symlink — for read-only gates) and `settings.worktree_setup` (per-worktree rehydrate commands; sentinel-gated, fatal-per-branch). Both write the shared paths to the worktree's `info/exclude` so they stay out of the promote footprint; `settings.promote_exclude` is the promote-layer backstop. Wired in `runtime/foreman.py::_ensure_worktree_ready` via `runtime/worktree_share.py`. Consumer note: a `prisma generate` in `worktree_setup` needs its output path in `worktree_setup_exclude` (a `validate` lint warns otherwise).
 
 ## Environment quirks
 
