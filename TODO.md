@@ -565,13 +565,15 @@ Code via `acp` / `cli` remains; `transport: api` is roadmap. Fine for
 the builder today (already direct-CLI), but the "use the direct SDK to
 dodge ACP process leaks" plan is **not currently available**.
 
-### B2 — `--resume` re-executes completed nodes
+### ✅ B2 — `--resume` skips completed nodes — SHIPPED 0.6.0
 
-Fault-recovery, not skip-completed: completed nodes re-run (LLM phases
-diverge on re-run), expensive for multi-hour builds. Known limitation —
-`TODO.md` items 26/31 (the `--resume` rewrite). Behavior now
-documented in README/SKILLS/CLAUDE; the skip-completed fix is the open
-work.
+Was fault-recovery only (every node re-ran, LLM phases diverging and
+re-billing on multi-hour builds). Bare `--resume` now skips nodes that
+completed cleanly and aren't downstream of a failure (`--rerun-all`
+restores the old full replay; `--resume-from <node>` re-runs a node
+plus its downstream). Subgraph inner nodes aren't individually
+skippable yet (a subgraph re-runs in full unless its reference node
+completed cleanly) — the residual lives in items 26/31.
 
 ### B3 — Octopus-merge of overlapping isolated trees (DEFERRED — the one rabbit hole)
 
@@ -608,30 +610,28 @@ applies git pathspec `:(glob)` filters over `OutputContract.required_paths()`
 a glob should mean "at least one match exists" (a literal path is still a
 valid glob matching itself, so existing contracts are unaffected).
 
-### B6 — Isolated worktrees are source-only; gitignored deps break in-branch gates
+### ✅ B6 — Worktree gitignored deps — SHIPPED 0.7.0
 
-_Surfaced 2026-06-09, before the expensive builder run._ Isolated
-worktrees fork **source only** — `node_modules` (and any gitignored
-build deps) don't come along. So an in-branch mechanical gate like
-`tsc --noEmit` has nothing to compile against: the type-check fails for
-lack of dependencies, not for a real type error. Blocks the build-smoke
-gate that's meant to run *before* the multi-hour LLM build. Open
-decision (shapes the in-branch gate design — resolve before kicking off
-B1 build-smoke):
-
-- **Share base `node_modules` into each branch worktree** (symlink, or
-  ACP `--add-dir` / cwd extension) — **current lean.** Cheap; keeps the
-  gate in-branch where the edited source actually lives, so the check
-  sees uncommitted edits.
-- **Run the mechanical gate from the base post-fork** — base has its
-  `node_modules`, but it sees committed source only; a branch's
-  uncommitted edits aren't visible unless promoted first, so the signal
-  is weaker / out of sync with the branch.
-
-Cross-ref: this is a **read/share** gap (worktree-composition north
-star: fork → produce → read/share → promote → GC) specific to
-*non-source* deps — promotion (git-delta) handles source, not
-gitignored artifacts. Pairs with B1 scaffolding + build-smoke.
+Isolated worktrees fork source only, so gitignored base deps
+(`node_modules`, generated clients like prisma) broke in-branch
+mechanical gates (`tsc --noEmit` failing for lack of deps, not real
+type errors). Closed by two opt-in sharing paths plus a promote-layer
+backstop: `settings.worktree_share` (read-only whole-dir symlinks of
+base paths into each worktree, no install — for read-only gates),
+`settings.worktree_setup` (ordered per-worktree rehydrate commands,
+e.g. `pnpm install`; sentinel-gated, fatal-per-branch) with
+`worktree_setup_exclude` (paths written to the shared `info/exclude` so
+rehydrate artifacts stay out of the promote footprint; explicit, with a
+`validate` lint when `prisma generate` runs without a matching exclude)
+and `worktree_setup_store_dir` (exports the package store dir so
+hardlinks work instead of EXDEV full-copy), and
+`settings.promote_exclude` (git pathspecs filtered from every promoting
+node's footprint). The load-bearing piece is the `info/exclude` write:
+git has no per-worktree exclude, so the entries land in the base repo's
+shared `.git/info/exclude` (persists after the run, not reclaimed by
+`worktree_gc`, but only masks untracked paths so it can never hide
+tracked-file edits). Wired in `runtime/foreman.py` via
+`runtime/worktree_share.py`.
 
 ## Low-priority / judgment calls
 

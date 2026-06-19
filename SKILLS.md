@@ -206,6 +206,38 @@ Set `settings.worktree_gc: on_success` to remove worktrees after a clean
 run (default `never` keeps them for inspection / `--resume`). The full
 lifecycle is **fork → produce → read/share → promote → GC**.
 
+**Sharing base deps into worktrees.** A fresh worktree is a clean
+checkout — gitignored base dependencies (`node_modules`, generated
+clients) are not in it, so a node that needs them must get them. Two
+settings supply them without leaking them into the promote footprint.
+`settings.worktree_share: [<path>, …]` makes a read-only whole-dir
+**symlink** of each listed base path into every worktree (no install) —
+the cheap path, correct for read-only in-branch gates (`tsc --noEmit`,
+scoped tests). `settings.worktree_setup: [<cmd>, …]` runs ordered shell
+commands in each fresh worktree so the package manager builds its
+**own** real deps there (e.g. `["pnpm install --prefer-offline", "pnpm
+exec prisma generate"]`) — the rehydrate path, for branches that mutate
+deps or need write isolation; it is package-manager-agnostic,
+sentinel-gated (runs once per base state, not per node), and **fatal for
+that branch** on a non-zero exit (other branches proceed). Keep
+`worktree_setup` to pure base hydration — a branch that mutates
+`schema.prisma` should re-run `prisma generate` in its gate/build body,
+not in setup. If a setup command needs the package store on the same
+device as the worktree (pnpm's EXDEV/hardlink fix), set
+`settings.worktree_setup_store_dir: <path>` — it is exported into the
+setup env as both `npm_config_store_dir` and `PNPM_HOME`.
+
+**Keeping rehydrated deps out of promote.** Both mechanisms write the
+shared paths to the repo's shared `info/exclude` so they stay out of
+`git status` and therefore out of a `promote` delta. Rehydrate artifacts
+that `worktree_setup` creates are NOT inferred — list them explicitly in
+`settings.worktree_setup_exclude: [<path>, …]` (e.g. `node_modules`, an
+in-tree generated-client dir like `src/generated/prisma`). As a
+promote-layer backstop, `settings.promote_exclude: [<pathspec>, …]`
+filters those pathspecs out of **every** promoting node's footprint even
+if one slips past the `info/exclude` write — cheap defense-in-depth on
+the one operation (promote) you most can't afford to get wrong.
+
 **Subgraph fan-out isolation.** When a fan-out template is a subgraph
 (`.yaml`), each Send branch gets its own worktree (keyed by the branch
 id) and the subgraph's inner nodes all run *inside* that one branch tree
@@ -286,6 +318,20 @@ created at run time, are absent.
   `execute.url` or `validator` reads/runs with the orchestrator
   process's full filesystem access, and `allow_remote_scripts` gates
   only *remote* schemes. Don't run workflow files you don't trust.
+- **`prisma generate` in `worktree_setup` needs a matching exclude** —
+  a `prisma generate` command without its output path in
+  `worktree_setup_exclude` lets the generated client leak into the
+  promote footprint; `validate` warns about this. Add the output dir
+  (e.g. `src/generated/prisma`) and `node_modules` to
+  `worktree_setup_exclude`.
+- **The worktree exclude is the base repo's shared `info/exclude`** —
+  git has no per-worktree exclude file
+  (`git rev-parse --git-path info/exclude` resolves to the common git
+  dir), so the `worktree_share` / `worktree_setup_exclude` write mutates
+  the one `.git/info/exclude` shared by the base repo and all worktrees.
+  Those entries persist after the run and are not reclaimed by
+  `worktree_gc`; harmless because `info/exclude` only affects
+  **untracked** paths, so it can never mask edits to tracked files.
 
 ## Reference
 
