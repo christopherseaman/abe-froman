@@ -175,7 +175,7 @@ Each example directory ships a checked-in `view.html` (authoring view) and, wher
 | [`examples/jokes/`](https://github.com/christopherseaman/sqrlly/blob/main/examples/jokes/workflow.yaml) | Minimal: prompt + script gate + select. Start here. |
 | [`examples/route_classify/`](https://github.com/christopherseaman/sqrlly/blob/main/examples/route_classify/workflow.yaml) | Inline `route:` case ladder over structured state. |
 | [`examples/pipeline_style/`](https://github.com/christopherseaman/sqrlly/blob/main/examples/pipeline_style/workflow.yaml) | `route: { goto: <next> }` forward-edge authoring; a linear pipeline. |
-| [`examples/absurd-paper/`](https://github.com/christopherseaman/sqrlly/blob/main/examples/absurd-paper/workflow.yaml) | 13-node multi-stage pipeline with subgraphs and per-item subgraph fan-out. |
+| [`examples/absurd-paper/`](https://github.com/christopherseaman/sqrlly/blob/main/examples/absurd-paper/workflow.yaml) | Multi-stage pipeline with subgraphs and per-item subgraph fan-out. |
 | [`examples/wave_planner/`](https://github.com/christopherseaman/sqrlly/blob/main/examples/wave_planner/workflow.yaml) | Wave-driven dynamic-task pattern — `goto:` loop-back to a fan-out parent. |
 
 ## Documentation
@@ -190,7 +190,7 @@ Each example directory ships a checked-in `view.html` (authoring view) and, wher
 - **Layer rules** — `tests/architecture/test_layers.py` enforces the import boundaries; `CLAUDE.md` has the architecture sketch + contributor reading order.
 
 ```bash
-uv run pytest tests/ --ignore=tests/acp     # ~940 tests
+uv run pytest tests/ --ignore=tests/acp     # ~1k tests
 uv run pytest tests/acp                     # ACP integration (needs the npm adapter)
 ```
 

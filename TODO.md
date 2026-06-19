@@ -41,7 +41,7 @@ and even then likely a content-aware acceptance gate rather than blind
 > (the native-join alternative needs a synthetic marker node per gated
 > node: strictly more complexity).
 
-- [ ] 🚨 **(31) `--resume` discards the checkpointer instead of trusting it** (`cli/main.py:269-291`). Reads `channel_values` from prior checkpoint, builds a cleaned state dict, calls `cp.adelete_thread(thread_id)`, then re-streams from initial-state-like dict. Effectively replays the whole graph (the runs-counter in `test_resume_fan_out.py` still pins this: `_read_runs("a") == 2` after resume). The visible symptom of `completed_nodes` accumulating duplicates was masked by the set-union reducer (2026-05-19), but bodies still re-execute. Re-reading the design landscape: the LangGraph-native "pass thread_id to astream" pattern assumes the graph paused mid-execution (via `interrupt()`); a graph that returned terminal-with-failures has nothing to resume from natively. Fully resolving the DAG case requires picking one of three API shapes in TODO #26 (skip-completed-via-prior-run channel, `--resume-from <node>`, JSONL-driven skip). Defer until that design call lands.
+- [ ] 🚨 **(31) `--resume` discards the checkpointer instead of trusting it** (`cli/main.py:370-392`). Reads `channel_values` from prior checkpoint, builds a cleaned state dict, calls `cp.adelete_thread(thread_id)`, then re-streams from initial-state-like dict. Effectively replays the whole graph (the runs-counter in `test_resume_fan_out.py` still pins this: `_read_runs("a") == 2` after resume). The visible symptom of `completed_nodes` accumulating duplicates was masked by the set-union reducer (2026-05-19), but bodies still re-execute. Re-reading the design landscape: the LangGraph-native "pass thread_id to astream" pattern assumes the graph paused mid-execution (via `interrupt()`); a graph that returned terminal-with-failures has nothing to resume from natively. Fully resolving the DAG case requires picking one of three API shapes in TODO #26 (skip-completed-via-prior-run channel, `--resume-from <node>`, JSONL-driven skip). Defer until that design call lands.
 
 ## Hardening — structural footgun checks (2026-05-20)
 
@@ -598,14 +598,15 @@ unwired (a `collect_warnings` advisory would close the footgun).
 Advisory test gaps: promote+GC in one run; `worktree_group` across
 `--resume`.
 
-### B5 — `output_contract` globs are literal (folded into promotion)
+### B5 — `output_contract` *validation* globs are literal (promotion filter shipped glob-aware)
 
-`required_files` are checked verbatim. The 2026-06-02 design makes the
-contract **glob-aware** (git pathspec) as part of promotion's
-filter-mode — one matcher for declared globs and `git diff` discovery.
-Semantics shift: a glob means "at least one match exists" (a literal
-path is still a valid glob matching itself, so existing contracts are
-unaffected). Tracked in the worktree-v2 build plan.
+`required_files` are checked verbatim by `output_contract` *validation*
+(`gates.validate_output_contract` → literal `Path.exists()` per entry).
+The promotion filter-mode shipped glob-aware: `runtime/promote.discover_changes`
+applies git pathspec `:(glob)` filters over `OutputContract.required_paths()`
+(base_directory-prepended). REMAINING: make *validation* glob-aware too —
+a glob should mean "at least one match exists" (a literal path is still a
+valid glob matching itself, so existing contracts are unaffected).
 
 ### B6 — Isolated worktrees are source-only; gitignored deps break in-branch gates
 

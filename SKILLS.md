@@ -232,11 +232,14 @@ executing), `--preset/-p <name>` (force a named preset as the default),
 `--resume` (re-run with prior state, clearing failures — see Debug),
 `--log <path>`.
 
-`sqrlly graph <config>` prints a Mermaid topology diagram;
-`sqrlly view <config>` writes a self-contained interactive HTML viewer.
-Both show the **static** topology — dynamic `route:` `goto` targets
-are emitted as `Command(goto=...)` at run time and are not drawn as
-edges, so branch targets may appear as unconnected nodes.
+`sqrlly graph <config>` prints a Mermaid topology diagram of the
+**static** compiled LangGraph — dynamic `route:` `goto` targets are
+emitted as `Command(goto=...)` at run time and are not drawn, so branch
+targets may appear as unconnected nodes there. `sqrlly view <config>`
+writes a self-contained interactive HTML viewer that *does* draw
+declared `route:` edges (dotted, labeled with the `when` predicate) and
+fan-out parents (hexagon); only realized per-manifest fan-out children,
+created at run time, are absent.
 
 ## Debug a run
 

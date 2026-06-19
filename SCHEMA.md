@@ -335,7 +335,7 @@ print to stdout. Environment: `NODE_ID`, `WORKFLOW_NAME`,
 (`{"score", "feedback", "pass_criteria_met", "pass_criteria_unmet"}`).
 
 **LLM validators (`.md`)** are rendered as Jinja2 templates with
-`{{output}}`, `{{phase_id}}`, `{{attempt}}`, then dispatched through the
+`{{output}}`, `{{node_id}}`, `{{attempt}}`, then dispatched through the
 node's backend. The response must be JSON with at least a `score`.
 Malformed output fails loudly (`score=0.0` + diagnostic) — it never
 silently passes.

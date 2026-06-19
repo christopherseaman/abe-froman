@@ -225,10 +225,13 @@ resolver sees) — distinct from faking what an external system returns.
 - **Hyphenated node IDs in Jinja templates** — `{{research-phase}}`
   parses as subtraction; use underscores. `validate`/`run` emit an
   advisory warning (`compile/lint.py`).
-- **`graph` / `view` don't draw route edges** — they render the static
-  LangGraph only; inline-route targets are runtime `Command(goto=...)`,
-  so a routed node's branch targets appear edge-less. Inherent to the
-  routing implementation.
+- **`graph` doesn't draw route edges** — `graph` renders the static
+  compiled LangGraph only; inline-route targets are runtime
+  `Command(goto=...)`, so a routed node's branch targets appear
+  edge-less there. `view` reconstructs declared `route:` edges and
+  fan-out (hexagon) structure from the schema
+  (`cli/view.py::_route_targets`), so it *does* draw them — only
+  realized per-manifest fan-out children (created at run time) are absent.
 - **Remote script/binary execution not wired** — `http(s)://` urls
   fetch-and-run for *prompt* nodes only; `_dispatch_script` /
   `_dispatch_binary` require `file://` and halt on a remote scheme.
@@ -289,7 +292,7 @@ resolver sees) — distinct from faking what an external system returns.
 | New backend | `src/sqrlly/runtime/executor/backends/` + factory case |
 | New CLI flag | `src/sqrlly/cli/main.py` `@click.option` decorators |
 | New node type | `src/sqrlly/compile/graph.py` (registration) + `src/sqrlly/compile/nodes.py` (factory) |
-| New gate validator shape | `src/sqrlly/runtime/gates.py::_parse_script_output` |
+| New gate validator shape | `src/sqrlly/runtime/gates.py::_parse_evaluation_output` |
 | New WorkflowState field | `src/sqrlly/runtime/state.py` (TypedDict + REDUCERS) — beware of parity invariant in `compile/dynamic.py::_merge_updates` |
 | Inline routing (route block, sender bindings, include_eval preamble) | `src/sqrlly/schema/models.py::Route`, `src/sqrlly/compile/graph.py::_make_inline_route_node`, `src/sqrlly/runtime/gates.py::build_eval_preamble` |
 | Layer rule violation | `tests/architecture/test_layers.py` errors point to the offending file |
