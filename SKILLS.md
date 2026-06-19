@@ -229,7 +229,9 @@ use `file://` paths for those). `url_headers` is keyed by URL
 
 `run` flags: `--workdir/-w <dir>`, `--dry-run` (trace topology without
 executing), `--preset/-p <name>` (force a named preset as the default),
-`--resume` (re-run with prior state, clearing failures — see Debug),
+`--resume` (skip completed nodes, retry failed ones — see Debug),
+`--rerun-all` (full replay of every node), `--resume-from <node>`
+(re-run node + downstream; implies `--resume`),
 `--log <path>`.
 
 `sqrlly graph <config>` prints a Mermaid topology diagram of the
@@ -259,14 +261,13 @@ created at run time, are absent.
   blocked without reading the YAML).
 - `--dry-run` traces topology without calling backends or running
   scripts; use it to confirm the graph shape before a real run.
-- `--resume` is a **fault-recovery re-run**, not a skip-completed
-  continuation. It seeds a fresh run with the prior run's checkpointed
-  state (`<workdir>/.sqrlly-checkpoint.db`) and clears `failed_nodes` so
-  failed nodes retry — but every node **re-executes** (completed nodes
-  are not skipped; their outputs are refreshed). For deterministic
-  (script) nodes the re-run reproduces prior output; for LLM nodes it
-  may diverge. Use it to recover a failed run, not to avoid recomputing
-  completed work.
+- `--resume` reseeds from `<workdir>/.sqrlly-checkpoint.db` and **skips
+  nodes that completed cleanly** and aren't downstream of a failure —
+  completed work is not re-billed. `--rerun-all` forces full replay of
+  every node (pre-0.6 behavior). `--resume-from <node>` re-runs a
+  specific node and everything downstream (implies `--resume`). **v1
+  limitation:** a subgraph re-runs in full unless its reference node
+  completed cleanly; inner nodes aren't individually skippable.
 
 ## Footguns
 

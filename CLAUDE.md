@@ -254,12 +254,15 @@ resolver sees) — distinct from faking what an external system returns.
   reclaims end-of-run on a clean exit; default `never` keeps trees under
   `<workdir>/.sqrlly/` for inspection and `--resume`. `git worktree
   remove <path>` always works manually.
-- **`--resume` is a fault-recovery re-run, not skip-completed** — it
-  reseeds a fresh run from the prior checkpoint's `channel_values` and
-  clears `failed_nodes`/`retries`/`errors`; node bodies have no
-  `completed_nodes` short-circuit, so completed nodes **re-execute**
-  (LLM nodes may diverge). State stays consistent. Skip-completed resume
-  is the pending rewrite (TODO 26/31).
+- **`--resume` skips completed nodes (0.6.0)** — bare `--resume` reseeds
+  the prior checkpoint and skips nodes that completed cleanly and aren't
+  downstream of a failure (`compile/resume.py::compute_skip_set` → the
+  `_resume_skip` frozen snapshot channel; guards in `compile/nodes.py` /
+  `compile/dynamic.py` read it, never the live `completed_nodes`).
+  `--rerun-all` forces the pre-0.6 full replay; `--resume-from <node>`
+  re-runs a node + its downstream. **v1 limitation:** subgraph *inner*
+  nodes aren't individually skippable — a subgraph re-runs in full unless
+  its reference node completed cleanly.
 - **Subgraph event prefix is one level** — child events are prefixed
   `parent::child` (immediate parent only), so child ids must be unique
   across sibling subgraphs to avoid log collisions.

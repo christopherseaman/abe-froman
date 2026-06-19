@@ -3,6 +3,19 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased] — skip-completed resume
+
+### Changed
+
+- **`--resume` now skips cleanly-completed nodes by default** (was: re-run
+  every node). Recovers/iterates long LLM pipelines without re-billing
+  completed work. `--rerun-all` restores the previous full-replay behavior.
+
+### Added
+
+- `--resume-from <node>` (repeatable): re-run a node and everything downstream,
+  freezing upstream. Implies `--resume`.
+
 ## [0.5.11] — on_promote_conflict, LlmPreset.env, base_directory promote fix
 
 ### Added
