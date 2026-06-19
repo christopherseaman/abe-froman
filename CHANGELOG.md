@@ -726,7 +726,7 @@ gains. The full pre-strip patch lives on
 
 [wl35]: https://github.com/christopherseaman/sqrlly/blob/main/WISHLIST.md
 
-## [Unreleased] — command presets (named script interpreters)
+## [dev] — command presets (named script interpreters)
 
 Extends the preset concept beyond LLM config: a script node can now
 run under a named interpreter/command instead of the hardwired
@@ -771,7 +771,7 @@ extension map (`.py` → `python3`).
   model nodes, so foreman's per-model semaphore selection cleanly
   skips script nodes.
 
-## [Unreleased] — preset rework review follow-ups
+## [dev] — preset rework review follow-ups
 
 A three-agent code review of the preset rework (bugs / YAGNI-KISS-DRY /
 off-the-shelf-reuse) surfaced findings; this is the cleanup pass.
@@ -825,7 +825,7 @@ off-the-shelf-reuse) surfaced findings; this is the cleanup pass.
   fan_out topology (this helper moved to the standalone script with the
   rest of the preset migrator).
 
-## [Unreleased] — named-preset rework (executor: → settings.presets:)
+## [dev] — named-preset rework (executor: → settings.presets:)
 
 Three-commit migration replacing the collapsed ``executor:`` enum
 with named presets. Authors declare workflow-level bundles of
@@ -918,7 +918,7 @@ preset at run time.
   ``test_migrate.py`` were dropped; the underlying ``migrate.py``
   module tests stay.
 
-## [Unreleased] — set-union reducer for completed_nodes / failed_nodes
+## [dev] — set-union reducer for completed_nodes / failed_nodes
 
 ### Changed (state shape — breaking for state-introspecting consumers)
 
@@ -970,7 +970,7 @@ preset at run time.
   #26 (skip-completed-via-prior-run channel, `--resume-from <node>`,
   or JSONL-driven skip).
 
-## [Unreleased] — terminology cleanup: subphase → branch
+## [dev] — terminology cleanup: subphase → branch
 
 ### Changed (breaking — template vars)
 
@@ -1000,7 +1000,7 @@ preset at run time.
   parameter on `_make_evaluation_node` / `_make_decision_node`, set
   via inline lambdas at the call sites.
 
-## [Unreleased] — Stage 5d: split Evaluation from Decision + gate dep-outputs
+## [dev] — Stage 5d: split Evaluation from Decision + gate dep-outputs
 
 ### Added
 
@@ -1050,7 +1050,7 @@ preset at run time.
   (`update["completed_nodes"]`, etc.) need to either compose
   eval+decide or move to `test_decision_node.py`.
 
-## [Unreleased] — `view` HTML viewer + runner None-update guard
+## [dev] — `view` HTML viewer + runner None-update guard
 
 ### Added
 
@@ -1076,7 +1076,7 @@ preset at run time.
   'NoneType' object has no attribute 'get'`. Guard added; regression
   test in `test_logging.py::TestLogUpdate::test_no_events_on_none_update`.
 
-## [Unreleased] — Native event stream + Anthropic backend + StubBackend removal + wave-driven re-execution + Foreman memory back-pressure
+## [dev] — Native event stream + Anthropic backend + StubBackend removal + wave-driven re-execution + Foreman memory back-pressure
 
 ### Added
 
@@ -1257,7 +1257,7 @@ preset at run time.
   chain in `route: { goto: ... }` style — replaces the
   reverted-and-superseded `next:` field experiment.
 
-## [Unreleased] — Post-Stage-5b: defaults, scope, cleanup
+## [dev] — Post-Stage-5b: defaults, scope, cleanup
 
 ### Added
 
@@ -1330,7 +1330,7 @@ preset at run time.
 - CLI `--executor` help text was stale ("(stub, acp)"). Updated to
   list all four choices and document auto-detect order.
 
-## [Unreleased] — Stage 5b: `execute: { url, params }` Schema Cutover
+## [dev] — Stage 5b: `execute: { url, params }` Schema Cutover
 
 ### ⚠️ Breaking changes
 

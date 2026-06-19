@@ -101,8 +101,9 @@ Three-layer split (enforced by `tests/architecture/test_layers.py`):
 
 **`src/sqrlly/schema/`** — Pydantic models (no langgraph imports).
 - `models.py` — `Graph`, `Node`, `Settings`, `Execute`, `Evaluation`,
-  `RouteCase`, `RouteElse`, `Route`, `OutputContract`, `FanOut`,
-  `FanOutTemplate`, `FanOutFinalNode`.
+  `DimensionCheck`, `RouteCase`, `RouteElse`, `Route`, `OutputContract`,
+  `FanOut`, `FanOutTemplate`, `FanOutFinalNode`, `LlmPreset`,
+  `CommandPreset`.
 - `params.py` — `PromptParams`, `SubgraphParams`,
   `SubprocessParams` + `coerce_params()` resolver.
 
@@ -132,10 +133,15 @@ langgraph-free).
   `PromptBackend` Protocol, `OverloadError`.
 - `runner.py` — `astream` loop, state-diff event detection.
 - `logging.py` — `JsonlLogger`, `SubgraphLogger` (prefix decorator).
+- `terminal.py` — `TerminalRenderer`, `TeeLogger` — live TTY event
+  renderer (JsonlLogger-shaped `emit`/`log_update`/`close`).
 - `gates.py` — `run_evaluation_script`, `run_evaluation_llm`,
   output parsing, `EvaluationResult`.
 - `foreman.py` — `ForemanExecutor` (semaphores + memory back-pressure
   + worktree pool).
+- `promote.py` — `discover_changes` / `apply_changes` / `plan_promotions`
+  / `reconcile_promotions` / `PromoteConflictError`: cross-node promote
+  reconciliation under `settings.on_promote_conflict` (discover→plan→apply).
 - `settings_merge.py` — `merge_settings(parent, child)` for
   scope-aware inheritance.
 - `url.py` — `resolve_url`, `fetch_url`, `_RemoteFetchCache`,
@@ -145,6 +151,8 @@ langgraph-free).
 - `executor/dispatch.py` — `DispatchExecutor` (10-row URL dispatch).
 - `executor/prompt.py` — `PromptExecutor` (template render, model
   downgrade).
+- `executor/preset.py` — `resolve_preset_name` / `build_preset_registry`
+  (named-preset → backend registry; CLI `--preset` override).
 - `executor/backends/{acp,cli,factory}.py`. Two LLM backends
   coexist: ACP (warm `claude-code-acp` adapter) and CLI
   (subprocess-per-call `claude -p`).
@@ -154,6 +162,8 @@ langgraph-free).
   `ACP_OVERLOAD_SUBSTRINGS`. Both ACP and CLI backends share the
   same substring set because both ultimately hit the same upstream
   Claude API; the historical name "ACP" is retained.
+- `executor/backends/_acp_policy.py` — pure ACP tool-permission policy
+  (`permission_mode` + tool lists → allow/deny by tool kind+title).
 
 **`src/sqrlly/cli/`** — entry point + helpers.
 - `main.py` — Click CLI (`init` / `validate` / `run` / `graph` / `view`);
