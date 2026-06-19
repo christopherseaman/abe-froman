@@ -721,6 +721,12 @@ def _make_evaluation_node(
         if node_id in state.get("failed_nodes", set()):
             return {}
 
+        if (skip := state.get("_resume_skip")) and node_id in skip:
+            # Frozen on resume: do NOT re-run the validator (often an LLM
+            # judge). The reseeded completed_nodes lets the Decision node
+            # route to pass_targets with zero eval bill.
+            return {}
+
         if state.get("dry_run", False):
             # Synthesize a passing record; the Decision node's dry-run
             # branch handles routing without re-reading this.
@@ -801,6 +807,9 @@ def _make_combined_eval_decide_node(
         node_id = node.id
 
         if node_id in state.get("failed_nodes", set()):
+            return {}
+
+        if (skip := state.get("_resume_skip")) and node_id in skip:
             return {}
 
         if state.get("dry_run", False):

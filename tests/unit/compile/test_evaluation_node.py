@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import pytest
 
-from sqrlly.compile.nodes import _make_evaluation_node
+from sqrlly.compile.nodes import _make_combined_eval_decide_node, _make_evaluation_node
 from sqrlly.runtime.state import make_initial_state
 from sqrlly.schema.models import (
     DimensionCheck,
@@ -278,3 +278,46 @@ class TestEvaluationNodeSkips:
         # eval ran: a record was written. Decision node will route on
         # the next super-step.
         assert "p1" in result.get("evaluations", {})
+
+
+def _gated_node():
+    return Node(
+        id="g1", name="G1", execute=Execute(url="t.md"),
+        evaluation=Evaluation(validator="check.md", threshold=0.8),
+    )
+
+
+def _cfg(node):
+    return Graph(name="T", version="1.0", nodes=[node], settings=Settings())
+
+
+class TestEvaluationResumeSkip:
+    @pytest.mark.asyncio
+    async def test_evaluation_node_skipped_returns_empty(self):
+        node = _gated_node()
+        nf = _make_evaluation_node(node, _cfg(node), executor=None)
+        state = make_initial_state(
+            node_outputs={"g1": "prior output"}, _resume_skip={"g1"},
+        )
+        assert await nf(state) == {}
+
+    @pytest.mark.asyncio
+    async def test_combined_eval_decide_skipped_returns_empty(self):
+        node = _gated_node()
+        nf = _make_combined_eval_decide_node(node, _cfg(node), executor=None)
+        state = make_initial_state(
+            node_outputs={"g1": "prior output"}, _resume_skip={"g1"},
+        )
+        assert await nf(state) == {}
+
+    @pytest.mark.asyncio
+    async def test_evaluation_node_not_skipped_when_absent(self):
+        node = _gated_node()
+        nf = _make_evaluation_node(node, _cfg(node), executor=None)
+        state = make_initial_state(node_outputs={"g1": "prior output"})
+        # No _resume_skip in state: the skip-guard must NOT fire, so the
+        # node proceeds into evaluation. With no backend the LLM validator
+        # raises ValueError — that error proves the guard didn't
+        # short-circuit to the empty {} return.
+        with pytest.raises(ValueError, match="PromptBackend"):
+            await nf(state)
