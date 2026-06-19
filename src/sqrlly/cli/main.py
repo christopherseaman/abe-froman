@@ -179,6 +179,8 @@ async def _run_async(
     dry_run: bool,
     preset_override: str | None,
     resume: bool,
+    resume_from: tuple[str, ...],
+    rerun_all: bool,
     log_file: str | None,
     quiet: bool = False,
 ) -> dict:
@@ -228,7 +230,7 @@ async def _run_async(
     result: dict = {}
     try:
         result = await _execute_workflow(
-            config, workdir, dry_run, preset_override, resume,
+            config, workdir, dry_run, preset_override, resume, resume_from, rerun_all,
             thread_id=thread_id, logger=logger,
         )
         return result
@@ -292,6 +294,8 @@ async def _execute_workflow(
     dry_run: bool,
     preset_override: str | None,
     resume: bool,
+    resume_from: tuple[str, ...],
+    rerun_all: bool,
     *,
     thread_id: str,
     logger: Any | None,
@@ -374,17 +378,30 @@ async def _execute_workflow(
                     f"No saved state for this workflow at {_db_path(workdir)}"
                 )
             old = dict(prev.checkpoint.get("channel_values", {}))
+            from sqrlly.compile.resume import compute_skip_set
+            prior_completed = set(old.get("completed_nodes", set()))
+            skip = (
+                set()
+                if rerun_all
+                else compute_skip_set(
+                    config, prior_completed,
+                    set(old.get("failed_nodes", set())), set(resume_from),
+                )
+            )
             state = {
                 **old,
-                "failed_nodes": set(),
-                "retries": {},
-                "errors": [],
-                "workdir": workdir,
-                "dry_run": False,
+                "failed_nodes": set(), "retries": {}, "errors": [],
+                "workdir": workdir, "dry_run": False, "_resume_skip": skip,
             }
+            if rerun_all:
+                source = "all nodes (rerun-all)"
+            elif resume_from:
+                source = ", ".join(sorted(resume_from))
+            else:
+                source = "failed nodes"
             click.echo(
-                f"Resuming: {len(state.get('completed_nodes', set()))} "
-                f"nodes already completed"
+                f"Resuming: skipping {len(skip)} completed; re-running "
+                f"{len(prior_completed - skip)} (from: {source})."
             )
             # Wipe the thread so reducers don't merge with stale state
             await cp.adelete_thread(thread_id)
@@ -488,6 +505,16 @@ async def _execute_workflow(
 @click.option(
     "--resume", is_flag=True, help="Resume from the last checkpoint"
 )
+@click.option(
+    "--resume-from", "resume_from", multiple=True,
+    help="Re-run this node and everything downstream; freeze upstream. "
+         "Implies --resume. Repeatable.",
+)
+@click.option(
+    "--rerun-all", "rerun_all", is_flag=True,
+    help="With --resume: re-execute every node (pre-0.6 full replay; "
+         "disables skip-completed).",
+)
 @click.option("--log", "log_file", type=click.Path(), help="JSONL log output file")
 @click.option(
     "--quiet", "-q", is_flag=True,
@@ -499,6 +526,8 @@ def run(
     dry_run: bool,
     preset: str | None,
     resume: bool,
+    resume_from: tuple[str, ...],
+    rerun_all: bool,
     log_file: str | None,
     quiet: bool,
 ):
@@ -508,12 +537,29 @@ def run(
     except Exception as e:
         raise click.ClickException(str(e))
 
+    resume = resume or bool(resume_from)
+    if rerun_all and resume_from:
+        raise click.ClickException(
+            "--rerun-all and --resume-from are mutually exclusive"
+        )
+    valid_ids = {n.id for n in config.nodes}
+    for rid in resume_from:
+        if "::" in rid:
+            raise click.ClickException(
+                f"--resume-from {rid!r}: fan-out children are not addressable across runs"
+            )
+        if rid not in valid_ids:
+            raise click.ClickException(
+                f"--resume-from {rid!r}: unknown node id. "
+                f"Valid: {', '.join(sorted(valid_ids))}"
+            )
+
     _emit_warnings(config)
 
     from sqrlly.runtime.result import EvaluationError, ManifestError, RouteError
     try:
         result = asyncio.run(
-            _run_async(config, workdir, dry_run, preset, resume, log_file, quiet)
+            _run_async(config, workdir, dry_run, preset, resume, resume_from, rerun_all, log_file, quiet)
         )
     except (EvaluationError, ManifestError, RouteError) as e:
         # Infrastructure failures (broken validator / unreadable manifest

@@ -412,7 +412,7 @@ class TestResumeCommand:
             cli, ["run", str(config), "--resume", "--workdir", str(tmp_path)]
         )
         assert second.exit_code == 0
-        assert "Resuming: 1 nodes already completed" in second.output
+        assert "Resuming: skipping 1 completed" in second.output
 
 
 # ---------------------------------------------------------------------------

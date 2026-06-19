@@ -13,16 +13,12 @@ A side-channel runs-counter file per node lets us assert exactly how
 many times each body executed across both phases. This is the
 property no existing resume test pins down.
 
-DOCUMENTED CURRENT BEHAVIOR: on ``--resume``, sqrlly re-executes
-already-completed nodes. ``a`` runs twice (once in phase 1, once again
-in phase 2). The ``_merge_sets`` reducer dedupes the resulting state
-write, but the body still re-executes — the runs-counter pins it.
-This is correct for goto-driven re-fires within a single run (audit
-fix #19 deliberately enabled it for the wave pattern) but wrong for
-the canonical cross-run resume use case (retry only the failed node).
-The semantics are underspecified; see TODO item (26) for three
-candidate API shapes. This test pins actual behavior so unintended
-changes surface as failures.
+Skip-completed resume (default ``--resume`` behavior since 0.6):
+``a`` completed cleanly in phase 1 and is not downstream of any
+failure, so it is frozen in phase 2 — runs counter stays at 1.
+``b`` was dirty (failed); re-runs. ``c`` is downstream of the
+dirty ``b``; runs for the first time. Use ``--rerun-all`` to restore
+pre-0.6 full-replay behavior (``a`` re-executes).
 """
 from __future__ import annotations
 
@@ -109,6 +105,8 @@ async def _run_phase(
     thread_id: str,
     *,
     resume: bool,
+    resume_from: tuple = (),
+    rerun_all: bool = False,
 ) -> dict:
     """Mirror cli/main.py's execute path with a real AsyncSqliteSaver."""
     async with AsyncSqliteSaver.from_conn_string(db_path) as cp:
@@ -119,6 +117,17 @@ async def _run_phase(
             )
             assert prev is not None, "phase 2 expected a saved checkpoint"
             old = dict(prev.checkpoint.get("channel_values", {}))
+            from sqrlly.compile.resume import compute_skip_set
+            skip = (
+                set()
+                if rerun_all
+                else compute_skip_set(
+                    config,
+                    set(old.get("completed_nodes", set())),
+                    set(old.get("failed_nodes", set())),
+                    set(resume_from),
+                )
+            )
             state = {
                 **old,
                 "failed_nodes": set(),
@@ -126,6 +135,7 @@ async def _run_phase(
                 "errors": [],
                 "workdir": str(workdir),
                 "dry_run": False,
+                "_resume_skip": skip,
             }
             await cp.adelete_thread(thread_id)
         else:
@@ -149,8 +159,9 @@ class TestResumeFromCheckpoint:
     async def test_resume_after_mid_chain_failure(self, tmp_path):
         """a -> b(fail) -> c, then resume with b unblocked.
 
-        Pins current behavior: resume re-executes already-completed
-        nodes (``a``'s runs counter goes from 1 to 2).
+        Skip-completed resume: ``a`` completed cleanly and is NOT
+        downstream of the failure, so it is frozen — runs counter
+        stays at 1 across both phases.
         """
         config = _build_chain(tmp_path)
         db_path = str(tmp_path / ".checkpoint.db")
@@ -179,19 +190,48 @@ class TestResumeFromCheckpoint:
         assert "c" in result_2["completed_nodes"]
         assert result_2["failed_nodes"] == set()
 
-        # Current resume semantics re-execute already-completed nodes.
-        # See TODO (26) for the design discussion. When `--resume`
-        # is given a "skip completed" mode, flip this assertion to
-        # ``== 1`` and pin the new behavior.
-        assert _read_runs(tmp_path, "a") == 2
-        # ``b`` failed in phase 1, retried in phase 2 — counter == 2.
+        # Skip-completed resume: a completed cleanly and is NOT downstream of
+        # the failure, so it is frozen — runs ONCE total.
+        assert _read_runs(tmp_path, "a") == 1
+        # b failed in phase 1, is dirty, re-runs in phase 2 — counter == 2.
         assert _read_runs(tmp_path, "b") == 2
-        # ``c`` ran for the first time in phase 2.
+        # c is downstream of the failed b (dirty), ran for the first time.
         assert _read_runs(tmp_path, "c") == 1
 
         # State preservation: phase 1's completed ``a`` is in
-        # completed_nodes after phase 2. The set-union reducer
-        # structurally dedupes the re-execution write — only the
-        # runs-counter still records the duplicate work.
+        # completed_nodes after phase 2. The set-union reducer merges
+        # the skip-completed state write (a was frozen, not re-executed).
         assert result_2["completed_nodes"] == {"a", "b", "c"}
+
+    @pytest.mark.asyncio
+    async def test_rerun_all_restores_full_replay(self, tmp_path):
+        """--rerun-all reproduces pre-0.6 behavior: a re-executes."""
+        config = _build_chain(tmp_path)
+        db_path = str(tmp_path / ".checkpoint.db")
+        thread_id = "rerun-all"
+        (tmp_path / "fail.txt").write_text("b")
+        await _run_phase(tmp_path, config, db_path, thread_id, resume=False)
+        (tmp_path / "fail.txt").unlink()
+        await _run_phase(
+            tmp_path, config, db_path, thread_id, resume=True, rerun_all=True,
+        )
+        assert _read_runs(tmp_path, "a") == 2  # full replay
+
+    @pytest.mark.asyncio
+    async def test_resume_from_reruns_node_and_downstream(self, tmp_path):
+        """All clean; --resume-from b => a frozen, b & c re-run."""
+        config = _build_chain(tmp_path)
+        db_path = str(tmp_path / ".checkpoint.db")
+        thread_id = "resume-from"
+        result_1 = await _run_phase(
+            tmp_path, config, db_path, thread_id, resume=False,
+        )
+        assert result_1["completed_nodes"] == {"a", "b", "c"}
+        await _run_phase(
+            tmp_path, config, db_path, thread_id,
+            resume=True, resume_from=("b",),
+        )
+        assert _read_runs(tmp_path, "a") == 1   # frozen
+        assert _read_runs(tmp_path, "b") == 2   # rerun target
+        assert _read_runs(tmp_path, "c") == 2   # downstream of b
 
