@@ -3,7 +3,7 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] — skip-completed resume
+## [0.6.0] — skip-completed resume
 
 ### Changed
 
