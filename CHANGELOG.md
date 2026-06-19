@@ -3,7 +3,7 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] — worktree dependency sharing
+## [0.7.0] — worktree dependency sharing
 
 ### Added
 
