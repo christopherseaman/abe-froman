@@ -896,3 +896,23 @@ class TestPromoteExclude:
         from sqrlly.schema.models import Settings
         assert Settings(promote_exclude=["node_modules", ".next/cache"]).promote_exclude \
             == ["node_modules", ".next/cache"]
+
+
+class TestWorktreeSetupFields:
+    def test_defaults(self):
+        from sqrlly.schema.models import Settings
+        s = Settings()
+        assert s.worktree_setup == []
+        assert s.worktree_setup_exclude == []
+        assert s.worktree_setup_store_dir is None
+
+    def test_accepts_values(self):
+        from sqrlly.schema.models import Settings
+        s = Settings(
+            worktree_setup=["pnpm install --prefer-offline"],
+            worktree_setup_exclude=["node_modules", "src/generated/prisma"],
+            worktree_setup_store_dir=".sqrlly/.pnpm-store",
+        )
+        assert s.worktree_setup == ["pnpm install --prefer-offline"]
+        assert s.worktree_setup_exclude == ["node_modules", "src/generated/prisma"]
+        assert s.worktree_setup_store_dir == ".sqrlly/.pnpm-store"

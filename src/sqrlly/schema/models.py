@@ -473,6 +473,18 @@ class Settings(BaseModel):
     # (tsc --noEmit, scoped tests). Each shared path also gets the
     # info/exclude write so it stays out of the promote footprint.
     worktree_share: list[str] = []
+    # Rehydrate path: ordered shell commands run in each fresh worktree so the
+    # package manager builds its own real node_modules there (e.g.
+    # ["pnpm install --prefer-offline", "pnpm exec prisma generate"]). PM-agnostic.
+    worktree_setup: list[str] = []
+    # Paths written to each worktree's info/exclude before promote can run, so
+    # generated artifacts (node_modules, in-tree prisma output=) stay out of the
+    # footprint. Explicit — sqrlly does not infer generator output paths.
+    worktree_setup_exclude: list[str] = []
+    # When set, exported into the setup commands' environment as the package
+    # store dir (e.g. PNPM_HOME) so the store sits on the worktree device
+    # (hardlinks work instead of EXDEV full-copy). Resolved relative to base.
+    worktree_setup_store_dir: str | None = None
 
     @field_validator("worktree", mode="before")
     @classmethod
