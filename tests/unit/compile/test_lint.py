@@ -113,3 +113,28 @@ class TestAdvisoryGateWarnings:
         }
         config = make_config([parent])
         assert any("fan" in w and "0.7" in w for w in collect_warnings(config))
+
+
+class TestWorktreeSetupExcludeWarnings:
+    def test_warns_prisma_generate_without_exclude(self):
+        config = make_config(
+            [_node("n")],
+            worktree_setup=["pnpm exec prisma generate"],
+        )
+        warnings = collect_warnings(config)
+        assert any("prisma generate" in w and "worktree_setup_exclude" in w for w in warnings)
+
+    def test_no_warn_when_exclude_present(self):
+        config = make_config(
+            [_node("n")],
+            worktree_setup=["pnpm exec prisma generate"],
+            worktree_setup_exclude=["src/generated/prisma"],
+        )
+        assert not any("prisma generate" in w for w in collect_warnings(config))
+
+    def test_no_warn_when_no_prisma_generate(self):
+        config = make_config(
+            [_node("n")],
+            worktree_setup=["pnpm install --prefer-offline"],
+        )
+        assert not any("prisma generate" in w for w in collect_warnings(config))

@@ -15,7 +15,11 @@ from sqrlly.schema.models import Graph
 
 def collect_warnings(config: Graph) -> list[str]:
     """Advisory warnings for a workflow config, in declaration order."""
-    return _hyphenated_id_warnings(config) + _advisory_gate_warnings(config)
+    return (
+        _hyphenated_id_warnings(config)
+        + _advisory_gate_warnings(config)
+        + _worktree_setup_exclude_warnings(config)
+    )
 
 
 def _advisory_gate_warnings(config: Graph) -> list[str]:
@@ -46,6 +50,22 @@ def _advisory_gate_warnings(config: Graph) -> list[str]:
             for fn in node.fan_out.final_nodes:
                 check(fn.evaluation, f"fan-out final node '{fn.id}'")
     return out
+
+
+def _worktree_setup_exclude_warnings(config: Graph) -> list[str]:
+    """Flag a worktree_setup that generates an in-tree artifact (prisma
+    generate) without a worktree_setup_exclude — the generated client would
+    leak into the promote footprint."""
+    s = config.settings
+    runs_prisma_generate = any("prisma generate" in cmd for cmd in s.worktree_setup)
+    if runs_prisma_generate and not s.worktree_setup_exclude:
+        return [
+            "settings.worktree_setup runs 'prisma generate' but "
+            "worktree_setup_exclude is empty — the generated client may leak "
+            "into the promote footprint. Add its output path (e.g. "
+            "'src/generated/prisma' or 'node_modules') to worktree_setup_exclude."
+        ]
+    return []
 
 
 def _hyphenated_id_warnings(config: Graph) -> list[str]:
