@@ -86,6 +86,13 @@ class WorkflowState(TypedDict):
     # body — auto-prepend, no template syntax required. Empty string
     # or absent = no preamble.
     _route_eval_preamble: NotRequired[str]
+    # Resume skip-set (skip-completed --resume). A FROZEN snapshot of node
+    # ids that completed in the prior run and are safe to skip this run.
+    # Seeded ONCE at resume entry from the prior checkpoint; never written by
+    # a node body, so it persists unchanged across super-steps. Last-write-wins
+    # (NO REDUCER — must not set-union-accumulate). Guards read it; nothing
+    # mutates it. Absent on a fresh run => skip nothing.
+    _resume_skip: NotRequired[set[str]]
 
 
 def make_initial_state(
