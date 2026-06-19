@@ -3,7 +3,7 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] — on_promote_conflict, LlmPreset.env, base_directory promote fix
+## [0.5.11] — on_promote_conflict, LlmPreset.env, base_directory promote fix
 
 ### Added
 
