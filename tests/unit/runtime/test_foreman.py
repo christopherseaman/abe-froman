@@ -909,3 +909,52 @@ async def test_foreman_worktree_share_symlinks_into_new_tree(tmp_path):
     wt = await fm.acquire_branch_worktree("b1")
     assert (Path(wt) / "node_modules").is_symlink()
     assert (Path(wt) / "node_modules" / "d.js").read_text() == "lib"
+
+
+@pytest.mark.asyncio
+async def test_foreman_runs_worktree_setup_once_and_resume_reuses(tmp_path):
+    """worktree_setup runs in each new tree; a re-acquire (resume/retry) reuses
+    it without re-running (sentinel matches)."""
+    import subprocess
+    from pathlib import Path
+    from sqrlly.runtime.foreman import ForemanExecutor
+    from sqrlly.schema.models import Settings
+    from mock_executor import MockExecutor
+    subprocess.run(["git", "init", "-q", "-b", "main", str(tmp_path)], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.email", "t@t"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "t"], check=True)
+    (tmp_path / "f.txt").write_text("x")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-qm", "i"], check=True)
+    settings = Settings(worktree="isolated",
+                        worktree_setup=["sh -c 'echo x >> $PWD/ran.txt'"])
+    fm = ForemanExecutor(MockExecutor(), str(tmp_path), settings=settings)
+    wt = await fm.acquire_branch_worktree("b1")
+    assert Path(wt, "ran.txt").read_text().count("x") == 1
+    wt2 = await fm.acquire_branch_worktree("b1")   # retry/resume reuse
+    assert wt2 == wt
+    assert Path(wt, "ran.txt").read_text().count("x") == 1  # not re-run
+
+
+@pytest.mark.asyncio
+async def test_foreman_reclaims_tree_even_if_setup_fails(tmp_path):
+    """A setup failure raises but the created tree is still GC-registered."""
+    import subprocess, pytest
+    from pathlib import Path
+    from sqrlly.runtime.foreman import ForemanExecutor
+    from sqrlly.schema.models import Settings
+    from mock_executor import MockExecutor
+    subprocess.run(["git", "init", "-q", "-b", "main", str(tmp_path)], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.email", "t@t"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "t"], check=True)
+    (tmp_path / "f.txt").write_text("x")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-qm", "i"], check=True)
+    fm = ForemanExecutor(
+        MockExecutor(), str(tmp_path),
+        settings=Settings(worktree="isolated", worktree_setup=["sh -c 'exit 4'"]),
+    )
+    with pytest.raises(RuntimeError, match="setup failed"):
+        await fm.acquire_branch_worktree("b1")
+    removed = await fm.reclaim()
+    assert any(".sqrlly" in p for p in removed)  # the half-built tree was reclaimed

@@ -35,7 +35,7 @@ import psutil
 from sqrlly.runtime.executor.prompt import resolve_model
 from sqrlly.runtime.gates import scaffold_output_directory
 from sqrlly.runtime.result import ExecutionResult, NodeExecutor, PromptBackend
-from sqrlly.runtime.worktree_share import materialize_shares
+from sqrlly.runtime.worktree_share import ensure_setup, materialize_shares
 from sqrlly.schema.models import Node, Settings
 
 logger = logging.getLogger(__name__)
@@ -70,6 +70,7 @@ class ForemanExecutor:
             for model, n in (per_model_limits or {}).items()
         }
         self._worktrees: dict[str, str] = dict(rehydrate or {})
+        self._created_paths: set[str] = set()
         self._worktree_lock = asyncio.Lock()
         # In-flight creations, keyed by node_id. The global lock is held
         # only to register/look up a task here — never across the
@@ -182,12 +183,15 @@ class ForemanExecutor:
         if pool_key is None:
             pool_key = node_id
 
-        # Retry / resume reuse: if this node already has a live tree, return it.
+        # Retry / resume reuse: if this node already has a live tree, make it
+        # ready (idempotent) OUTSIDE the lock and return it.
         async with self._worktree_lock:
             existing = self._worktrees.get(node_id)
-            if existing and Path(existing).is_dir():
-                return existing
-            # Dedup in-flight creation by pool_key (group siblings share one task).
+        if existing and Path(existing).is_dir():
+            await self._ensure_worktree_ready(existing)
+            return existing
+        # Dedup in-flight creation by pool_key (group siblings share one task).
+        async with self._worktree_lock:
             task = self._worktree_tasks.get(pool_key)
             if task is None:
                 task = asyncio.create_task(self._create_worktree(pool_key, group))
@@ -230,7 +234,8 @@ class ForemanExecutor:
             dest = dest_dir / f"wt-group-{safe}"
             if dest.is_dir() and (dest / ".git").exists():
                 # Shared live worktree already exists (sibling created it, or prior run).
-                materialize_shares(self._base, str(dest), self._settings.worktree_share)
+                self._created_paths.add(str(dest))
+                await self._ensure_worktree_ready(str(dest))
                 return str(dest)
         else:
             safe = pool_key.replace("::", "__").replace("/", "_")
@@ -247,8 +252,22 @@ class ForemanExecutor:
                 f"foreman: 'git worktree add' failed for {pool_key}: "
                 f"{err.decode().strip()}"
             )
-        materialize_shares(self._base, str(dest), self._settings.worktree_share)
+        self._created_paths.add(str(dest))
+        await self._ensure_worktree_ready(str(dest))
         return str(dest)
+
+    async def _ensure_worktree_ready(self, dest: str) -> None:
+        """Materialize read-only shares + run rehydrate setup for a worktree
+        about to be handed back. Idempotent (share symlinks + setup sentinel).
+        MUST be called WITHOUT self._worktree_lock held — ensure_setup runs
+        subprocesses; holding the lock would serialize all acquisitions."""
+        materialize_shares(self._base, dest, self._settings.worktree_share)
+        await ensure_setup(
+            base=self._base, dest=dest,
+            commands=self._settings.worktree_setup,
+            excludes=self._settings.worktree_setup_exclude,
+            store_dir=self._settings.worktree_setup_store_dir,
+        )
 
     async def reclaim(self) -> list[str]:
         """Remove every distinct worktree this foreman created.
@@ -258,7 +277,7 @@ class ForemanExecutor:
         Group nodes share a single path — deduplication ensures each
         distinct tree is removed exactly once.
         """
-        distinct = sorted(set(self._worktrees.values()))
+        distinct = sorted(set(self._worktrees.values()) | self._created_paths)
         for path in distinct:
             proc = await asyncio.create_subprocess_exec(
                 "git", "-C", self._base, "worktree", "remove", "--force", path,
@@ -271,6 +290,7 @@ class ForemanExecutor:
                     path, err.decode().strip(),
                 )
         self._worktrees.clear()
+        self._created_paths.clear()
         return distinct
 
     async def acquire_branch_worktree(self, branch_id: str) -> str:
