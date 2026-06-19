@@ -102,6 +102,12 @@ def _make_fan_out_node(
         if child_id in state.get("failed_nodes", set()):
             return {}
 
+        # Resume skip: freeze this child only when its PARENT is also frozen —
+        # a dirty parent re-derives the manifest, so child ids aren't stable.
+        skip = state.get("_resume_skip")
+        if skip and parent_node.id in skip and child_id in skip:
+            return {}
+
         if state.get("dry_run", False):
             return {
                 "node_outputs": {child_id: f"[dry-run] child {item_id}"},
