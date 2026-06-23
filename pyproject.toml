@@ -78,7 +78,6 @@ exclude = [
     "/.env",
     "/CLAUDE.md",
     "/TODO.md",
-    "/example_workflow.json",
 ]
 
 [tool.pytest.ini_options]
