@@ -3,6 +3,12 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- `sqrlly run` prints a "where to find things" epilogue on completion (suppressed by `--quiet`, skipped for `--dry-run`): the produced output files (declared `output_contract` paths that exist), the log location (the `--log` path, or how to capture one), and run artifacts (checkpoint DB + foreman worktree pool, each listed only when present). The live renderer shows only per-node status, so this is the one place a normal terminal run surfaces where output / logs / artifacts landed.
+
 ## [0.7.1] — lazy preset backends
 
 ### Fixed

@@ -53,6 +53,66 @@ def _db_path(workdir: str) -> str:
     return str(Path(workdir) / CHECKPOINT_DB)
 
 
+def _run_artifact_summary(
+    config: Graph, workdir: str, log_file: str | None,
+) -> list[str]:
+    """Lines telling the user where this run left its output, log, and
+    artifacts. The live renderer shows only per-node status, so this
+    epilogue is the one place a normal terminal run surfaces locations.
+
+    - output: promoted files declared via top-level `output_contract`s that
+      actually exist on disk; otherwise a pointer to run state + `--log`.
+    - log: the resolved `--log` path, or how to capture one.
+    - artifacts: the checkpoint DB and the foreman worktree pool, each
+      listed only when present (a pure non-git script run has neither).
+    """
+    wd = Path(workdir)
+    label_w = 12
+
+    def row(label: str, value: str) -> str:
+        return f"  {label:<{label_w}}{value}"
+
+    # output — declared contract files that were actually produced
+    seen: set[Path] = set()
+    produced: list[Path] = []
+    for node in config.nodes:
+        if node.output_contract is None:
+            continue
+        for rel in node.output_contract.required_paths():
+            p = (wd / rel).resolve()
+            if p in seen:
+                continue
+            seen.add(p)
+            if p.exists():
+                produced.append(p)
+    lines = ["where to find things:"]
+    if produced:
+        lines.append(row("output:", ", ".join(str(p) for p in produced)))
+    else:
+        lines.append(row(
+            "output:",
+            "in run state (node outputs) — pass --log <file>.jsonl to capture",
+        ))
+
+    # log
+    if log_file:
+        lines.append(row("log:", str(Path(log_file).resolve())))
+    else:
+        lines.append(row("log:", "not captured — re-run with --log run.jsonl"))
+
+    # artifacts — checkpoint DB + worktree pool, only if present
+    artifacts: list[str] = []
+    db = (wd / CHECKPOINT_DB).resolve()
+    if db.exists():
+        artifacts.append(f"checkpoint {db}")
+    pool = (wd / ".sqrlly").resolve()
+    if pool.exists():
+        artifacts.append(f"worktrees {pool}/")
+    if artifacts:
+        lines.append(row("artifacts:", "; ".join(artifacts)))
+    return lines
+
+
 def _emit_warnings(config: Graph) -> None:
     """Print advisory lint warnings to stderr (non-fatal)."""
     for warning in collect_warnings(config):
@@ -603,6 +663,14 @@ def run(
     if errors:
         for err in errors:
             click.echo(f"  Error in {err['node']}: {err['error']}", err=True)
+
+    # Announce where the run left things. The live renderer shows only
+    # per-node status, so this is the one place a normal terminal run
+    # surfaces output / log / artifact locations. Printed on success AND
+    # failure (the log + checkpoint are exactly what you want on failure).
+    if not quiet and not dry_run:
+        for line in _run_artifact_summary(config, workdir, log_file):
+            click.echo(line)
 
     if failed:
         raise click.exceptions.Exit(1)
