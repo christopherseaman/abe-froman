@@ -3,6 +3,12 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- Isolated installs (`uv tool install sqrlly` / `pip install sqrlly` without the `[acp]` extra) no longer crash with `ModuleNotFoundError: No module named 'acp'` when a workflow declares an `acp` preset it never uses (e.g. the bundled `examples/jokes`, which ships both `cli` and `acp`). Preset backends are now built lazily on first dispatch, so a declared-but-unused preset never imports its optional dependency; a genuinely-missing dependency surfaces at the dispatching node as an actionable error.
+
 ## [0.7.0] — worktree dependency sharing
 
 ### Added
