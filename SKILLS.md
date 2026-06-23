@@ -266,6 +266,13 @@ executing), `--preset/-p <name>` (force a named preset as the default),
 (re-run node + downstream; implies `--resume`),
 `--log <path>`.
 
+On completion `run` prints a `where to find things` summary — the
+produced `output_contract` files, the `--log` path (or how to capture
+one), and run artifacts (checkpoint DB + foreman worktree pool, when
+present). The live renderer shows only per-node status, so this epilogue
+is where a terminal run tells you where output / logs / artifacts
+landed. `--quiet` suppresses it.
+
 `sqrlly graph <config>` prints a Mermaid topology diagram of the
 **static** compiled LangGraph — dynamic `route:` `goto` targets are
 emitted as `Command(goto=...)` at run time and are not drawn, so branch
