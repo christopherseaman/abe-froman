@@ -13,10 +13,19 @@ def _build_acp(preset: "LlmPreset") -> PromptBackend:
     # Lazy import — the `acp` Python package is the `[acp]` optional
     # extra. Keeping this import inside the builder means
     # `pip install sqrlly` (cli-only) loads the factory without
-    # needing the `acp` package present. An ImportError surfaces here
-    # at call time with a clear message instead of breaking module
-    # load for every sqrlly user.
-    from sqrlly.runtime.executor.backends.acp import ACPBackend
+    # needing the `acp` package present, and (since backends are built
+    # lazily on first dispatch) a declared-but-unused acp preset never
+    # reaches here. A genuinely missing dependency surfaces at the
+    # dispatching node as an actionable error, not a bare ImportError.
+    try:
+        from sqrlly.runtime.executor.backends.acp import ACPBackend
+    except ImportError as e:
+        raise RuntimeError(
+            "transport: acp requires the optional 'acp' dependency, which "
+            "is not installed. Install it with 'pip install sqrlly[acp]' "
+            "(or 'uv tool install sqrlly --with agent-client-protocol'), or "
+            "switch the preset to transport: cli."
+        ) from e
 
     return ACPBackend(
         program="npx",

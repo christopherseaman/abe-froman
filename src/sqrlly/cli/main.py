@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import hashlib
 from pathlib import Path
 from typing import Any
@@ -305,9 +306,11 @@ async def _execute_workflow(
     Backend wiring: ``build_preset_registry`` returns a fully-resolved
     ``dict[str, Preset]`` — the user's ``settings.presets`` with
     ``preset_override`` applied. Empty ``settings.presets`` raises;
-    sqrlly does not synthesize defaults. Each preset gets its own
-    backend via ``create_backend_from_preset``; a missing CLI surfaces
-    as a backend error at the first call site, not as a pre-flight.
+    sqrlly does not synthesize defaults. Each preset gets a lazy backend
+    builder; the backend is constructed on first dispatch to that preset,
+    so a missing CLI or optional dependency surfaces as a backend error
+    at the first call site (and unused presets never build at all), not
+    as a pre-flight.
     """
     if dry_run:
         compiled = build_workflow_graph(config, None, logger=logger)
@@ -357,14 +360,18 @@ async def _execute_workflow(
 
     # Only LLM presets become PromptBackends — command presets describe
     # script interpreters, not LLM transports, and are consulted at
-    # script-dispatch time, not wired as backends.
-    prompt_backends = {
-        name: create_backend_from_preset(preset)
+    # script-dispatch time, not wired as backends. Register builders, not
+    # built backends: a declared-but-unused preset (a common case — e.g.
+    # the jokes example ships both `cli` and `acp`) never constructs its
+    # backend, so its optional dependency (the `acp` package) is only
+    # imported if a node actually dispatches to it.
+    prompt_backend_builders = {
+        name: functools.partial(create_backend_from_preset, preset)
         for name, preset in all_presets.items()
         if isinstance(preset, LlmPreset)
     }
     dispatch = DispatchExecutor(
-        workdir=workdir, prompt_backends=prompt_backends,
+        workdir=workdir, prompt_backend_builders=prompt_backend_builders,
         settings=config.settings,
     )
 

@@ -13,6 +13,7 @@ from __future__ import annotations
 import pytest
 
 from sqrlly.runtime.executor.backends.acp import ACPBackend
+from sqrlly.runtime.executor.backends.cli import CLIBackend
 from sqrlly.runtime.executor.dispatch import DispatchExecutor
 from sqrlly.runtime.executor.prompt import resolve_model
 from sqrlly.schema.models import Execute, Node, LlmPreset, Settings
@@ -169,3 +170,137 @@ class TestFactoryThreadsAcpEnv:
         ))
         # Default empty env is stored as {} (threaded through unchanged).
         assert backend._env == {}
+
+
+def _two_preset_settings():
+    """cli (default) + acp (declared but referenced by no node)."""
+    return Settings(presets={
+        "cli": LlmPreset(
+            transport="cli", provider="anthropic",
+            model="sonnet", default=True,
+        ),
+        "acp": LlmPreset(
+            transport="acp", provider="anthropic", model="sonnet",
+        ),
+    })
+
+
+class TestLazyBackendBuild:
+    """Backends are materialized lazily — a declared-but-unused preset
+    never constructs its backend, so an optional dependency (e.g. the
+    ``acp`` package) is only imported when a node actually dispatches to
+    that preset. Regression for the `uv tool install sqrlly` crash where
+    an unused `acp` preset's backend was built eagerly at startup,
+    raising ModuleNotFoundError for the absent `acp` package."""
+
+    def test_unused_preset_builder_not_invoked(self):
+        built: list[str] = []
+
+        def cli_builder():
+            built.append("cli")
+            return CLIBackend()
+
+        def acp_builder():
+            built.append("acp")
+            raise AssertionError("unused preset backend must not be built")
+
+        s = _two_preset_settings()
+        d = DispatchExecutor(
+            prompt_backend_builders={"cli": cli_builder, "acp": acp_builder},
+            settings=s,
+        )
+        # A node with no params.preset resolves to the default (cli).
+        executor = d._resolve_prompt_executor(_node(), s)
+        assert executor is not None
+        assert built == ["cli"]  # acp_builder never called
+
+    def test_builder_invoked_once_then_cached(self):
+        calls: list[int] = []
+
+        def cli_builder():
+            calls.append(1)
+            return CLIBackend()
+
+        s = _two_preset_settings()
+        d = DispatchExecutor(
+            prompt_backend_builders={
+                "cli": cli_builder,
+                "acp": lambda: ACPBackend(),
+            },
+            settings=s,
+        )
+        first = d._resolve_prompt_executor(_node("a"), s)
+        second = d._resolve_prompt_executor(_node("b"), s)
+        assert first is second        # cached PromptExecutor
+        assert calls == [1]           # backend built exactly once
+
+    def test_get_backend_builds_only_default(self):
+        built: list[str] = []
+
+        def cli_builder():
+            built.append("cli")
+            return CLIBackend()
+
+        def acp_builder():
+            built.append("acp")
+            raise AssertionError("non-default preset must not be built")
+
+        s = _two_preset_settings()
+        d = DispatchExecutor(
+            prompt_backend_builders={"cli": cli_builder, "acp": acp_builder},
+            settings=s,
+        )
+        backend = d.get_backend()
+        assert isinstance(backend, CLIBackend)
+        assert built == ["cli"]
+
+    @pytest.mark.asyncio
+    async def test_close_skips_unbuilt_backends(self):
+        def acp_builder():
+            raise AssertionError("unbuilt preset must not be built by close()")
+
+        s = _two_preset_settings()
+        d = DispatchExecutor(
+            prompt_backend_builders={
+                "cli": lambda: CLIBackend(),
+                "acp": acp_builder,
+            },
+            settings=s,
+        )
+        d._resolve_prompt_executor(_node(), s)  # builds cli only
+        await d.close()  # must not touch the unbuilt acp builder
+
+    def test_prebuilt_backends_still_supported(self):
+        """Embedders/tests passing already-built backends keep working;
+        identity is preserved (wrapped as a constant builder)."""
+        backend = ACPBackend()
+        s = Settings(presets={
+            "default": LlmPreset(
+                transport="acp", provider="anthropic",
+                model="sonnet", default=True,
+            ),
+        })
+        d = DispatchExecutor(prompt_backends={"default": backend}, settings=s)
+        assert d.get_backend() is backend
+
+
+class TestAcpMissingDepError:
+    """When the `acp` optional dependency is absent, building an acp
+    backend must raise an actionable error, not a bare ModuleNotFoundError."""
+
+    def test_build_acp_missing_dep_raises_clear_error(self, monkeypatch):
+        import sys
+        from sqrlly.runtime.executor.backends import factory
+
+        # Environment-shape instrumentation (sanctioned, like patching
+        # shutil.which): simulate the `acp` package being absent. Evict the
+        # backend module so its top-level `from acp import ...` re-runs, and
+        # block `acp` so that import fails. Not faking what acp returns —
+        # simulating its absence.
+        monkeypatch.delitem(
+            sys.modules, "sqrlly.runtime.executor.backends.acp", raising=False,
+        )
+        monkeypatch.setitem(sys.modules, "acp", None)
+        preset = LlmPreset(transport="acp", provider="anthropic", model="opus")
+        with pytest.raises(RuntimeError, match=r"pip install sqrlly\[acp\]"):
+            factory.create_backend_from_preset(preset)

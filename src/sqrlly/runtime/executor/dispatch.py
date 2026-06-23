@@ -4,7 +4,7 @@ import asyncio
 import os
 import shlex
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlsplit
 
 from sqrlly.runtime.executor.preset import resolve_preset_name
@@ -97,46 +97,77 @@ class DispatchExecutor:
         workdir: str = ".",
         prompt_backends: dict[str, PromptBackend] | None = None,
         settings: Settings | None = None,
+        prompt_backend_builders: (
+            dict[str, Callable[[], PromptBackend]] | None
+        ) = None,
     ):
         """Construct a DispatchExecutor.
 
-        ``prompt_backends`` is the preset-name → backend registry. Each
-        declared preset gets its own backend instance. Passing ``None``
-        (or omitting) is valid — script / binary / join dispatch all
-        still work; prompt dispatch raises a clear error.
+        Both arguments register preset-name → backend; passing neither
+        (the default) is valid — script / binary / join dispatch all
+        still work and prompt dispatch raises a clear error.
+
+        ``prompt_backends`` registers already-built backends (used by
+        tests / embedders that construct backends directly).
+        ``prompt_backend_builders`` registers zero-arg builders that are
+        invoked lazily on first dispatch to a preset: a declared-but-unused
+        preset never builds its backend, so an optional dependency (e.g.
+        the ``acp`` package) is only imported when a node actually
+        dispatches to that preset, and a missing dependency surfaces at the
+        dispatching node rather than at startup. The CLI passes builders.
         """
         self._workdir = workdir
         self._settings = settings or Settings()
         self._fetch_cache = _RemoteFetchCache()
-        self._prompt_executors: dict[str, PromptExecutor] = {
-            name: PromptExecutor(
-                backend=backend,
-                settings=self._settings,
-                workdir=workdir,
-            )
-            for name, backend in (prompt_backends or {}).items()
-        }
+        # Builder registry: every known preset name → a zero-arg builder.
+        # Pre-built backends are wrapped as constant builders so both
+        # inputs share one lazy code path (identity preserved).
+        builders: dict[str, Callable[[], PromptBackend]] = dict(
+            prompt_backend_builders or {}
+        )
+        for name, backend in (prompt_backends or {}).items():
+            builders[name] = lambda b=backend: b
+        self._prompt_backend_builders = builders
+        # Lazy cache: a preset's PromptExecutor is built on first resolve.
+        self._prompt_executors: dict[str, PromptExecutor] = {}
+
+    def _executor_for_preset(self, name: str) -> PromptExecutor:
+        """Build (once) and cache the PromptExecutor for a registered preset.
+
+        The backend builder runs here — on first dispatch to ``name`` — not
+        at construction, so unused presets never materialize a backend.
+        """
+        cached = self._prompt_executors.get(name)
+        if cached is not None:
+            return cached
+        executor = PromptExecutor(
+            backend=self._prompt_backend_builders[name](),
+            settings=self._settings,
+            workdir=self._workdir,
+        )
+        self._prompt_executors[name] = executor
+        return executor
 
     def _resolve_prompt_executor(
         self, node: Node, settings: Settings,
     ) -> PromptExecutor | None:
         """Pick the PromptExecutor for a node by resolved preset name.
 
-        Returns ``None`` when no executors are registered (caller refuses
+        Returns ``None`` when no presets are registered (caller refuses
         prompt dispatch). Raises ``RuntimeError`` if the resolved preset
         has no registered backend (CLI wiring bug — schema validation
         should have caught name typos before this point).
         """
-        if not self._prompt_executors:
+        if not self._prompt_backend_builders:
             return None
         preset_name = resolve_preset_name(node, settings)
-        if preset_name not in self._prompt_executors:
+        if preset_name not in self._prompt_backend_builders:
             raise RuntimeError(
                 f"Node {node.id!r} resolves to preset {preset_name!r}, "
                 f"but no backend is registered for it. Registry contains: "
-                f"{sorted(self._prompt_executors)}. CLI wiring bug."
+                f"{sorted(self._prompt_backend_builders)}. CLI wiring bug."
             )
-        return self._prompt_executors[preset_name]
+        return self._executor_for_preset(preset_name)
 
     async def execute(
         self, node: Node, context: dict[str, Any],
@@ -403,20 +434,23 @@ class DispatchExecutor:
         """Return the default preset's PromptBackend for LLM-gate
         dispatch (gates aren't keyed by per-node preset).
 
-        Returns ``None`` when no executors are registered. The schema
+        Returns ``None`` when no presets are registered. The schema
         validator guarantees exactly one ``default: true`` preset when
         ``settings.presets`` is non-empty, so the linear scan is safe.
+        Builds (lazily) only the default preset's backend — never a
+        non-default one.
         """
-        if not self._prompt_executors:
+        if not self._prompt_backend_builders:
             return None
         for name, preset in self._settings.presets.items():
-            if preset.default and name in self._prompt_executors:
-                return self._prompt_executors[name]._backend
+            if preset.default and name in self._prompt_backend_builders:
+                return self._executor_for_preset(name)._backend
         # Defensive: registry/settings out-of-sync (shouldn't happen).
-        first_name = sorted(self._prompt_executors)[0]
-        return self._prompt_executors[first_name]._backend
+        first_name = sorted(self._prompt_backend_builders)[0]
+        return self._executor_for_preset(first_name)._backend
 
     async def close(self) -> None:
-        """Close every PromptBackend in the registry."""
+        """Close every PromptBackend that was actually built. Lazily-unbuilt
+        presets never opened a process/handle, so there is nothing to close."""
         for executor in self._prompt_executors.values():
             await executor.close()
