@@ -52,3 +52,44 @@ def test_load_example_file_unknown_raises():
     from click import ClickException
     with pytest.raises(ClickException):
         initmod._load_example_file("examples/nope/nope.yaml")
+
+
+from pathlib import Path
+from click import ClickException
+
+
+def test_init_example_scaffolds_files_and_rewrites(tmp_path):
+    initmod.init_example("jokes", str(tmp_path))
+    assert (tmp_path / "workflow.yaml").is_file()
+    assert (tmp_path / "generate.md").is_file()
+    assert (tmp_path / "select.md").is_file()
+    assert (tmp_path / "gates" / "validate_jokes.py").is_file()
+    wf = (tmp_path / "workflow.yaml").read_text()
+    assert "examples/jokes/" not in wf          # rewrite applied
+    assert 'url: "generate.md"' in wf
+
+
+def test_init_example_single_file_lands_as_workflow_yaml(tmp_path):
+    initmod.init_example("explicit_join", str(tmp_path))
+    # examples/explicit_join.yaml -> <dir>/workflow.yaml
+    assert (tmp_path / "workflow.yaml").is_file()
+    assert "Explicit Join" in (tmp_path / "workflow.yaml").read_text()
+
+
+def test_init_example_refuses_clobber(tmp_path):
+    (tmp_path / "workflow.yaml").write_text("existing")
+    with pytest.raises(ClickException):
+        initmod.init_example("jokes", str(tmp_path))
+
+
+def test_init_example_unknown_name_lists_available(tmp_path):
+    with pytest.raises(ClickException) as ei:
+        initmod.init_example("bogus", str(tmp_path))
+    assert "jokes" in str(ei.value)             # error lists valid names
+
+
+def test_catalog_lines_cover_all_examples():
+    lines = initmod._example_catalog_lines()
+    text = "\n".join(lines)
+    for name in initmod.EXAMPLES:
+        assert name in text

@@ -58,7 +58,10 @@ def _rewrite_example_urls(yaml_text: str, name: str) -> str:
     pattern = re.compile(
         r'((?:url|validator):\s*)(["\'])' + re.escape(prefix) + r'([^"\']+)\2'
     )
-    return pattern.sub(r"\1\2\3\2", yaml_text)
+    yaml_text = pattern.sub(r"\1\2\3\2", yaml_text)
+    # Also rewrite the example path in comments (e.g., in run instructions)
+    yaml_text = yaml_text.replace(f"examples/{name}/workflow.yaml", "workflow.yaml")
+    return yaml_text
 
 
 def _load_example_file(src_repo_relpath: str) -> str:
@@ -80,6 +83,56 @@ def _load_example_file(src_repo_relpath: str) -> str:
     raise click.ClickException(
         f"Could not locate bundled example file {src_repo_relpath!r}."
     )
+
+
+def init_example(name: str, directory: str) -> None:
+    """Scaffold the curated example ``name`` into ``directory``.
+
+    Writes each catalog file (creating subdirs like ``gates/``/``scripts/``),
+    rewriting the workflow YAML's ``examples/<name>/`` URL prefixes so the
+    copy is self-contained. Refuses to clobber an existing ``workflow.yaml``.
+    """
+    if name not in EXAMPLES:
+        raise click.ClickException(
+            f"Unknown example {name!r}. Available: "
+            f"{', '.join(sorted(EXAMPLES))}."
+        )
+    target = Path(directory)
+    workflow_path = target / "workflow.yaml"
+    if workflow_path.exists():
+        raise click.ClickException(
+            f"{workflow_path} already exists. "
+            f"Remove it or pick a different directory."
+        )
+    for dest_rel, src_rel in EXAMPLES[name]["files"].items():
+        text = _load_example_file(src_rel)
+        if dest_rel == "workflow.yaml":
+            text = _rewrite_example_urls(text, name)
+        out = target / dest_rel
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(text, encoding="utf-8")
+
+    display = str(target) if str(target) != "." else "the current directory"
+    click.echo(f"Scaffolded example {name!r} into {display}.")
+    click.echo()
+    click.echo("Next steps:")
+    if str(target) != ".":
+        click.echo(f"  cd {target}")
+    click.echo("  sqrlly validate workflow.yaml")
+    click.echo("  sqrlly run workflow.yaml")
+
+
+def _example_catalog_lines() -> list[str]:
+    lines = ["Available examples (sqrlly init --example <name>):"]
+    for name in sorted(EXAMPLES):
+        lines.append(f"  {name:<16}{EXAMPLES[name]['description']}")
+    return lines
+
+
+def init_list_examples() -> None:
+    """Print the curated example catalog."""
+    for line in _example_catalog_lines():
+        click.echo(line)
 
 
 _WORKFLOW_YAML = """\
