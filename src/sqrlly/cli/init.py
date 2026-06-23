@@ -11,6 +11,7 @@ so a coding agent auto-discovers it.
 from __future__ import annotations
 
 import importlib.resources
+import re
 import subprocess
 from pathlib import Path
 
@@ -18,6 +19,67 @@ import click
 
 # Where the skill doc lands in a consumer repo (Codex / Claude layout).
 SKILL_INSTALL_REL = Path(".agents/skills/sqrlly/SKILL.md")
+
+# Curated examples scaffoldable via `sqrlly init --example`. dest -> repo src.
+EXAMPLES: dict[str, dict] = {
+    "jokes": {
+        "description": "LLM prompt + quality gate + multi-node (needs an authed `claude` CLI).",
+        "files": {
+            "workflow.yaml": "examples/jokes/workflow.yaml",
+            "generate.md": "examples/jokes/generate.md",
+            "select.md": "examples/jokes/select.md",
+            "gates/validate_jokes.py": "examples/jokes/gates/validate_jokes.py",
+        },
+    },
+    "route_classify": {
+        "description": "Inline routing on structured output (pure script — no backend).",
+        "files": {
+            "workflow.yaml": "examples/route_classify/workflow.yaml",
+            "scripts/triage.py": "examples/route_classify/scripts/triage.py",
+        },
+    },
+    "explicit_join": {
+        "description": "Fan-in / join topology (pure script — no backend).",
+        "files": {"workflow.yaml": "examples/explicit_join.yaml"},
+    },
+    "pipeline_style": {
+        "description": "Forward-edge `route: goto` authoring (pure script — no backend).",
+        "files": {"workflow.yaml": "examples/pipeline_style/workflow.yaml"},
+    },
+}
+
+
+def _rewrite_example_urls(yaml_text: str, name: str) -> str:
+    """Strip the ``examples/<name>/`` prefix from quoted ``url:``/``validator:``
+    path values so a scaffolded workflow resolves them relative to its own
+    directory. Absolute paths (e.g. ``/usr/bin/echo``) and refs to other
+    examples are left untouched."""
+    prefix = f"examples/{name}/"
+    pattern = re.compile(
+        r'((?:url|validator):\s*)(["\'])' + re.escape(prefix) + r'([^"\']+)\2'
+    )
+    return pattern.sub(r"\1\2\3\2", yaml_text)
+
+
+def _load_example_file(src_repo_relpath: str) -> str:
+    """Read a bundled example file. In an installed wheel it lives at
+    ``sqrlly/_examples/<rest>`` (force-included; ``<rest>`` is the path with
+    the leading ``examples/`` dropped). Running from a source checkout that
+    resource is absent, so fall back to the repo file found by walking up
+    from this module."""
+    rest = src_repo_relpath[len("examples/"):]
+    res = importlib.resources.files("sqrlly").joinpath("_examples")
+    for seg in rest.split("/"):
+        res = res.joinpath(seg)
+    if res.is_file():
+        return res.read_text(encoding="utf-8")
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / src_repo_relpath
+        if candidate.is_file():
+            return candidate.read_text(encoding="utf-8")
+    raise click.ClickException(
+        f"Could not locate bundled example file {src_repo_relpath!r}."
+    )
 
 
 _WORKFLOW_YAML = """\
