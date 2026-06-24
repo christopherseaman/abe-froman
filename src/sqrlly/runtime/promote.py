@@ -178,7 +178,7 @@ def fanout_branch_specs(
     ``node_worktrees`` (workflow state) records each Send branch's worktree
     keyed ``<parent_id>::<item_id>``. Each branch promotes its FULL delta
     (``None`` globs — a fan-out template has no ``output_contract``);
-    ``promote_exclude`` still filters downstream. Returned sorted by child
+    ``promote_exclude`` / ``promote_include`` still apply downstream. Returned sorted by child
     id for deterministic conflict ordering. Empty when no parent opts in.
     """
     specs: list[tuple[str, str, list[str] | None]] = []

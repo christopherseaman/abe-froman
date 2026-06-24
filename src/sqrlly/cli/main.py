@@ -584,7 +584,7 @@ async def _execute_workflow(
                     specs.append((node.id, tree, globs))
                 # Fan-out branch worktrees opt in via fan_out.promote — route
                 # them through the same reconcile path (inherits conflict
-                # detection + promote_exclude). They are recorded in
+                # detection + promote_exclude + promote_include). They are recorded in
                 # node_worktrees keyed <parent>::<item>.
                 promote_parents = {
                     n.id for n in config.nodes

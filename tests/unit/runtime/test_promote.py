@@ -320,6 +320,22 @@ def test_discover_changes_no_includes_unchanged(tmp_path):
     assert "log/a.txt" not in out               # excluded, no re-include
 
 
+def test_discover_changes_include_without_exclude(tmp_path):
+    """Re-include pass unions in extra files even with no base glob + no excludes."""
+    _repo(tmp_path)
+    wt = _wt(tmp_path, "wt-inc-no-exc")
+    (wt / "src").mkdir()
+    (wt / "src" / "main.py").write_text("x")
+    (wt / "extra").mkdir()
+    (wt / "extra" / "note.txt").write_text("note")
+    out = discover_changes(
+        str(wt), globs=["src/**"], includes=["extra/**"],
+    )
+    # Glob alone would exclude extra/; include re-adds it.
+    assert "src/main.py" in out
+    assert "extra/note.txt" in out
+
+
 def test_reconcile_promotions_reinclude(tmp_path):
     _repo(tmp_path)
     wt = _wt(tmp_path, "wt-rec")
@@ -333,3 +349,6 @@ def test_reconcile_promotions_reinclude(tmp_path):
     # The re-included path is applied to base; the excluded sibling is not.
     assert (tmp_path / "log" / "phases" / "keep.txt").exists()
     assert not (tmp_path / "log" / "noise.txt").exists()
+    # Assert plan structure matches established pattern
+    assert "log/phases/keep.txt" in plan.allowed["n"]
+    assert "log/noise.txt" not in plan.allowed["n"]
