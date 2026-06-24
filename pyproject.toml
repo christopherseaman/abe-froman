@@ -58,6 +58,17 @@ packages = ["src/sqrlly"]
 # source: the repo-root SKILLS.md, copied to sqrlly/_skill.md at build.
 [tool.hatch.build.targets.wheel.force-include]
 "SKILLS.md" = "sqrlly/_skill.md"
+# Curated examples scaffoldable via `sqrlly init --example` — pipx/uv-tool
+# users have no repo checkout, so the run-essential files ride in the wheel
+# under sqrlly/_examples/ (read by cli/init.py::_load_example_file).
+"examples/jokes/workflow.yaml" = "sqrlly/_examples/jokes/workflow.yaml"
+"examples/jokes/generate.md" = "sqrlly/_examples/jokes/generate.md"
+"examples/jokes/select.md" = "sqrlly/_examples/jokes/select.md"
+"examples/jokes/gates/validate_jokes.py" = "sqrlly/_examples/jokes/gates/validate_jokes.py"
+"examples/route_classify/workflow.yaml" = "sqrlly/_examples/route_classify/workflow.yaml"
+"examples/route_classify/scripts/triage.py" = "sqrlly/_examples/route_classify/scripts/triage.py"
+"examples/explicit_join.yaml" = "sqrlly/_examples/explicit_join.yaml"
+"examples/pipeline_style/workflow.yaml" = "sqrlly/_examples/pipeline_style/workflow.yaml"
 
 [tool.hatch.build.targets.sdist]
 # `.sqrlly/` is the foreman worktree pool — gitignored, but each
