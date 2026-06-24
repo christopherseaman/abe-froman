@@ -633,6 +633,59 @@ shared `.git/info/exclude` (persists after the run, not reclaimed by
 tracked-file edits). Wired in `runtime/foreman.py` via
 `runtime/worktree_share.py`.
 
+### B7 — Native promotion of fan-out branch worktrees (builder #7, High) — IN PROGRESS 0.7.4
+
+The promote loop (`cli/main.py` ~540-574) iterates ONLY top-level
+`config.nodes` with `promote: true`; dynamic fan-out **branch** worktrees
+(per-`Send` branch, keyed `parent::item` in `foreman._worktrees` and
+recorded in `node_worktrees` state, `compile/dynamic.py` ~216) are never
+addressed, so a worktree-isolated parallel build has no native merge-back.
+Verified (workflow 2026-06-23): `FanOut`/`FanOutTemplate`/`FanOutFinalNode`
+carry no promote field; `reconcile_promotions` (`runtime/promote.py`
+~141-158) already accepts arbitrary `(node_id, worktree, globs)` specs (no
+`config.nodes` coupling) — fully reusable. Timing: in-CLI promote already
+runs BEFORE `reclaim()`, so an in-graph/in-CLI promote has no GC race; the
+race only bites an EXTERNAL (post-process) runner promote under
+`worktree_gc: on_success`. Plan: add `fan_out.promote: bool`; extend the
+promote loop to route `node_worktrees` `::`-keyed branch trees of a
+promote-true fan-out through `reconcile_promotions` +
+`on_promote_conflict` + `promote_exclude` (inherits #1's conflict
+detection). Cheap wins: a `validate` lint warning + a CLAUDE.md
+known-limitation note that external promote needs `worktree_gc: never`.
+
+### B8 — Per-fan-out worktree control + stable fan-out item id (builder #8, High) — 0.7.5
+
+(a) `FanOutTemplate` (`schema/models.py` ~293-298, `extra=forbid`) carries
+only `execute`+`evaluation` — no `worktree` field — so every branch
+resolves `effective_worktree` against the top-level `settings.worktree`;
+one workflow can't run an isolated build fan-out and a shared-base planner
+fan-out. The isolation gate (`compile/subgraph.py` ~295-297) reads
+`parent_settings.worktree` only. (b) `compile/dynamic.py` ~99-100:
+`item.get("id", "unknown")` → a manifest with no `id` collapses every
+branch to one `…::unknown` child (cost a 40-min timeout). Plan: add a
+`worktree` field on `FanOutTemplate`, thread it into the `_isolate` gate +
+the synthetic child node; WARN on a missing dict-item `id` and fail-loud
+(dedup gate in the Send router) on duplicate child ids. Verified
+2026-06-23; feasibility HIGH, no new infra.
+
+### B9 — Transient-backend-error resilience for fan-out builds (builder #9, High) — 0.7.6
+
+(1) A non-529 backend crash fails the node terminally:
+`runtime/executor/backends/cli.py` ~113-126 raises a plain `RuntimeError`
+for any non-overload non-zero exit; `_overload.py` retries only the
+`{529, overload}` substring set; `PromptExecutor.execute_rendered`
+(`runtime/executor/prompt.py` ~103-147) catches `OverloadError` only — no
+backend-level transient retry exists before the gate-`max_retries`
+(evaluation) layer. (2) A failed fan-out child can't be re-run:
+`--resume-from <child>` is rejected (`cli/main.py` ~639 — "fan-out children
+are not addressable across runs"); a `--resume` re-queues 0 because the
+fan-out parent is `completed`. Plan: (a) `backend_max_retries` (Settings,
+default 0) — bounded backoff retry of transient non-529 exits, distinct
+from gate `max_retries`, wrapping the `execute_rendered`/dispatch boundary;
+(b) make failed fan-out children re-runnable on `--resume` (re-fan only the
+failed leaves; `compute_skip_set` in `compile/resume.py` ~33-84 already
+wires fan-out dependents). Verified 2026-06-23; feasibility HIGH.
+
 ## Low-priority / judgment calls
 
 ### 🤞 U1 (residual) — `file://` URLs still bypass script + workdir gates
