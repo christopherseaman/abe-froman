@@ -325,3 +325,78 @@ class TestLlmPresetEnvWiring:
         from sqrlly.schema.models import LlmPreset
         p = LlmPreset(transport="cli", provider="anthropic", model="sonnet")
         assert p.env == {}
+
+
+class TestCLIBackendRetryViaDispatch:
+    """End-to-end: a real CLIBackend (real subprocess) whose `claude` stub
+    exits non-zero the first K times then succeeds is retried by the
+    execute_rendered backend-retry layer when backend_max_retries is set.
+    No mock — a /bin/sh stub stands in for `claude`."""
+
+    def _stub_claude(self, tmp_path, fail_times: int):
+        """Write an executable /bin/sh stub that increments a counter file
+        and exits 1 until it has been called `fail_times` times, then prints
+        a fixed line and exits 0. Returns the stub path."""
+        import os
+        import stat
+
+        counter = tmp_path / "claude_calls.txt"
+        stub = tmp_path / "claude_stub.sh"
+        # Drain stdin (the prompt) so the parent's write side closes cleanly.
+        stub.write_text(
+            "#!/bin/sh\n"
+            "cat >/dev/null\n"
+            f'COUNTER="{counter}"\n'
+            'n=0; [ -f "$COUNTER" ] && n=$(cat "$COUNTER")\n'
+            'n=$((n+1)); echo "$n" > "$COUNTER"\n'
+            f'if [ "$n" -le "{fail_times}" ]; then\n'
+            '  echo "claude exited transiently" >&2\n'
+            '  exit 1\n'
+            'fi\n'
+            'echo "stub-output"\n'
+        )
+        st = os.stat(stub)
+        os.chmod(stub, st.st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+        return stub, counter
+
+    @pytest.mark.asyncio
+    async def test_real_cli_backend_retried_then_succeeds(self, tmp_path):
+        from sqrlly.runtime.executor.backends.cli import CLIBackend
+        from sqrlly.runtime.executor.prompt import PromptExecutor
+        from sqrlly.schema.models import Settings
+
+        stub, counter = self._stub_claude(tmp_path, fail_times=2)
+        backend = CLIBackend(argv_prefix=(str(stub),))
+        executor = PromptExecutor(
+            backend=backend,
+            settings=Settings(backend_max_retries=3),
+            workdir=str(tmp_path),
+        )
+        result = await executor.execute_rendered(
+            "prompt body", "sonnet", str(tmp_path), timeout=30.0,
+        )
+        assert result.success is True
+        assert result.output == "stub-output"
+        # 2 transient exits + 1 success = 3 real subprocess invocations.
+        assert int(counter.read_text()) == 3
+
+    @pytest.mark.asyncio
+    async def test_real_cli_backend_zero_budget_terminal(self, tmp_path):
+        from sqrlly.runtime.executor.backends.cli import CLIBackend
+        from sqrlly.runtime.executor.prompt import PromptExecutor
+        from sqrlly.schema.models import Settings
+
+        stub, counter = self._stub_claude(tmp_path, fail_times=2)
+        backend = CLIBackend(argv_prefix=(str(stub),))
+        executor = PromptExecutor(
+            backend=backend,
+            settings=Settings(backend_max_retries=0),
+            workdir=str(tmp_path),
+        )
+        result = await executor.execute_rendered(
+            "prompt body", "sonnet", str(tmp_path), timeout=30.0,
+        )
+        assert result.success is False
+        assert "Backend error" in result.error
+        # One invocation, no retry.
+        assert int(counter.read_text()) == 1
