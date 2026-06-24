@@ -288,3 +288,33 @@ def test_fanout_branch_specs_selects_promote_parents():
 
 def test_fanout_branch_specs_empty_when_no_promote_parents():
     assert fanout_branch_specs(set(), {"build::a": "/wt/a"}) == []
+
+
+def test_discover_changes_reinclude_keeps_subpath(tmp_path):
+    _repo(tmp_path)
+    wt = _wt(tmp_path, "wt-ri")
+    # Create changes: a kept subpath under an excluded dir, a dropped sibling,
+    # and an unrelated file.
+    (wt / "log" / "phases").mkdir(parents=True)
+    (wt / "log" / "phases" / "keep.txt").write_text("keep")
+    (wt / "log" / "noise.txt").write_text("noise")
+    (wt / "src").mkdir()
+    (wt / "src" / "main.py").write_text("x")
+
+    out = discover_changes(
+        str(wt), excludes=["log/"], includes=["log/phases/**"],
+    )
+    assert "src/main.py" in out                 # unrelated change kept
+    assert "log/phases/keep.txt" in out         # re-included by allow-list
+    assert "log/noise.txt" not in out           # excluded, not re-included
+
+
+def test_discover_changes_no_includes_unchanged(tmp_path):
+    _repo(tmp_path)
+    wt = _wt(tmp_path, "wt-noinc")
+    (wt / "log").mkdir()
+    (wt / "log" / "a.txt").write_text("a")
+    (wt / "src").mkdir(); (wt / "src" / "b.py").write_text("b")
+    out = discover_changes(str(wt), excludes=["log/"])  # includes default None
+    assert "src/b.py" in out
+    assert "log/a.txt" not in out               # excluded, no re-include

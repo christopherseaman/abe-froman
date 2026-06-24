@@ -37,6 +37,7 @@ _STATUS: dict[str, str] = {
 def discover_changes(
     worktree: str, globs: list[str] | None = None,
     excludes: list[str] | None = None,
+    includes: list[str] | None = None,
 ) -> dict[str, str]:
     """Return ``{path_relative_to_worktree: change_kind}`` for everything the
     worktree changed vs HEAD, including untracked adds and deletions.
@@ -45,6 +46,10 @@ def discover_changes(
     (a git ``:(exclude)`` pathspec — prefix match, so ``"node_modules"`` drops
     the dir/symlink and everything under it). Change kinds are ``"added"``,
     ``"modified"``, or ``"deleted"``.
+
+    ``includes`` (git pathspec) are RE-INCLUDED after ``excludes`` — a second
+    pass unions changed paths matching ``includes`` back in, so you can drop a
+    directory but keep a subpath. ``includes`` overrides ``excludes``.
     """
     # -z uses NUL-terminated output, avoiding the path quoting that
     # --porcelain=v1 applies to paths containing spaces or special chars.
@@ -83,6 +88,10 @@ def discover_changes(
             if c in ("R", "C"):  # rename/copy: next token is the source path
                 i += 1           # skip it (destination is what we promote)
         i += 1
+    if includes:
+        # Re-include pass: git pathspecs can't negate in-list, so anything the
+        # allow-list matches is unioned back in even if `excludes` dropped it.
+        changes.update(discover_changes(worktree, globs=includes))
     return changes
 
 
