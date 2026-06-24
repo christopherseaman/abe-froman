@@ -30,6 +30,8 @@ node; a `params.preset` that names no preset in `settings.presets`.
 
 `settings:` holds workflow-global configuration. Every field is optional.
 
+Unknown keys in `settings:` are rejected with a `ValidationError` — no silent ignoring. To diagnose typos or removed fields, run `sqrlly validate` and check the error message.
+
 ### Retries, timeout, preamble
 
 | Field | Type | Default | Effect |
@@ -454,7 +456,7 @@ presence is the activation; there is no enable flag.
 | `manifest_path` | `str \| None` | `None` | On-disk JSON manifest fallback. |
 | `template` | `FanOutTemplate \| None` | `None` | What each Send branch runs. |
 | `final_nodes` | `list[FanOutFinalNode]` | `[]` | Nodes that run after all branches, consuming aggregated output. |
-| `promote` | `bool` | `false` | When true, each Send branch's worktree delta is promoted back to base at the end of a clean run (top-level nodes only, before GC), through `reconcile_promotions` + `on_promote_conflict` + `promote_exclude` — the native merge-back for an isolated parallel build. Distinct from `Node.promote` (which promotes the parent's manifest-only tree; a `validate` lint steers you here). |
+| `promote` | `bool` | `false` | When true, each Send branch's worktree delta is promoted back to base at the end of a clean run (top-level nodes only, before GC), through `reconcile_promotions` + `on_promote_conflict` + `promote_exclude` — the native merge-back for an isolated parallel build. Distinct from `Node.promote` (which promotes the parent's own manifest-only worktree delta, not the branch deltas); setting `node.promote: true` on a fan-out parent is a no-op, and `sqrlly validate` warns to steer you to `fan_out.promote` instead. |
 
 The manifest is read from the parent node's JSON output, falling back to
 `manifest_path`. Each Send branch runs `template.execute` (and
@@ -462,6 +464,11 @@ The manifest is read from the parent node's JSON output, falling back to
 template renders against a per-item Jinja context: dep outputs,
 `{{<parent_id>}}` (the parent's output), and every key on the manifest
 item.
+
+**Manifest structure and validation:**
+
+- Manifest items without an `id` field log a WARNING — all such items collapse onto a single `<parent_id>::unknown` child (a silent N→1 collapse, often unintended).
+- Duplicate `id` values within the manifest raise a `ManifestError` before dispatch, listing the duplicate child ids. Each item must have a unique `id` to produce one branch per item.
 
 **FanOutTemplate** fields:
 
@@ -478,6 +485,14 @@ execution path, like a top-level node's).
 
 When `template.execute.url` ends in `.yaml`, each Send runs a per-child
 subgraph instead of a single executor call.
+
+---
+
+## Fan-out resume behavior
+
+On `--resume` after a failed run, fan-out children that failed are re-run; siblings that completed successfully are frozen (not re-billed). This asymmetry means a workflow that fans out over a manifest can efficiently re-test only the broken items without re-running good ones.
+
+When using `--resume-from <fan_out_parent>`, the parent re-fans over its manifest, but only non-completed children from that fan-out are dispatched — completed siblings remain frozen. (Prior behavior: all children were re-run; now: only failed/missing children run.)
 
 ---
 

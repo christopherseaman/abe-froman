@@ -261,7 +261,10 @@ resolver sees) — distinct from faking what an external system returns.
   `_resume_skip` frozen snapshot channel; guards in `compile/nodes.py` /
   `compile/dynamic.py` read it, never the live `completed_nodes`).
   `--rerun-all` forces the pre-0.6 full replay; `--resume-from <node>`
-  re-runs a node + its downstream. **v1 limitation:** subgraph *inner*
+  re-runs a node + its downstream. For a fan-out parent target: only
+  non-completed children re-run (completed siblings are frozen, not
+  re-billed); failed children always re-run regardless. **v1 limitation:**
+  subgraph *inner*
   nodes aren't individually skippable — a subgraph re-runs in full unless
   its reference node completed cleanly.
 - **Subgraph event prefix is one level** — child events are prefixed
@@ -289,6 +292,7 @@ resolver sees) — distinct from faking what an external system returns.
   gate/evaluation `max_retries`; overload still flows through the
   model-downgrade chain (not double-counted). `0` = terminal on first
   backend error (the historical behavior).
+- **`settings:` rejects unknown keys (`extra=forbid`, 0.7.6)** — a typo'd or stale `settings` key now raises a `ValidationError` at load (previously silently ignored). Every other schema model already enforced this; `settings` was the last to adopt it. Run `sqrlly validate` to surface the offending key.
 - **`--resume` re-runs only failed fan-out children** — a fan-out parent
   with a failed child in the prior checkpoint is dirtied in
   `compile/resume.py::compute_skip_set` (the failed child's `<parent>::<item>`

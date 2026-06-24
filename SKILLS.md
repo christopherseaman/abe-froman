@@ -323,9 +323,13 @@ created at run time, are absent.
   nodes that completed cleanly** and aren't downstream of a failure —
   completed work is not re-billed. `--rerun-all` forces full replay of
   every node (pre-0.6 behavior). `--resume-from <node>` re-runs a
-  specific node and everything downstream (implies `--resume`). **v1
-  limitation:** a subgraph re-runs in full unless its reference node
-  completed cleanly; inner nodes aren't individually skippable.
+  specific node and everything downstream (implies `--resume`). When
+  `<node>` is a fan-out parent with prior-run completed children, only
+  the failed children re-run (completed siblings freeze, no re-bill);
+  `--resume-from` on any non-fan-out node re-runs it and all downstream
+  dependents as usual. **v1 limitation:** a subgraph re-runs in full
+  unless its reference node completed cleanly; inner nodes aren't
+  individually skippable.
 
 Set `settings.backend_max_retries: N` to absorb transient backend blips (a
 `claude exited 1` that isn't an overload) by retrying the same node dispatch N
@@ -338,8 +342,10 @@ large parallel build that loses one branch resumes cheaply.
 
 - **Hyphens in node ids** — `{{my-id}}` parses as subtraction in a
   Jinja template. Always use underscores. `validate` warns about this.
-- **`extra="forbid"`** — an unknown key on any model is a hard error.
-  Confirm exact field names in `SCHEMA.md`.
+- **`extra="forbid"`** — every model rejects unknown keys (hard
+  validation error); typos halt at load instead of silently ignoring the
+  key. `settings:` adopted this in v0.7.6, making it consistent with every
+  other schema model. Confirm exact field names in `SCHEMA.md`.
 - **Inline-route nodes are DAG leaves** — nothing may `depends_on` a
   node that has a `route:` block.
 - **Exactly one default preset** — if any `LlmPreset` exists in
