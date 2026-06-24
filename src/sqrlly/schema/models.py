@@ -497,6 +497,13 @@ class Settings(BaseModel):
     # if they slip past a worktree's .git/info/exclude. Prefix-match, e.g.
     # ["node_modules", ".next/cache"].
     promote_exclude: list[str] = []
+    # Git pathspecs RE-INCLUDED into the promote footprint after
+    # `promote_exclude` removes them — the allow-list half of exclude. Lets
+    # you drop a directory but keep a subpath (e.g. promote_exclude=["log/"]
+    # + promote_include=["log/phases/*"] keeps log/phases/* and drops the
+    # rest of log/). Git `:(exclude)` pathspecs have no in-list negation, so
+    # this is a second pass unioned back in. Applies to every promoting node.
+    promote_include: list[str] = []
     # Read-only sharing: whole-dir symlinks of these base paths into each
     # worktree (no in-worktree install). For read-only in-branch gates
     # (tsc --noEmit, scoped tests). Each shared path also gets the

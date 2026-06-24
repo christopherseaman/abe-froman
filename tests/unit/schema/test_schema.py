@@ -905,6 +905,13 @@ class TestPromoteExclude:
             == ["node_modules", ".next/cache"]
 
 
+def test_settings_promote_include_field():
+    from sqrlly.schema.models import Settings
+    s = Settings(promote_include=["log/phases/*"])
+    assert s.promote_include == ["log/phases/*"]
+    assert Settings().promote_include == []   # default empty
+
+
 class TestWorktreeSetupFields:
     def test_defaults(self):
         from sqrlly.schema.models import Settings
