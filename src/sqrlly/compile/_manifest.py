@@ -8,6 +8,7 @@ langgraph imports.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -20,6 +21,8 @@ if TYPE_CHECKING:
     from sqrlly.schema.models import Graph
 
 _FENCE_RE = re.compile(r"```(?:json|JSON)?\s*\n?(.*?)\n?```", re.DOTALL)
+
+logger = logging.getLogger(__name__)
 
 
 def _strip_to_json(text: str) -> str:
@@ -73,6 +76,17 @@ def _normalize_items(items: object) -> list[dict]:
     out: list[dict] = []
     for i, item in enumerate(items):
         if isinstance(item, dict):
+            if "id" not in item:
+                # An id-less dict item collapses every branch onto one
+                # `<parent>::unknown` child (the fan-out body keys child_id
+                # off item.get("id", "unknown")). Warn loudly — this is a
+                # silent N→1 fan-out collapse the author rarely intends.
+                logger.warning(
+                    "fan-out manifest item %d is missing 'id' (%r) — every "
+                    "such item collapses onto a single '::unknown' branch; "
+                    "give each manifest item a unique 'id'.",
+                    i, item,
+                )
             out.append(item)
         elif isinstance(item, (str, int, float, bool)):
             out.append({"id": str(item)})

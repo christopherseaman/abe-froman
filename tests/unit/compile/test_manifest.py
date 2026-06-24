@@ -185,6 +185,44 @@ class TestNormalizeItems:
             _read_manifest(state, _phase_with_dynamic())
 
 
+    def test_dict_item_missing_id_warns(self, caplog):
+        """A dict manifest item with no 'id' collapses every branch to one
+        ::unknown child — _normalize_items must WARN so the author sees it."""
+        import logging
+
+        state = make_initial_state(
+            node_outputs={"p1": json.dumps([{"topic": "x"}, {"topic": "y"}])}
+        )
+        with caplog.at_level(logging.WARNING):
+            result = _read_manifest(state, _phase_with_dynamic())
+        # Items pass through unchanged (no synthetic id injected).
+        assert result == [{"topic": "x"}, {"topic": "y"}]
+        # One warning per id-less dict item.
+        missing_id_warnings = [
+            r for r in caplog.records if "missing 'id'" in r.message
+        ]
+        assert len(missing_id_warnings) == 2
+
+    def test_dict_item_with_id_is_silent(self, caplog):
+        import logging
+
+        state = make_initial_state(
+            node_outputs={"p1": json.dumps([{"id": "a"}, {"id": "b"}])}
+        )
+        with caplog.at_level(logging.WARNING):
+            _read_manifest(state, _phase_with_dynamic())
+        assert not any("missing 'id'" in r.message for r in caplog.records)
+
+    def test_scalar_items_do_not_warn(self, caplog):
+        """Scalars are coerced to {'id': str(item)} → they have an id → silent."""
+        import logging
+
+        state = make_initial_state(node_outputs={"p1": json.dumps(["alpha", "beta"])})
+        with caplog.at_level(logging.WARNING):
+            _read_manifest(state, _phase_with_dynamic())
+        assert not any("missing 'id'" in r.message for r in caplog.records)
+
+
 class TestEmptyManifestRouting:
     def test_router_warns_and_routes_to_no_items(self, caplog):
         """An empty (but valid) manifest is not silent: the dynamic
