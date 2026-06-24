@@ -250,6 +250,7 @@ def make_fan_out_subgraph_invoker(
     executor: "NodeExecutor | None",
     logger: Any | None = None,
     parent_settings: Settings | None = None,
+    template_worktree: str | None = None,
 ) -> Any:
     """Per-Send-branch subgraph invoker for fan-out templates.
 
@@ -292,9 +293,15 @@ def make_fan_out_subgraph_invoker(
     if isinstance(template_params.get("inputs"), dict):
         inputs_decl = dict(template_params["inputs"])
 
-    # Gate: isolate iff the FAN-OUT scope's effective worktree mode is not
-    # "off" (matches how inline fan-out children decide isolation).
-    _isolate = (parent_settings or Settings()).worktree != "off"
+    # Gate: isolate iff the effective worktree mode for THIS fan-out is not
+    # "off". A per-fan-out override (FanOutTemplate.worktree) wins over the
+    # parent scope's settings.worktree; None inherits the parent scope.
+    _effective_worktree = (
+        template_worktree
+        if template_worktree is not None
+        else (parent_settings or Settings()).worktree
+    )
+    _isolate = _effective_worktree != "off"
 
     async def invoke(
         context: dict[str, Any], workdir: str, dry_run: bool,

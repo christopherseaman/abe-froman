@@ -92,6 +92,7 @@ def _make_fan_out_node(
             executor=executor,
             logger=logger,
             parent_settings=settings,
+            template_worktree=template.worktree,
         )
 
     async def node_fn(state: WorkflowState) -> dict[str, Any]:

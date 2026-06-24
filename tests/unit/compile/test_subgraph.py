@@ -89,6 +89,92 @@ class TestDetectConfigCycle:
         assert "a.yaml" in str(exc.value)
 
 
+import yaml as _yaml
+
+from sqrlly.compile.subgraph import make_fan_out_subgraph_invoker
+from sqrlly.runtime.result import ExecutionResult
+from sqrlly.schema.models import Node, Settings as _Settings
+
+
+def _write_trivial_sub(tmp_path) -> str:
+    sub = {
+        "name": "sub", "version": "1.0",
+        "nodes": [{"id": "n", "name": "n",
+                   "execute": {"url": "/bin/sh", "params": {"args": ["-c", "true"]}}}],
+    }
+    (tmp_path / "sub.yaml").write_text(_yaml.safe_dump(sub))
+    return "sub.yaml"
+
+
+class _RecordingExecutor:
+    """Records whether the per-branch worktree was acquired. Implements the
+    NodeExecutor Protocol bits the invoker touches (execute + the optional
+    acquire_branch_worktree); duck-typed, not a unittest.mock. The compiled
+    subgraph is stubbed below, so execute() here is never actually reached —
+    the observable signal is whether acquire_branch_worktree was called."""
+
+    def __init__(self) -> None:
+        self.acquired: list[str] = []
+
+    async def acquire_branch_worktree(self, branch_id: str) -> str:
+        self.acquired.append(branch_id)
+        return f"/wt/{branch_id}"
+
+    async def execute(self, node, context, workdir=None, settings_override=None):
+        return ExecutionResult(success=True, output="ok")
+
+
+class _StubCompiled:
+    """Stands in for a compiled LangGraph — only ainvoke is exercised."""
+    async def ainvoke(self, state):
+        # Minimal terminal state: the subgraph's single node 'n' produced
+        # output. _terminal_node_output reads node_outputs[terminals[-1]].
+        return {"node_outputs": {"n": "done"}, "failed_nodes": set()}
+
+
+def _stub_compile_fn(c, executor=None, _depth=0, effective_settings=None):
+    return _StubCompiled()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "parent_worktree,template_worktree,expect_acquire",
+    [
+        # No override → inherit parent settings.
+        ("isolated", None, True),
+        ("off", None, False),
+        # Template override wins over parent settings.
+        ("isolated", "off", False),     # the builder's exact use-case
+        ("off", "isolated", True),
+    ],
+)
+async def test_fanout_invoker_branch_acquire_follows_effective_worktree(
+    tmp_path, parent_worktree, template_worktree, expect_acquire,
+):
+    sub_yaml = _write_trivial_sub(tmp_path)
+    executor = _RecordingExecutor()
+    invoker = make_fan_out_subgraph_invoker(
+        sub_yaml, {}, compile_fn=_stub_compile_fn, base_dir=tmp_path, depth=0,
+        executor=executor, parent_settings=_Settings(worktree=parent_worktree),
+        template_worktree=template_worktree,
+    )
+
+    result = await invoker({}, str(tmp_path), False, prefix="build::alpha")
+
+    assert result.success is True
+    if expect_acquire:
+        assert executor.acquired == ["build::alpha"], (
+            "expected a branch worktree to be acquired (isolation on)"
+        )
+        # The acquired tree is surfaced for node_worktrees recording.
+        assert result.worktree == "/wt/build::alpha"
+    else:
+        assert executor.acquired == [], (
+            "expected NO branch worktree (worktree:off → run in shared workdir)"
+        )
+        assert result.worktree is None
+
+
 class TestNodeFieldsForSubgraph:
     """Schema validation for the Stage-5b subgraph shape: `execute.url` points
     at a `.yaml` file; `params.inputs` / `params.outputs` carry projection."""
