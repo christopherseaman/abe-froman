@@ -324,6 +324,12 @@ class FanOut(BaseModel):
     manifest_path: str | None = None
     template: FanOutTemplate | None = None
     final_nodes: list[FanOutFinalNode] = []
+    # When true, each Send branch's worktree delta is promoted back to base
+    # at the end of a clean run (top-level nodes only, before GC), routed
+    # through reconcile_promotions + on_promote_conflict + promote_exclude.
+    # Distinct from Node.promote (which promotes a node's OWN worktree —
+    # for a fan-out parent that is the manifest-only tree; see the lint).
+    promote: bool = False
 
 
 class LlmPreset(BaseModel):

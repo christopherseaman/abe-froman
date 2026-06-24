@@ -750,6 +750,13 @@ class TestFanOut:
         assert config.manifest_path is None
         assert config.final_nodes == []
 
+    def test_fan_out_promote_field(self):
+        from sqrlly.schema.models import FanOut, FanOutTemplate, Execute
+        fo = FanOut(template=FanOutTemplate(execute=Execute(url="x.md")), promote=True)
+        assert fo.promote is True
+        # default is False
+        assert FanOut(template=FanOutTemplate(execute=Execute(url="x.md"))).promote is False
+
 
 class TestFullExampleParse:
     """Parse the absurd-paper kitchen-sink workflow to verify the schema
