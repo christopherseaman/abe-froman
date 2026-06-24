@@ -3,6 +3,12 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- `uv run pytest tests/` (bare, without `--ignore`) no longer aborts collection — a basename collision between `tests/cli/test_cli_backend.py` and `tests/unit/runtime/test_cli_backend.py` (pytest `prepend` import mode, no `__init__.py` under `tests/`) raised "import file mismatch". The live cli-suite file is renamed to `test_cli_backend_live.py`.
+
 ## [0.7.6] — backend retry + resumable fan-out children
 
 ### Added

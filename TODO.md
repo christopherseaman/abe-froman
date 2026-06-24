@@ -663,7 +663,7 @@ collapsing onto `<parent>::unknown`), and the Send router
 (`compile/graph.py::_make_dynamic_router`) raises `ManifestError` on any
 duplicate child id before dispatch.
 
-### ✅ B9 — Transient-backend-error resilience for fan-out builds — SHIPPED 0.7.x
+### ✅ B9 — Transient-backend-error resilience for fan-out builds — SHIPPED 0.7.6
 
 `settings.backend_max_retries` (default `0`) wraps
 `runtime/executor/prompt.py::execute_rendered` in a bounded transient-retry
@@ -677,6 +677,43 @@ so the parent re-fans; `compile/dynamic.py::_make_fan_out_node`'s per-child
 gate was changed to freeze on `child_id in _resume_skip` alone (dropping the
 `parent_node.id in skip` guard), so completed siblings stay frozen (no re-bill)
 and only the formerly-failed child re-runs.
+
+### Builder reconciliation findings (2026-06-24, vs builder-sqrlly @ 0.7.6)
+
+Champion re-reviewed all 9 original requests against 0.7.6: #1–#4 + #7–#9 all
+shipped; #5/#6 remain (Low). Verdict: no HIGH-priority product gap remains. New
+findings this pass:
+
+- [x] **N1 (bug) — bare `uv run pytest tests/` aborted collection** — FIXED 2026-06-24:
+  `tests/cli/test_cli_backend.py` + `tests/unit/runtime/test_cli_backend.py` shared a
+  basename (pytest `prepend` mode, no `__init__.py` — which the repo forbids) →
+  "import file mismatch". Renamed the live file `test_cli_backend_live.py` (the only
+  collision in the tree; `--import-mode=importlib` rejected to avoid touching the 36
+  `from helpers import` sites). Bare collection now clean (1247 collected).
+- [ ] **N2 — `--entry <node>` / `--from <node>`: run a node / DAG tail from COLD (Medium)**
+  — re-run just a synthesis/integration tail against a hand-prepared workdir with NO prior
+  checkpoint (today `--resume`/`--resume-from` both require a checkpoint thread, else
+  `cli/main.py` raises "No saved state"). Proposed: an entry-node flag that treats the named
+  node as the start and trusts on-disk inputs for its upstream deps, without a checkpoint.
+  Distinct from `--resume-from` (which implies `--resume`). The one MEDIUM ask; the rest below
+  are Low.
+- [ ] **#5 — per-node token budget + CLI killpg (Low)** — (a) a declarative `budget_tokens`
+  per node/preset that fails the node when exceeded (parallel to `timeout`); (b) **concrete
+  bug:** the CLI backend reaps only the direct child (`cli.py` `proc.kill()`) while ACP
+  SIGTERM→SIGKILLs the process *group* (`os.killpg`) — a `claude` that spawned descendants
+  (MCP servers, test runners, Chromium) leaks on timeout/cancel. The killpg fix is small +
+  worth doing independently of the token-budget half.
+- [ ] **#6 — managed-team node with mid-flight oversight (Low)** — a coordinator node that
+  spawns + supervises fan-out members during execution (check-ins, intervene, aggregate),
+  above the fire-and-join `fan_out` primitive. (Folds in the N4 evidence: phase_3_1b auditors
+  + planner tournament both want cooperating teams.) The #5 budget is the signal an overseer
+  would act on.
+- [ ] **N3 — `promote_exclude` negation / allow-list (Low)** — git `:(exclude)` pathspecs
+  have no in-list negation, so "exclude `log/` EXCEPT `log/phases/*`" is impossible. Proposed:
+  a re-include pass after excludes.
+- Provider lock-in (non-anthropic) and dynamic fan-out observability (branch children absent
+  from the terminal grid) remain Low — already tracked (TODO 36; the graph/view
+  known-limitation).
 
 ## Low-priority / judgment calls
 
