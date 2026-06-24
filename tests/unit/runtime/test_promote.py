@@ -268,3 +268,23 @@ def test_reconcile_threads_excludes(tmp_path):
     )
     assert (tmp_path / "real.txt").read_text() == "keep"
     assert not (tmp_path / "node_modules").exists()
+
+
+from sqrlly.runtime.promote import fanout_branch_specs
+
+
+def test_fanout_branch_specs_selects_promote_parents():
+    node_worktrees = {
+        "build::feat_a": "/wt/build__feat_a",
+        "build::feat_b": "/wt/build__feat_b",
+        "plan::v1": "/wt/plan__v1",     # parent not promoting
+        "toplevel_node": "/wt/toplevel", # not a branch (no ::)
+    }
+    specs = fanout_branch_specs({"build"}, node_worktrees)
+    assert specs == [
+        ("build::feat_a", "/wt/build__feat_a", None),
+        ("build::feat_b", "/wt/build__feat_b", None),
+    ]
+
+def test_fanout_branch_specs_empty_when_no_promote_parents():
+    assert fanout_branch_specs(set(), {"build::a": "/wt/a"}) == []
