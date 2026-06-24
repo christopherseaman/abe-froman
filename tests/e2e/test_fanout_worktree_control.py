@@ -40,10 +40,6 @@ def _init_git_repo(path: Path) -> None:
     )
 
 
-def _write_manifest(tmp_path: Path) -> None:
-    (tmp_path / "items.json").write_text(json.dumps({"items": _ITEMS}))
-
-
 def _script_node(item_template: str) -> dict:
     """A /bin/sh node that appends '<item>\\n' to shared.txt in its CWD.
 

@@ -93,7 +93,7 @@ import yaml as _yaml
 
 from sqrlly.compile.subgraph import make_fan_out_subgraph_invoker
 from sqrlly.runtime.result import ExecutionResult
-from sqrlly.schema.models import Node, Settings as _Settings
+from sqrlly.schema.models import Settings as _Settings
 
 
 def _write_trivial_sub(tmp_path) -> str:

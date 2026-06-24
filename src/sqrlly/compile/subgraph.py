@@ -258,14 +258,16 @@ def make_fan_out_subgraph_invoker(
     prefix) -> ExecutionResult`` that the fan-out node body calls in
     place of ``executor.execute(...)``.
 
-    When ``parent_settings.worktree != "off"`` and the executor has
-    ``acquire_branch_worktree``, each Send branch gets its own isolated
-    git worktree keyed by ``prefix`` (the child_id). Inner subgraph
-    nodes are compiled against a ``_BranchScopedExecutor`` that pins
-    every node to that tree (forced ``worktree: off`` + explicit
-    workdir), so inner nodes never spin up their own trees. The branch
-    worktree path is returned as ``ExecutionResult.worktree`` for
-    upstream recording in ``node_worktrees``.
+    When the effective worktree mode for this fan-out (per-fan-out
+    ``template_worktree`` override, or parent scope's ``worktree`` if None)
+    is not ``"off"`` and the executor has ``acquire_branch_worktree``,
+    each Send branch gets its own isolated git worktree keyed by
+    ``prefix`` (the child_id). Inner subgraph nodes are compiled against
+    a ``_BranchScopedExecutor`` that pins every node to that tree (forced
+    ``worktree: off`` + explicit workdir), so inner nodes never spin up
+    their own trees. The branch worktree path is returned as
+    ``ExecutionResult.worktree`` for upstream recording in
+    ``node_worktrees``.
 
     Off/non-foreman paths fall through to ``workdir`` as before, and
     ``ExecutionResult.worktree`` is None (inline parity).

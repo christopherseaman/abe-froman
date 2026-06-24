@@ -46,9 +46,11 @@ class EvaluationError(RuntimeError):
 
 
 class ManifestError(RuntimeError):
-    """A fan-out node's declared ``manifest_path`` could not be read
-    (file missing or invalid JSON). Halts loudly rather than silently
-    fanning out over zero items."""
+    """Raised when fan-out node manifest processing fails: either the
+    declared ``manifest_path`` could not be read (file missing or invalid
+    JSON), or multiple manifest items resolve to the same child id
+    (duplicate or collapsed ``<parent>::unknown``). Halts loudly rather
+    than silently fanning out over zero items or colliding child ids."""
 
 
 class RouteError(ValueError):
