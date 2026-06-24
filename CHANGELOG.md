@@ -3,6 +3,12 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- `settings.promote_include` — git pathspecs re-included into the promote footprint after `promote_exclude`, so you can exclude a directory but keep a subpath (`promote_exclude: ["log/"]` + `promote_include: ["log/phases/**"]`). Implemented as a second `discover_changes` pass; the include overrides the exclude.
+
 ## [0.7.7] — --entry cold-start + CLI process-group kill
 
 ### Added

@@ -248,6 +248,11 @@ filters those pathspecs out of **every** promoting node's footprint even
 if one slips past the `info/exclude` write — cheap defense-in-depth on
 the one operation (promote) you most can't afford to get wrong.
 
+To exclude a directory from a `promote` but keep one subpath, pair
+`settings.promote_exclude: ["log/"]` with `settings.promote_include:
+["log/phases/**"]` — the include is re-added after the exclude (git
+pathspecs can't negate in-list).
+
 **Subgraph fan-out isolation.** When a fan-out template is a subgraph
 (`.yaml`), each Send branch gets its own worktree (keyed by the branch
 id) and the subgraph's inner nodes all run *inside* that one branch tree

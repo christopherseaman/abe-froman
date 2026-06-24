@@ -707,9 +707,7 @@ findings this pass:
   above the fire-and-join `fan_out` primitive. (Folds in the N4 evidence: phase_3_1b auditors
   + planner tournament both want cooperating teams.) The #5 budget is the signal an overseer
   would act on.
-- [ ] **N3 — `promote_exclude` negation / allow-list (Low)** — git `:(exclude)` pathspecs
-  have no in-list negation, so "exclude `log/` EXCEPT `log/phases/*`" is impossible. Proposed:
-  a re-include pass after excludes.
+- [x] **✅ N3 — promote_exclude re-include allow-list — SHIPPED 0.7.8** — `settings.promote_include` (git pathspecs) is a second `discover_changes` pass unioned back into every promoting node's footprint after `promote_exclude` removes paths. Lets you drop a directory but keep a subpath (`promote_exclude: ["log/"]` + `promote_include: ["log/phases/**"]`); the include overrides the exclude. Threaded through `reconcile_promotions` and the CLI promote loop alongside `promote_exclude`.
 - Provider lock-in (non-anthropic) and dynamic fan-out observability (branch children absent
   from the terminal grid) remain Low — already tracked (TODO 36; the graph/view
   known-limitation).
