@@ -269,6 +269,7 @@ async def _run_async(
     rerun_all: bool,
     log_file: str | None,
     quiet: bool = False,
+    entry: str | None = None,
 ) -> dict:
     """Inner async runner — wires checkpointer, executor, and state.
 
@@ -317,7 +318,7 @@ async def _run_async(
     try:
         result = await _execute_workflow(
             config, workdir, dry_run, preset_override, resume, resume_from, rerun_all,
-            thread_id=thread_id, logger=logger,
+            thread_id=thread_id, logger=logger, entry=entry,
         )
         return result
     finally:
@@ -385,6 +386,7 @@ async def _execute_workflow(
     *,
     thread_id: str,
     logger: Any | None,
+    entry: str | None = None,
 ) -> dict:
     """Compile the graph, wire executors / checkpointer / state, then run.
 
@@ -498,6 +500,31 @@ async def _execute_workflow(
             )
             # Wipe the thread so reducers don't merge with stale state
             await cp.adelete_thread(thread_id)
+        elif entry is not None:
+            # Cold start at `entry`: NO checkpoint read. Seed FRESH state, then
+            # compute the skip set as if every top-level node had already
+            # completed and `entry` were the sole rerun target — the existing
+            # dirty closure dirties `entry` + its downstream and freezes the
+            # rest. Reseed completed_nodes + _resume_skip to that frozen set so
+            # downstream join/barrier guards see upstream as done, exactly like
+            # the resume reseed. The entry node trusts ON-DISK upstream
+            # artifacts: upstream never ran this session, so node_outputs is
+            # empty and `{{upstream}}` template vars resolve to nothing — an
+            # --entry node must read files, not interpolate upstream output.
+            from sqrlly.compile.resume import compute_skip_set
+            all_ids = {n.id for n in config.nodes}
+            skip = compute_skip_set(config, all_ids, set(), {entry})
+            await cp.adelete_thread(thread_id)
+            state = make_initial_state(
+                workflow_name=config.name, workdir=workdir, dry_run=False,
+            )
+            state["completed_nodes"] = set(skip)
+            state["_resume_skip"] = set(skip)
+            click.echo(
+                f"Cold start at {entry!r}: running "
+                f"{len(all_ids - skip)} node(s) ({entry} + downstream); "
+                f"freezing {len(skip)} upstream (trusting on-disk artifacts)."
+            )
         else:
             await cp.adelete_thread(thread_id)
             state = make_initial_state(
@@ -620,6 +647,15 @@ async def _execute_workflow(
     help="With --resume: re-execute every node (pre-0.6 full replay; "
          "disables skip-completed).",
 )
+@click.option(
+    "--entry", "entry", default=None, metavar="NODE",
+    help="Cold-start at NODE: run NODE and everything downstream, freezing "
+         "everything upstream WITHOUT a checkpoint (the upstream artifacts "
+         "must already be on disk). The entry node sees EMPTY {{upstream}} "
+         "template vars — it must read files, not interpolate upstream "
+         "output. Mutually exclusive with --resume / --resume-from / "
+         "--rerun-all.",
+)
 @click.option("--log", "log_file", type=click.Path(), help="JSONL log output file")
 @click.option(
     "--quiet", "-q", is_flag=True,
@@ -633,6 +669,7 @@ def run(
     resume: bool,
     resume_from: tuple[str, ...],
     rerun_all: bool,
+    entry: str | None,
     log_file: str | None,
     quiet: bool,
 ):
@@ -659,12 +696,31 @@ def run(
                 f"Valid: {', '.join(sorted(valid_ids))}"
             )
 
+    if entry is not None:
+        # --entry is a COLD start (no checkpoint); --resume family reads a
+        # checkpoint. The two seed strategies are incompatible.
+        if resume or rerun_all:
+            raise click.ClickException(
+                "--entry is mutually exclusive with --resume, "
+                "--resume-from, and --rerun-all"
+            )
+        if "::" in entry:
+            raise click.ClickException(
+                f"--entry {entry!r}: fan-out children are not addressable "
+                f"(name the top-level fan-out parent instead)"
+            )
+        if entry not in valid_ids:
+            raise click.ClickException(
+                f"--entry {entry!r}: unknown node id. "
+                f"Valid: {', '.join(sorted(valid_ids))}"
+            )
+
     _emit_warnings(config)
 
     from sqrlly.runtime.result import EvaluationError, ManifestError, RouteError
     try:
         result = asyncio.run(
-            _run_async(config, workdir, dry_run, preset, resume, resume_from, rerun_all, log_file, quiet)
+            _run_async(config, workdir, dry_run, preset, resume, resume_from, rerun_all, log_file, quiet, entry)
         )
     except (EvaluationError, ManifestError, RouteError) as e:
         # Infrastructure failures (broken validator / unreadable manifest
