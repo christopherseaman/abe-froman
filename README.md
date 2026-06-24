@@ -162,6 +162,7 @@ Full reference (including `CommandPreset` for custom script interpreters): [SCHE
 - `--dry-run` — trace topology without executing.
 - `--preset / -p <name>` — force a named preset as the default.
 - `--resume` — re-run seeded with the prior run's state, clearing failures to retry (completed nodes re-execute).
+- `--entry <node>` — cold-start at `<node>`: run it and everything downstream WITHOUT a checkpoint (the upstream artifacts must already be on disk). Mutually exclusive with `--resume` / `--resume-from` / `--rerun-all`.
 - `--log <path>` — write a JSONL event log.
 - `--quiet / -q` — suppress the live terminal renderer (use in CI / piped runs).
 

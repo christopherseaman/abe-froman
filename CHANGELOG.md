@@ -5,8 +5,13 @@ All notable changes to sqrlly are documented here. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- `sqrlly run --entry <node>` — cold-start at `<node>`: run it and everything downstream WITHOUT a checkpoint, freezing everything upstream (whose artifacts must already be on disk). Mutually exclusive with `--resume` / `--resume-from` / `--rerun-all`. The entry node trusts on-disk inputs — `{{upstream}}` template vars are empty on a cold start.
+
 ### Fixed
 
+- CLI backend now kills the whole process group on timeout (`start_new_session=True` + `os.killpg` SIGTERM→SIGKILL), so a `claude -p` that spawned descendants (MCP servers, test runners, headless browsers) no longer leaks them. Previously only the direct child was reaped (`proc.kill()`).
 - `uv run pytest tests/` (bare, without `--ignore`) no longer aborts collection — a basename collision between `tests/cli/test_cli_backend.py` and `tests/unit/runtime/test_cli_backend.py` (pytest `prepend` import mode, no `__init__.py` under `tests/`) raised "import file mismatch". The live cli-suite file is renamed to `test_cli_backend_live.py`.
 
 ## [0.7.6] — backend retry + resumable fan-out children

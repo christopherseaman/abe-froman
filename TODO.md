@@ -690,19 +690,17 @@ findings this pass:
   "import file mismatch". Renamed the live file `test_cli_backend_live.py` (the only
   collision in the tree; `--import-mode=importlib` rejected to avoid touching the 36
   `from helpers import` sites). Bare collection now clean (1247 collected).
-- [ ] **N2 — `--entry <node>` / `--from <node>`: run a node / DAG tail from COLD (Medium)**
-  — re-run just a synthesis/integration tail against a hand-prepared workdir with NO prior
-  checkpoint (today `--resume`/`--resume-from` both require a checkpoint thread, else
-  `cli/main.py` raises "No saved state"). Proposed: an entry-node flag that treats the named
-  node as the start and trusts on-disk inputs for its upstream deps, without a checkpoint.
-  Distinct from `--resume-from` (which implies `--resume`). The one MEDIUM ask; the rest below
-  are Low.
-- [ ] **#5 — per-node token budget + CLI killpg (Low)** — (a) a declarative `budget_tokens`
-  per node/preset that fails the node when exceeded (parallel to `timeout`); (b) **concrete
-  bug:** the CLI backend reaps only the direct child (`cli.py` `proc.kill()`) while ACP
-  SIGTERM→SIGKILLs the process *group* (`os.killpg`) — a `claude` that spawned descendants
-  (MCP servers, test runners, Chromium) leaks on timeout/cancel. The killpg fix is small +
-  worth doing independently of the token-budget half.
+- [x] **N2 — `--entry <node>`: run a node / DAG tail from COLD — SHIPPED 0.7.x**
+  — `sqrlly run --entry <node>` cold-starts at `<node>` (no checkpoint), freezing
+  everything upstream and running `<node>` + downstream. Reuses
+  `compute_skip_set(config, {all ids}, set(), {entry})`; reseeds
+  `completed_nodes` + `_resume_skip`. Entry node reads on-disk inputs (empty
+  `{{upstream}}` vars). Mutually exclusive with `--resume` family.
+- [ ] **#5 — per-node token budget (Low)** — a declarative `budget_tokens`
+  per node/preset that fails the node when exceeded (parallel to `timeout`).
+  (The CLI-killpg half of the original #5 — process-group kill on timeout —
+  SHIPPED 0.7.x: `cli.py` now spawns with `start_new_session=True` and
+  `os.killpg`-escalates on timeout, matching the ACP teardown discipline.)
 - [ ] **#6 — managed-team node with mid-flight oversight (Low)** — a coordinator node that
   spawns + supervises fan-out members during execution (check-ins, intervene, aggregate),
   above the fire-and-join `fan_out` primitive. (Folds in the N4 evidence: phase_3_1b auditors

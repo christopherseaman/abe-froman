@@ -61,6 +61,7 @@ uv run sqrlly validate config.yaml
 uv run sqrlly run config.yaml             # uses settings.presets (required)
 uv run sqrlly run config.yaml -p <name>   # force a named preset from settings.presets
 uv run sqrlly run config.yaml --resume    # resume from checkpoint
+uv run sqrlly run config.yaml --entry <node>  # cold-start: run <node> + downstream, no checkpoint
 uv run sqrlly run config.yaml --log out.jsonl
 uv run sqrlly graph config.yaml           # Mermaid topology
 uv run sqrlly view config.yaml            # self-contained HTML viewer
@@ -233,6 +234,27 @@ resolver sees) — distinct from faking what an external system returns.
 
 ## Known limitations
 
+- **`--entry <node>` is a COLD start, not a resume** — `sqrlly run
+  --entry <node>` seeds FRESH state (no checkpoint read), freezes everything
+  upstream of `<node>`, and runs `<node>` + its downstream
+  (`cli/main.py::_execute_workflow` reuses `compile/resume.py::compute_skip_set`
+  with `prior_completed = {all node ids}`, `prior_failed = set()`,
+  `rerun_targets = {entry}`). Mutually exclusive with `--resume` /
+  `--resume-from` / `--rerun-all`. **The entry node trusts ON-DISK inputs:**
+  upstream never ran this session, so `node_outputs` is empty and a `{{upstream}}`
+  Jinja var resolves to nothing — an `--entry` node must READ FILES, not
+  interpolate upstream output. Rejects `::` fan-out child ids (name the
+  top-level parent). v1: like `--resume`, subgraph inner nodes are not
+  individually addressable as the entry.
+- **CLI backend kills the whole process group on timeout** — the CLI backend
+  spawns `claude -p` with `start_new_session=True` (own process group) and, on
+  timeout/cancel, SIGTERM→SIGKILLs the process GROUP
+  (`runtime/executor/backends/cli.py::_kill_process_group`), so descendants
+  (MCP servers, test runners, headless browsers) are reaped too. Unlike ACP —
+  which `/proc`-walks because its descendants reparent to PID 1 after the
+  adapter's graceful `__aexit__` — the CLI parent is still alive (the group
+  leader) when we signal, so a single `killpg` reaches the whole tree; no
+  `/proc` walk needed.
 - **Hyphenated node IDs in Jinja templates** — `{{research-phase}}`
   parses as subtraction; use underscores. `validate`/`run` emit an
   advisory warning (`compile/lint.py`).

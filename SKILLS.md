@@ -283,7 +283,15 @@ executing), `--preset/-p <name>` (force a named preset as the default),
 `--resume` (skip completed nodes, retry failed ones — see Debug),
 `--rerun-all` (full replay of every node), `--resume-from <node>`
 (re-run node + downstream; implies `--resume`),
-`--log <path>`.
+`--entry <node>` (cold-start: run `<node>` + downstream, no checkpoint —
+see below), `--log <path>`.
+
+Use `sqrlly run --entry <node>` to re-run a synthesis/integration tail against
+a hand-prepared workdir with NO prior checkpoint: it freezes everything
+upstream and runs `<node>` + its downstream. The entry node must READ the
+upstream artifacts from disk — `{{upstream}}` template vars are EMPTY on a cold
+start (upstream never ran). Distinct from `--resume-from`, which requires a
+checkpoint.
 
 On completion `run` prints a `where to find things` summary — the
 produced `output_contract` files, the `--log` path (or how to capture
