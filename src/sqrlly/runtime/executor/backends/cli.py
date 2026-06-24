@@ -149,6 +149,12 @@ class CLIBackend:
             # reparenting. _kill_process_group reaps the parent.
             await _kill_process_group(proc)
             raise
+        except asyncio.CancelledError:
+            # The task was cancelled (e.g. the orchestrator is shutting down
+            # an in-flight node). Kill the process group so the `claude` subtree
+            # doesn't leak, then re-raise so cooperative cancellation propagates.
+            await _kill_process_group(proc)
+            raise
 
         if proc.returncode != 0:
             stderr_text = stderr_b.decode().strip()

@@ -51,10 +51,11 @@ def _read_runs(workdir: Path, qid: str) -> int:
 
 
 def _build_chain(workdir: Path) -> Graph:
-    """a -> b -> c, each running worker.py keyed by its id. b reads in_b.txt;
-    c reads in_c.txt (which b's body writes as out_b.txt — wired below via a
-    pre-created in_c after b runs is NOT needed; c reads its own in_c which the
-    test seeds OR b's out — here we keep them independent on-disk inputs)."""
+    """a -> b -> c, each running worker.py keyed by its id. b reads in_b.txt
+    (pre-seeded by the test to stand in for a's on-disk artifact, since a
+    never runs under --entry b). c reads in_c.txt, also pre-seeded by the
+    test — not b's out_b.txt. The two downstream inputs are independent
+    on-disk files created before the run."""
     worker = _worker_path(workdir)
 
     def node(nid, deps=None):
@@ -80,7 +81,7 @@ async def _run_entry(
         await cp.adelete_thread(thread_id)
         all_ids = {n.id for n in config.nodes}
         skip = compute_skip_set(config, all_ids, set(), {entry})
-        state = make_initial_state(workdir=str(workdir), dry_run=False)
+        state = make_initial_state(workdir=str(workdir), dry_run=False, workflow_name=config.name)
         state["completed_nodes"] = set(skip)
         state["_resume_skip"] = set(skip)
         compiled = build_workflow_graph(

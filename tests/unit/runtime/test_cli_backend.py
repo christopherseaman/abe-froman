@@ -12,8 +12,10 @@ Coverage:
 - Overload-on-stderr → ``OverloadError`` (substring match path).
 - Generic stderr → ``RuntimeError`` carrying stderr.
 - Timeout — the fake sleeps; ``asyncio.TimeoutError`` raises and the
-  subprocess gets reaped (assertion via ``proc`` reference, but the
-  backend reaps in its own ``except`` block).
+  whole process GROUP is killed via ``_kill_process_group`` (SIGTERM →
+  SIGKILL), reaping both the direct child and any descendants.
+- Cancel — an in-flight task cancelled via ``asyncio.Task.cancel()``
+  also kills the process group and re-raises ``CancelledError``.
 - Env injection — preset env overlays os.environ; empty inherits.
 """
 from __future__ import annotations
@@ -206,12 +208,13 @@ class TestCLIBackendFailureModes:
 class TestCLIBackendTimeout:
     @pytest.mark.asyncio
     async def test_timeout_raises_and_reaps_subprocess(self, tmp_path):
-        """Fake sleeps longer than timeout → TimeoutError; process killed.
+        """Fake sleeps longer than timeout → TimeoutError; process group killed.
 
-        After the raise, attempting to find the fake's pid in `/proc`
-        must fail — the backend's `except asyncio.TimeoutError` branch
-        calls `proc.kill()` + `await proc.wait()`. If reaping were
-        skipped, the pid would linger as a zombie.
+        After the raise, the backend's `except asyncio.TimeoutError` branch
+        calls `_kill_process_group` (SIGTERM → 0.5s → SIGKILL via `os.killpg`)
+        and reaps the direct child with `proc.wait()`. The next send_prompt
+        call against a fresh fast stub succeeds — confirming the backend was
+        not poisoned by the timeout path.
         """
         fake = _write_fake(
             tmp_path, "claude-fake",
@@ -456,11 +459,12 @@ class TestCLIBackendProcessGroupKill:
         assert pidfile.exists(), "stub never spawned its descendant"
         descendant_pid = int(pidfile.read_text().strip())
 
-        # Give the kill a beat to propagate through the group, then assert the
-        # descendant pid is GONE. os.kill(pid, 0) raises ProcessLookupError on
-        # a dead pid; if it does NOT raise, the descendant leaked.
-        # This is a real behavioral discriminator: with the old proc.kill() the
-        # background subshell (descendant_pid != proc.pid) survives here.
+        # Give the kill a beat to propagate through the group. The sentinel
+        # absence below is the real behavioral proof — os.kill(pid, 0) probes
+        # the pid as a secondary check, but sentinel absence is definitive:
+        # the descendant was killed before it could complete its sleep and
+        # write. With the old proc.kill() (child-only), the background subshell
+        # (descendant_pid != proc.pid) would survive and write the sentinel.
         await asyncio.sleep(0.6)
         with pytest.raises(ProcessLookupError):
             os.kill(descendant_pid, 0)
@@ -471,6 +475,46 @@ class TestCLIBackendProcessGroupKill:
         await asyncio.sleep(3.0)
         assert not sentinel.exists(), (
             "descendant survived the timeout and wrote its sentinel — "
+            "only the direct child was killed, not the process group"
+        )
+
+    @pytest.mark.asyncio
+    async def test_cancel_kills_descendant_not_just_child(self, tmp_path):
+        """Task cancellation must kill the whole process GROUP, not just the
+        direct child. Same descendant-sentinel proof as the timeout test:
+        the descendant writes a file only if it survives long enough; a proper
+        group kill (via CancelledError handler) prevents the write.
+
+        The stub forks a backgrounded descendant (sleep 3 → write sentinel)
+        and records the descendant's PID via $! (not $$, which stays the outer
+        shell's PID inside a subshell). The parent sleeps 10s so the group
+        leader is alive when cancel fires."""
+        stub, sentinel, pidfile = self._stub_with_descendant(tmp_path)
+        backend = _backend_for(stub)
+
+        task = asyncio.get_event_loop().create_task(
+            backend.send_prompt("prompt", "sonnet", str(tmp_path))
+        )
+
+        # Let the stub fork its descendant before we cancel. The parent writes
+        # the pidfile immediately after the fork, so polling for it is sufficient.
+        import time
+        deadline = time.monotonic() + 2.0
+        while not pidfile.exists() and time.monotonic() < deadline:
+            await asyncio.sleep(0.05)
+        assert pidfile.exists(), "stub never spawned its descendant"
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        # The group kill must have propagated before the descendant's 3s sleep
+        # completes. Poll briefly to let the signal settle, then assert sentinel
+        # absence — the definitive proof the descendant was killed.
+        await asyncio.sleep(0.6)
+        await asyncio.sleep(3.0)
+        assert not sentinel.exists(), (
+            "descendant survived cancellation and wrote its sentinel — "
             "only the direct child was killed, not the process group"
         )
 

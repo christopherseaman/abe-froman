@@ -6,7 +6,6 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
-import pytest
 from click.testing import CliRunner
 
 from sqrlly.cli.main import cli
