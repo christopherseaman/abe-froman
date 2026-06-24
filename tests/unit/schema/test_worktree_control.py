@@ -135,3 +135,27 @@ def test_node_promote_defaults_false():
 
 def test_node_promote_accepts_true():
     assert Node(id="a", name="a", promote=True).promote is True
+
+
+def test_fan_out_template_worktree_defaults_to_none():
+    from sqrlly.schema.models import Execute, FanOutTemplate
+    t = FanOutTemplate(execute=Execute(url="w.yaml"))
+    assert t.worktree is None
+
+
+@pytest.mark.parametrize(
+    "value,normalized",
+    [("auto", "auto"), ("isolated", "isolated"), ("off", "off"), ("none", "off")],
+)
+def test_fan_out_template_worktree_accepts_modes_and_normalizes_none(value, normalized):
+    from sqrlly.schema.models import Execute, FanOutTemplate
+    t = FanOutTemplate(execute=Execute(url="w.yaml"), worktree=value)
+    assert t.worktree == normalized
+
+
+def test_fan_out_template_worktree_rejects_group_token():
+    from sqrlly.schema.models import Execute, FanOutTemplate
+    with pytest.raises(ValidationError) as exc:
+        FanOutTemplate(execute=Execute(url="w.yaml"), worktree="team-a")
+    msg = str(exc.value)
+    assert "auto" in msg and "isolated" in msg and "off" in msg

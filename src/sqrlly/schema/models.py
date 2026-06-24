@@ -295,6 +295,19 @@ class FanOutTemplate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     execute: Execute
     evaluation: Evaluation | None = None
+    # Per-fan-out worktree-isolation override. None (default) inherits
+    # settings.worktree — same optional-override semantics as Node.worktree.
+    # Lets one workflow run an isolated build fan-out AND a shared-base
+    # planner fan-out under a single top-level settings.worktree: the value
+    # here overrides settings.worktree at the per-branch isolation gate
+    # (subgraph templates: make_fan_out_subgraph_invoker; non-subgraph
+    # templates: the synthetic child node's effective_worktree).
+    worktree: Literal["auto", "isolated", "off"] | None = None
+
+    @field_validator("worktree", mode="before")
+    @classmethod
+    def _normalize_worktree_override(cls, v: Any) -> Any:
+        return _normalize_worktree(v)
 
 
 class FanOutFinalNode(BaseModel):
