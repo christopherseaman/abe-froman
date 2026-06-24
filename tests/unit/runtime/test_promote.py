@@ -318,3 +318,18 @@ def test_discover_changes_no_includes_unchanged(tmp_path):
     out = discover_changes(str(wt), excludes=["log/"])  # includes default None
     assert "src/b.py" in out
     assert "log/a.txt" not in out               # excluded, no re-include
+
+
+def test_reconcile_promotions_reinclude(tmp_path):
+    _repo(tmp_path)
+    wt = _wt(tmp_path, "wt-rec")
+    (wt / "log" / "phases").mkdir(parents=True)
+    (wt / "log" / "phases" / "keep.txt").write_text("keep")
+    (wt / "log" / "noise.txt").write_text("noise")
+    plan = reconcile_promotions(
+        [("n", str(wt), None)], str(tmp_path), "warn",
+        excludes=["log/"], includes=["log/phases/**"],
+    )
+    # The re-included path is applied to base; the excluded sibling is not.
+    assert (tmp_path / "log" / "phases" / "keep.txt").exists()
+    assert not (tmp_path / "log" / "noise.txt").exists()

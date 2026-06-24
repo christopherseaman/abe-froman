@@ -150,15 +150,18 @@ class PromoteConflictError(Exception):
 def reconcile_promotions(
     specs: list[tuple[str, str, list[str] | None]], base: str, mode: str,
     excludes: list[str] | None = None,
+    includes: list[str] | None = None,
 ) -> PromotionPlan:
     """Discover each node's footprint, plan under ``mode``, then apply.
 
     ``specs`` is ``[(node_id, worktree, globs), ...]`` in promote order.
     ``excludes`` (git ``:(exclude)`` pathspecs) are filtered from EVERY node's
-    footprint. Returns the ``PromotionPlan``. Raises ``PromoteConflictError``
+    footprint; ``includes`` are re-added after — the allow-list half of
+    exclude. Returns the ``PromotionPlan``. Raises ``PromoteConflictError``
     (``mode='fail'``) before any file is written."""
     footprints = {
-        node_id: discover_changes(worktree, globs, excludes=excludes)
+        node_id: discover_changes(worktree, globs, excludes=excludes,
+                                  includes=includes)
         for node_id, worktree, globs in specs
     }
     plan = plan_promotions(footprints, mode)
