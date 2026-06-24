@@ -462,8 +462,14 @@ template renders against a per-item Jinja context: dep outputs,
 `{{<parent_id>}}` (the parent's output), and every key on the manifest
 item.
 
-**FanOutTemplate**: `execute: Execute` (required),
-`evaluation: Evaluation?`.
+**FanOutTemplate** fields:
+
+| Field | Type | Default | Effect |
+|---|---|---|---|
+| `execute` | `Execute` | required | What each Send branch runs. |
+| `evaluation` | `Evaluation \| None` | `None` | Optional gate applied to each branch (with its own inline retry loop). |
+| `worktree` | `"auto" \| "isolated" \| "off"` | `null` (inherit `settings.worktree`) | Per-fan-out isolation override. Lets one workflow run an isolated build fan-out AND a shared-base planner fan-out under one top-level `settings.worktree`: this value overrides `settings.worktree` for every branch of THIS fan-out. `off` runs branches in the shared base workdir (their writes are visible to a downstream join node); `isolated`/`auto` give each branch its own git worktree. Same optional-override semantics as `Node.worktree`. Applies to both subgraph (`.yaml`) and script (`.md`/`.py`) templates. |
+
 **FanOutFinalNode**: `id: str`, `name: str` (required),
 `description: str?`, `execute: Execute?`, `evaluation: Evaluation?`,
 `output_contract: OutputContract?` (enforced via the standard

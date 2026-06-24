@@ -647,20 +647,21 @@ manifest-only tree) toward `fan_out.promote`. External promote done OUTSIDE
 the run must use `settings.worktree_gc: never`; with `on_success`, `reclaim()`
 removes the branch trees before the process exits (silent data loss).
 
-### B8 — Per-fan-out worktree control + stable fan-out item id (builder #8, High) — 0.7.5
+### ✅ B8 — Per-fan-out worktree control + stable fan-out item id — SHIPPED 0.7.5
 
-(a) `FanOutTemplate` (`schema/models.py` ~293-298, `extra=forbid`) carries
-only `execute`+`evaluation` — no `worktree` field — so every branch
-resolves `effective_worktree` against the top-level `settings.worktree`;
-one workflow can't run an isolated build fan-out and a shared-base planner
-fan-out. The isolation gate (`compile/subgraph.py` ~295-297) reads
-`parent_settings.worktree` only. (b) `compile/dynamic.py` ~99-100:
-`item.get("id", "unknown")` → a manifest with no `id` collapses every
-branch to one `…::unknown` child (cost a 40-min timeout). Plan: add a
-`worktree` field on `FanOutTemplate`, thread it into the `_isolate` gate +
-the synthetic child node; WARN on a missing dict-item `id` and fail-loud
-(dedup gate in the Send router) on duplicate child ids. Verified
-2026-06-23; feasibility HIGH, no new infra.
+`fan_out.template.worktree` (`auto`/`isolated`/`off`, default inherit)
+overrides `settings.worktree` for one fan-out's branches — one workflow can
+now run an isolated build fan-out AND a shared-base planner fan-out under a
+single top-level `settings.worktree`. Threaded through both execution paths:
+subgraph templates gate isolation in `compile/subgraph.py::make_fan_out_subgraph_invoker`
+(new `template_worktree` arg overrides `_isolate`); non-subgraph templates set
+`worktree` on the synthetic child node in `compile/dynamic.py::_make_fan_out_node`
+so `effective_worktree` resolves it at the foreman gate. For the stable-id
+work: a dict manifest item missing `id` now WARNs in
+`compile/_manifest.py::_normalize_items` (every id-less item was silently
+collapsing onto `<parent>::unknown`), and the Send router
+(`compile/graph.py::_make_dynamic_router`) raises `ManifestError` on any
+duplicate child id before dispatch.
 
 ### B9 — Transient-backend-error resilience for fan-out builds (builder #9, High) — 0.7.6
 

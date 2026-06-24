@@ -259,6 +259,15 @@ escape the branch tree or join a cross-branch group. A fan-out nested
 *inside* a branch shares the outer branch tree (it isn't a second
 isolation level).
 
+A fan-out can override isolation per-block with `fan_out.template.worktree`
+(`auto`/`isolated`/`off`, default = inherit `settings.worktree`). Use
+`worktree: off` on the template when branches must write to the SHARED base
+workdir (a join node reads what they wrote); use `isolated` for a parallel
+build whose branch deltas you promote with `fan_out.promote`. Always give
+each manifest item a unique `id` — an id-less item WARNs and collapses every
+branch onto one `<parent>::unknown` child; a duplicate `id` is a hard
+`ManifestError` before dispatch.
+
 **Remote sources.** `settings.base_url` sets the base for relative
 urls — including an `http(s)://` base, which fetches **prompt
 templates** over the network (gated by `allow_remote_urls`,

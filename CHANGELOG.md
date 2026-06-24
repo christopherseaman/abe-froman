@@ -3,6 +3,13 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- `fan_out.template.worktree` (`auto`/`isolated`/`off`, default inherit) — per-fan-out worktree-isolation override of `settings.worktree`, so one workflow can run an isolated build fan-out alongside a shared-base planner fan-out. `worktree: off` runs branches in the shared base workdir (their writes reach a downstream join node); threaded through both fan-out execution paths (subgraph `make_fan_out_subgraph_invoker` and the non-subgraph synthetic child node).
+- Fail-loud fan-out child ids: a dict manifest item missing `id` now WARNs (it silently collapses every branch onto one `<parent>::unknown` child), and the Send router raises `ManifestError` on any duplicate child id before dispatch.
+
 ## [0.7.4] — native fan-out branch promotion
 
 ### Added
