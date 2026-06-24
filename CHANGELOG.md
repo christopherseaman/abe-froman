@@ -3,7 +3,7 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.7.7] — --entry cold-start + CLI process-group kill
 
 ### Added
 
@@ -11,7 +11,7 @@ All notable changes to sqrlly are documented here. Format follows
 
 ### Fixed
 
-- CLI backend now kills the whole process group on timeout (`start_new_session=True` + `os.killpg` SIGTERM→SIGKILL), so a `claude -p` that spawned descendants (MCP servers, test runners, headless browsers) no longer leaks them. Previously only the direct child was reaped (`proc.kill()`).
+- CLI backend now kills the whole process group on timeout **or cancel** (`start_new_session=True` + `os.killpg` SIGTERM→SIGKILL; `CancelledError` is re-raised after the group kill so cooperative cancellation still propagates), so a `claude -p` that spawned descendants (MCP servers, test runners, headless browsers) no longer leaks them. Previously only the direct child was reaped (`proc.kill()`), and a cancelled in-flight node leaked the whole subtree.
 - `uv run pytest tests/` (bare, without `--ignore`) no longer aborts collection — a basename collision between `tests/cli/test_cli_backend.py` and `tests/unit/runtime/test_cli_backend.py` (pytest `prepend` import mode, no `__init__.py` under `tests/`) raised "import file mismatch". The live cli-suite file is renamed to `test_cli_backend_live.py`.
 
 ## [0.7.6] — backend retry + resumable fan-out children
