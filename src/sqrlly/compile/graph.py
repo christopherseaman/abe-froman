@@ -21,7 +21,7 @@ from sqrlly.compile.nodes import (
 from sqrlly.compile.route import build_route_namespace, evaluate_case
 from sqrlly.compile.subgraph import node_subgraph_path
 from sqrlly.runtime.gates import build_eval_preamble
-from sqrlly.runtime.result import RouteError
+from sqrlly.runtime.result import ManifestError, RouteError
 from sqrlly.runtime.state import WorkflowState
 from sqrlly.schema.models import Graph, Node, Settings
 
@@ -245,6 +245,25 @@ def _make_dynamic_router(node: Node, no_items_targets: list[str]):
                 node.id, no_items_targets,
             )
             return no_items_targets
+
+        # Fail loud on colliding child ids before dispatch. Each branch's
+        # child id is `<parent>::<item_id>` (matching dynamic._make_fan_out_node).
+        # Two items mapping to the same id (literal duplicate, or ≥2 id-less
+        # dict items collapsing onto `::unknown`) would silently merge into one
+        # branch — historically a multi-minute timeout, not an error.
+        seen: set[str] = set()
+        duplicates: set[str] = set()
+        for item in items:
+            child_id = f"{node.id}::{item.get('id', 'unknown')}"
+            if child_id in seen:
+                duplicates.add(child_id)
+            seen.add(child_id)
+        if duplicates:
+            raise ManifestError(
+                f"fan-out {node.id!r}: manifest produces duplicate child id(s) "
+                f"{sorted(duplicates)!r} — each item needs a unique 'id' "
+                f"(id-less items collapse onto '{node.id}::unknown')."
+            )
 
         return [
             Send(template_node_id, {**state, "_fan_out_item": item})

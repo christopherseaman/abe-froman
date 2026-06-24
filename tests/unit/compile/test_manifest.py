@@ -238,3 +238,49 @@ class TestEmptyManifestRouting:
             result = router(state)
         assert result == ["after"]
         assert any("zero items" in r.message for r in caplog.records)
+
+
+class TestDuplicateChildIds:
+    def test_duplicate_literal_ids_raise(self):
+        """Two manifest items with the same 'id' would dispatch two Send
+        branches onto one child id — raise before dispatch."""
+        from sqrlly.compile.graph import _make_dynamic_router
+        from sqrlly.runtime.result import ManifestError
+
+        node = _phase_with_dynamic()  # parent id 'p1'
+        router = _make_dynamic_router(node, no_items_targets=["after"])
+        state = make_initial_state(
+            node_outputs={"p1": json.dumps([{"id": "dup"}, {"id": "dup"}])}
+        )
+        with pytest.raises(ManifestError, match="duplicate"):
+            router(state)
+
+    def test_unknown_collapse_raises(self):
+        """≥2 id-less dict items all map to p1::unknown — a duplicate."""
+        from sqrlly.compile.graph import _make_dynamic_router
+        from sqrlly.runtime.result import ManifestError
+
+        node = _phase_with_dynamic()
+        router = _make_dynamic_router(node, no_items_targets=["after"])
+        state = make_initial_state(
+            node_outputs={"p1": json.dumps([{"topic": "a"}, {"topic": "b"}])}
+        )
+        with pytest.raises(ManifestError, match="unknown"):
+            router(state)
+
+    def test_unique_ids_dispatch_one_send_each(self):
+        """Distinct ids → no raise; one Send per item."""
+        from langgraph.types import Send
+
+        from sqrlly.compile.graph import _make_dynamic_router
+
+        node = _phase_with_dynamic()
+        router = _make_dynamic_router(node, no_items_targets=["after"])
+        state = make_initial_state(
+            node_outputs={"p1": json.dumps([{"id": "a"}, {"id": "b"}])}
+        )
+        result = router(state)
+        assert isinstance(result, list) and len(result) == 2
+        assert all(isinstance(s, Send) for s in result)
+        sent_ids = sorted(s.arg["_fan_out_item"]["id"] for s in result)
+        assert sent_ids == ["a", "b"]
