@@ -119,3 +119,43 @@ def test_fan_out_final_skippable_when_all_clean():
     g = _fan_graph()
     skip = compute_skip_set(g, {"up", "fan", "_final_fan_agg"}, set(), set())
     assert "_final_fan_agg" in skip
+
+
+def test_fan_out_parent_dirty_when_child_failed():
+    """A failed fan-out child (id 'fan::beta') dirties its PARENT 'fan' so it
+    re-fans on resume — even though 'fan::beta' is not a config.nodes id.
+    Completed siblings stay skippable; the parent and its final leave skip."""
+    g = _fan_graph()
+    prior_completed = {"up", "fan", "fan::alpha", "fan::gamma", "_final_fan_agg"}
+    prior_failed = {"fan::beta"}
+    skip = compute_skip_set(g, prior_completed, prior_failed, set())
+    # Parent re-fans (dirty), so it must NOT be frozen.
+    assert "fan" not in skip
+    # Its final aggregation must re-run too (dirty via the parent).
+    assert "_final_fan_agg" not in skip
+    # Completed siblings stay frozen — NOT re-billed.
+    assert "fan::alpha" in skip
+    assert "fan::gamma" in skip
+    # 'up' is unaffected (clean, upstream of the dirty parent... wait: fan
+    # depends_on up, not the reverse — up is NOT downstream of fan, stays
+    # skippable).
+    assert "up" in skip
+
+
+def test_failed_child_of_nonexistent_parent_is_ignored():
+    """A '::'-shaped failed id whose prefix is not a real fan-out parent
+    does not crash and dirties nothing extra (defensive: stale checkpoint)."""
+    g = _fan_graph()
+    skip = compute_skip_set(
+        g, {"up", "fan"}, {"ghost::x"}, set(),
+    )
+    # 'ghost' is not a node; nothing it could dirty. up + fan stay skippable.
+    assert skip == {"up", "fan"}
+
+
+def test_clean_fan_out_resume_freezes_parent_and_children():
+    """No failures: the parent and completed children all stay frozen."""
+    g = _fan_graph()
+    prior_completed = {"up", "fan", "fan::alpha", "fan::beta", "_final_fan_agg"}
+    skip = compute_skip_set(g, prior_completed, set(), set())
+    assert skip == prior_completed

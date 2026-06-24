@@ -69,7 +69,22 @@ def compute_skip_set(
             groups.setdefault(group, []).append(n.id)
             group_of[n.id] = group
 
-    dirty: set[str] = set(prior_failed) | set(rerun_targets)
+    # A failed fan-out child has a synthetic id `<parent>::<item>` that is
+    # NOT in config.nodes, so the BFS below can't reach its parent. Seed the
+    # parent into the dirty set so it re-fans on resume; the dirty closure
+    # then dirties its `_final_<parent>_<f>` aggregation (wired as a synthetic
+    # dependent above). Completed siblings are not config.nodes ids and aren't
+    # reachable from the parent, so they stay in prior_completed - dirty
+    # (frozen — not re-billed). The per-child re-run gate in
+    # compile/dynamic.py freezes a child on `child_id in skip`.
+    fan_out_parents = {n.id for n in config.nodes if n.fan_out}
+    failed_child_parents = {
+        fid.split("::", 1)[0]
+        for fid in prior_failed
+        if "::" in fid and fid.split("::", 1)[0] in fan_out_parents
+    }
+
+    dirty: set[str] = set(prior_failed) | set(rerun_targets) | failed_child_parents
     frontier = list(dirty)
     while frontier:
         cur = frontier.pop()
