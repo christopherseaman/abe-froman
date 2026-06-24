@@ -453,6 +453,7 @@ presence is the activation; there is no enable flag.
 | `manifest_path` | `str \| None` | `None` | On-disk JSON manifest fallback. |
 | `template` | `FanOutTemplate \| None` | `None` | What each Send branch runs. |
 | `final_nodes` | `list[FanOutFinalNode]` | `[]` | Nodes that run after all branches, consuming aggregated output. |
+| `promote` | `bool` | `false` | When true, each Send branch's worktree delta is promoted back to base at the end of a clean run (top-level nodes only, before GC), through `reconcile_promotions` + `on_promote_conflict` + `promote_exclude` — the native merge-back for an isolated parallel build. Distinct from `Node.promote` (which promotes the parent's manifest-only tree; a `validate` lint steers you here). |
 
 The manifest is read from the parent node's JSON output, falling back to
 `manifest_path`. Each Send branch runs `template.execute` (and

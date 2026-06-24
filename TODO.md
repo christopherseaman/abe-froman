@@ -633,25 +633,19 @@ shared `.git/info/exclude` (persists after the run, not reclaimed by
 tracked-file edits). Wired in `runtime/foreman.py` via
 `runtime/worktree_share.py`.
 
-### B7 — Native promotion of fan-out branch worktrees (builder #7, High) — IN PROGRESS 0.7.4
+### ✅ B7 — Native fan-out branch promotion — SHIPPED 0.7.4
 
-The promote loop (`cli/main.py` ~540-574) iterates ONLY top-level
-`config.nodes` with `promote: true`; dynamic fan-out **branch** worktrees
-(per-`Send` branch, keyed `parent::item` in `foreman._worktrees` and
-recorded in `node_worktrees` state, `compile/dynamic.py` ~216) are never
-addressed, so a worktree-isolated parallel build has no native merge-back.
-Verified (workflow 2026-06-23): `FanOut`/`FanOutTemplate`/`FanOutFinalNode`
-carry no promote field; `reconcile_promotions` (`runtime/promote.py`
-~141-158) already accepts arbitrary `(node_id, worktree, globs)` specs (no
-`config.nodes` coupling) — fully reusable. Timing: in-CLI promote already
-runs BEFORE `reclaim()`, so an in-graph/in-CLI promote has no GC race; the
-race only bites an EXTERNAL (post-process) runner promote under
-`worktree_gc: on_success`. Plan: add `fan_out.promote: bool`; extend the
-promote loop to route `node_worktrees` `::`-keyed branch trees of a
-promote-true fan-out through `reconcile_promotions` +
-`on_promote_conflict` + `promote_exclude` (inherits #1's conflict
-detection). Cheap wins: a `validate` lint warning + a CLAUDE.md
-known-limitation note that external promote needs `worktree_gc: never`.
+`fan_out.promote: true` merges each Send branch's worktree delta back to
+base at end-of-run via the existing `reconcile_promotions` +
+`on_promote_conflict` + `promote_exclude` machinery (before GC, so no race
+for the in-CLI path). A new `fanout_branch_specs()` helper in
+`runtime/promote.py` turns `node_worktrees` `::`-keyed branch trees of
+promote-true fan-out parents into promote specs that the CLI run loop
+appends to the top-level `specs` list — no new reconcile path. A `validate`
+lint steers `node.promote` on a fan-out parent (promotes only the
+manifest-only tree) toward `fan_out.promote`. External promote done OUTSIDE
+the run must use `settings.worktree_gc: never`; with `on_success`, `reclaim()`
+removes the branch trees before the process exits (silent data loss).
 
 ### B8 — Per-fan-out worktree control + stable fan-out item id (builder #8, High) — 0.7.5
 

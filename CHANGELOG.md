@@ -3,6 +3,12 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- `fan_out.promote: true` natively promotes each Send branch's worktree delta back to base at end-of-run, through the existing `reconcile_promotions` + `on_promote_conflict` + `promote_exclude` machinery — the native merge-back path for a worktree-isolated parallel build (previously only top-level `promote: true` nodes were promoted; branch worktrees had no native merge path). A `validate` lint steers `node.promote` on a fan-out parent toward `fan_out.promote`.
+
 ## [0.7.3] — init --example
 
 ### Added

@@ -210,6 +210,12 @@ Set `settings.worktree_gc: on_success` to remove worktrees after a clean
 run (default `never` keeps them for inspection / `--resume`). The full
 lifecycle is **fork → produce → read/share → promote → GC**.
 
+A worktree-isolated **fan-out** merges its branch deltas back to base with
+`fan_out.promote: true` (routed through `on_promote_conflict` /
+`promote_exclude`, same as a top-level `promote: true`). Put `promote` on
+the `fan_out:` block, not the parent node — `node.promote` on a fan-out
+parent only promotes its manifest-only worktree (a `validate` lint warns).
+
 **Sharing base deps into worktrees.** A fresh worktree is a clean
 checkout — gitignored base dependencies (`node_modules`, generated
 clients) are not in it, so a node that needs them must get them. Two
