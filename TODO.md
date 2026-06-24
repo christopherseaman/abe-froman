@@ -663,23 +663,20 @@ collapsing onto `<parent>::unknown`), and the Send router
 (`compile/graph.py::_make_dynamic_router`) raises `ManifestError` on any
 duplicate child id before dispatch.
 
-### B9 — Transient-backend-error resilience for fan-out builds (builder #9, High) — 0.7.6
+### ✅ B9 — Transient-backend-error resilience for fan-out builds — SHIPPED 0.7.x
 
-(1) A non-529 backend crash fails the node terminally:
-`runtime/executor/backends/cli.py` ~113-126 raises a plain `RuntimeError`
-for any non-overload non-zero exit; `_overload.py` retries only the
-`{529, overload}` substring set; `PromptExecutor.execute_rendered`
-(`runtime/executor/prompt.py` ~103-147) catches `OverloadError` only — no
-backend-level transient retry exists before the gate-`max_retries`
-(evaluation) layer. (2) A failed fan-out child can't be re-run:
-`--resume-from <child>` is rejected (`cli/main.py` ~639 — "fan-out children
-are not addressable across runs"); a `--resume` re-queues 0 because the
-fan-out parent is `completed`. Plan: (a) `backend_max_retries` (Settings,
-default 0) — bounded backoff retry of transient non-529 exits, distinct
-from gate `max_retries`, wrapping the `execute_rendered`/dispatch boundary;
-(b) make failed fan-out children re-runnable on `--resume` (re-fan only the
-failed leaves; `compute_skip_set` in `compile/resume.py` ~33-84 already
-wires fan-out dependents). Verified 2026-06-23; feasibility HIGH.
+`settings.backend_max_retries` (default `0`) wraps
+`runtime/executor/prompt.py::execute_rendered` in a bounded transient-retry
+layer: a non-`OverloadError` backend exception (e.g. `claude exited 1`) is
+retried up to N times with `retry_backoff` between attempts, distinct from the
+gate/evaluation `max_retries`. Overload still flows through the inner
+model-downgrade chain and is not double-counted. On `--resume`,
+`compile/resume.py::compute_skip_set` now maps each failed fan-out child id
+(`<parent>::<item>`) back to its parent and seeds it into the dirty frontier,
+so the parent re-fans; `compile/dynamic.py::_make_fan_out_node`'s per-child
+gate was changed to freeze on `child_id in _resume_skip` alone (dropping the
+`parent_node.id in skip` guard), so completed siblings stay frozen (no re-bill)
+and only the formerly-failed child re-runs.
 
 ## Low-priority / judgment calls
 

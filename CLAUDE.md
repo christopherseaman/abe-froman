@@ -281,6 +281,23 @@ resolver sees) — distinct from faking what an external system returns.
   - **Shared `info/exclude`, not per-worktree** — git has no per-worktree exclude file: `git rev-parse --git-path info/exclude` resolves to the common git dir, the same `.git/info/exclude` for the base repo and every linked worktree, so `write_worktree_excludes` mutates that one shared file. Consequence: those entries persist in the base repo after the run and are NOT reclaimed by `worktree_gc`; however `info/exclude` only affects UNTRACKED paths, so it can never mask modifications to tracked files.
 - **Per-fan-out worktree override** — `fan_out.template.worktree` (`auto`/`isolated`/`off`, default inherit) overrides `settings.worktree` for one fan-out's branches, so a single workflow can mix an isolated build fan-out with a shared-base planner fan-out. Threaded two ways to match the two fan-out execution paths: subgraph templates gate isolation in `compile/subgraph.py::make_fan_out_subgraph_invoker` (new `template_worktree` arg overrides the `_isolate` computation); non-subgraph (`.md`/`.py`/script) templates set the synthetic child node's `worktree` in `compile/dynamic.py::_make_fan_out_node` so `effective_worktree` resolves it at the foreman gate. `off` runs branches in the base workdir (writes visible to a join node).
 - **Fan-out child-id collisions fail loud** — a dict manifest item missing `id` WARNs in `compile/_manifest.py::_normalize_items` (every id-less item collapses onto `<parent>::unknown`), and the Send router (`compile/graph.py::_make_dynamic_router`) raises `ManifestError` on any DUPLICATE child id before dispatch — catching both literal duplicate `id`s and the `::unknown` collapse before it becomes a silent N→1 fan-out.
+- **Backend transient-error retry is opt-in** — `settings.backend_max_retries`
+  (default `0`) retries the SAME backend dispatch on a non-`OverloadError`
+  exception (a `claude exited 1` blip) up to N times with `retry_backoff`
+  between attempts, wrapped around the `OverloadError`→downgrade loop in
+  `runtime/executor/prompt.py::execute_rendered`. Distinct from the
+  gate/evaluation `max_retries`; overload still flows through the
+  model-downgrade chain (not double-counted). `0` = terminal on first
+  backend error (the historical behavior).
+- **`--resume` re-runs only failed fan-out children** — a fan-out parent
+  with a failed child in the prior checkpoint is dirtied in
+  `compile/resume.py::compute_skip_set` (the failed child's `<parent>::<item>`
+  id is mapped back to its parent and seeded into the dirty frontier), so the
+  parent re-fans; the per-child gate in `compile/dynamic.py::_make_fan_out_node`
+  freezes a child on `child_id in _resume_skip` alone, so completed siblings
+  are NOT re-billed and only the formerly-failed child (never in the frozen
+  snapshot) re-runs. Stable-id-safe: a re-fan that drifts the manifest yields
+  new ids absent from the snapshot.
 
 ## Environment quirks
 

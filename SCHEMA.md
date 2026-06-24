@@ -36,6 +36,7 @@ node; a `params.preset` that names no preset in `settings.presets`.
 |---|---|---|---|
 | `output_directory` | `str` | `"output"` | Default base directory for output contracts. |
 | `max_retries` | `int` | `3` | Default retry budget when an evaluation fails. |
+| `backend_max_retries` | `int` | `0` | Retries of the SAME backend dispatch on a non-overload backend error (e.g. `claude exited 1` — a transient blip), with `retry_backoff` between attempts. Distinct from `max_retries` (the gate/evaluation budget). `0` = one attempt, terminal. Overload stays on the `model_downgrade_chain` path and is not counted here. |
 | `default_timeout` | `float \| None` | `None` | Per-node timeout (seconds); `None` = no timeout. |
 | `preamble_file` | `str \| None` | `None` | Prepended to every prompt before Jinja rendering. A missing file is a hard error. |
 | `retry_backoff` | `list[float]` | `[]` | `asyncio.sleep` seconds before each retry; clamps to the last value past the list length. |

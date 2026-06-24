@@ -327,6 +327,13 @@ created at run time, are absent.
   limitation:** a subgraph re-runs in full unless its reference node
   completed cleanly; inner nodes aren't individually skippable.
 
+Set `settings.backend_max_retries: N` to absorb transient backend blips (a
+`claude exited 1` that isn't an overload) by retrying the same node dispatch N
+times with `retry_backoff` between attempts — separate from the gate
+`max_retries`. On `--resume`, a fan-out whose child failed re-runs ONLY that
+child: the parent re-fans and completed siblings stay frozen (no re-bill), so a
+large parallel build that loses one branch resumes cheaply.
+
 ## Footguns
 
 - **Hyphens in node ids** — `{{my-id}}` parses as subtraction in a
