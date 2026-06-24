@@ -132,6 +132,11 @@ def _make_fan_out_node(
             name=f"{parent_node.name} - {item.get('name', item_id)}",
             evaluation=template.evaluation,
             execute=template.execute,
+            # Per-fan-out worktree override (FanOutTemplate.worktree). None
+            # inherits settings.worktree — identical to a top-level node with
+            # no worktree set. Node-mode-wins-over-settings in
+            # effective_worktree applies the override at the foreman gate.
+            worktree=template.worktree,
         )
 
         # Build context up front — dep outputs + per-item manifest fields
