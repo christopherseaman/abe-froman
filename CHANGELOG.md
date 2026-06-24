@@ -9,6 +9,10 @@ All notable changes to sqrlly are documented here. Format follows
 
 - `settings.backend_max_retries` (default `0`) — opt-in retry of the SAME backend dispatch on a non-overload backend error (a transient `claude exited 1` blip), with `retry_backoff` between attempts. Distinct from the gate/evaluation `max_retries`; overload still uses the `model_downgrade_chain` path and is not double-counted.
 
+### Changed
+
+- `settings:` now rejects unknown keys (`extra=forbid`, consistent with every other model) — a typo'd or stale setting fails loud at load instead of being silently ignored.
+
 ### Fixed
 
 - `--resume` now re-runs ONLY the failed leaves of a fan-out: a parent with a failed child in the prior checkpoint is dirtied (so it re-fans), completed siblings stay frozen (no re-bill), and only the formerly-failed child re-runs. Previously a fan-out parent was always skipped on resume (it had emitted the manifest), leaving the failed child unreachable.

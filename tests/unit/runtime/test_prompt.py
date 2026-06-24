@@ -19,6 +19,7 @@ import pytest
 from sqrlly.runtime.executor.dispatch import DispatchExecutor
 from sqrlly.runtime.executor.prompt import (
     PromptExecutor,
+    _backend_retry_delay,
     downgrade_model,
     prepend_eval_preamble,
     render_template,
@@ -544,6 +545,24 @@ class TestDowngradeModel:
     def test_custom_chain(self):
         assert downgrade_model("a", ["a", "b", "c"]) == "b"
         assert downgrade_model("c", ["a", "b", "c"]) is None
+
+
+# ---------------------------------------------------------------------------
+# _backend_retry_delay — delay-indexing and clamp logic
+# ---------------------------------------------------------------------------
+
+
+class TestBackendRetryDelay:
+    @pytest.mark.parametrize("attempt,backoff,expected", [
+        (1, [], 0.0),                    # empty list → always 0.0
+        (1, [1.0, 2.0], 1.0),           # attempt 0-indexed as attempt-1=0 → first slot
+        (2, [1.0, 2.0], 2.0),           # second slot
+        (3, [1.0, 2.0], 2.0),           # past end → clamps to last
+        (1, [0.5], 0.5),                # single element
+        (99, [0.5], 0.5),               # single element clamps at any attempt
+    ])
+    def test_delay_cases(self, attempt, backoff, expected):
+        assert _backend_retry_delay(attempt, backoff) == expected
 
 
 class TestMemoryBackendProtocol:

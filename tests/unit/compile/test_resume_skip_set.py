@@ -136,9 +136,8 @@ def test_fan_out_parent_dirty_when_child_failed():
     # Completed siblings stay frozen — NOT re-billed.
     assert "fan::alpha" in skip
     assert "fan::gamma" in skip
-    # 'up' is unaffected (clean, upstream of the dirty parent... wait: fan
-    # depends_on up, not the reverse — up is NOT downstream of fan, stays
-    # skippable).
+    # 'up' depends_on nothing; fan depends_on 'up', not the reverse —
+    # 'up' is not downstream of the dirty fan, so it stays skippable.
     assert "up" in skip
 
 

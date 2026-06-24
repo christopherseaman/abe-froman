@@ -68,6 +68,7 @@ async def test_failed_child_runs_when_not_in_skip():
     )
     result = await nf(state)
     assert result != {}  # proceeded past the skip-guard
+    assert ex.execution_order == ["fan::beta"]  # the formerly-failed child ran
 
 
 @pytest.mark.asyncio

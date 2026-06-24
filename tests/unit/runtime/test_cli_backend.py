@@ -337,7 +337,6 @@ class TestCLIBackendRetryViaDispatch:
         """Write an executable /bin/sh stub that increments a counter file
         and exits 1 until it has been called `fail_times` times, then prints
         a fixed line and exits 0. Returns the stub path."""
-        import os
         import stat
 
         counter = tmp_path / "claude_calls.txt"
