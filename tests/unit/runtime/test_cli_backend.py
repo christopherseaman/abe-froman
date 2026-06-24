@@ -399,3 +399,86 @@ class TestCLIBackendRetryViaDispatch:
         assert "Backend error" in result.error
         # One invocation, no retry.
         assert int(counter.read_text()) == 1
+
+
+class TestCLIBackendProcessGroupKill:
+    """On timeout the backend must kill the whole process GROUP, not just the
+    direct child. A real /bin/sh stub forks a descendant that writes a sentinel
+    file after a delay; if only the direct child were killed, the descendant
+    survives and writes the sentinel. With the process-group kill it dies first
+    — no sentinel, pid gone. No mock: real subprocess, real fork."""
+
+    def _stub_with_descendant(self, tmp_path: Path):
+        """Stub `claude` that:
+          - forks a backgrounded descendant which sleeps 3s then writes
+            `descendant.sentinel` and records its own pid in `descendant.pid`;
+          - records the descendant's pid immediately (before the sleep);
+          - then sleeps 10s itself (so the parent is alive and is the group
+            leader when the timeout fires).
+        The descendant writes its pid up front so the test can poll liveness,
+        and the sentinel only AFTER the sleep so its presence proves it
+        survived the kill."""
+        sentinel = tmp_path / "descendant.sentinel"
+        pidfile = tmp_path / "descendant.pid"
+        stub = tmp_path / "claude_group_stub.sh"
+        stub.write_text(
+            "#!/bin/sh\n"
+            "cat >/dev/null\n"  # drain the prompt on stdin
+            "(\n"
+            f'  echo "$$" > "{pidfile}"\n'   # descendant records its pid now
+            "  sleep 3\n"
+            f'  echo alive > "{sentinel}"\n'  # only reached if NOT killed
+            ") &\n"
+            "sleep 10\n"  # parent stays alive past the timeout
+        )
+        stub.chmod(0o755)
+        return stub, sentinel, pidfile
+
+    @pytest.mark.asyncio
+    async def test_timeout_kills_descendant_not_just_child(self, tmp_path):
+        import time
+
+        stub, sentinel, pidfile = self._stub_with_descendant(tmp_path)
+        backend = _backend_for(stub)
+
+        with pytest.raises(asyncio.TimeoutError):
+            await backend.send_prompt(
+                "prompt", "sonnet", str(tmp_path), timeout=0.5,
+            )
+
+        # The descendant must have recorded its pid before the parent's
+        # timeout (the fork + echo happen immediately). Poll briefly for it.
+        deadline = time.monotonic() + 2.0
+        while not pidfile.exists() and time.monotonic() < deadline:
+            await asyncio.sleep(0.02)
+        assert pidfile.exists(), "stub never spawned its descendant"
+        descendant_pid = int(pidfile.read_text().strip())
+
+        # Give the kill a beat to propagate through the group, then assert the
+        # descendant pid is GONE. os.kill(pid, 0) raises ProcessLookupError on
+        # a dead pid; if it does NOT raise, the descendant leaked.
+        await asyncio.sleep(0.6)
+        with pytest.raises(ProcessLookupError):
+            os.kill(descendant_pid, 0)
+
+        # And the sentinel the descendant would have written after sleeping 3s
+        # must NEVER appear — proving it was killed before its sleep finished.
+        await asyncio.sleep(3.0)
+        assert not sentinel.exists(), (
+            "descendant survived the timeout and wrote its sentinel — "
+            "only the direct child was killed, not the process group"
+        )
+
+    @pytest.mark.asyncio
+    async def test_normal_run_still_succeeds_after_session_change(self, tmp_path):
+        """start_new_session=True must not break the happy path: a fast stub
+        still returns its stdout, stripped."""
+        fake = _write_fake(
+            tmp_path, "claude-ok", '#!/bin/sh\ncat >/dev/null\necho ok-output\n',
+        )
+        backend = _backend_for(fake)
+        result = await backend.send_prompt(
+            "x", "sonnet", str(tmp_path), timeout=10.0,
+        )
+        assert result.success is True
+        assert result.output == "ok-output"

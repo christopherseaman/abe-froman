@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import signal
 from typing import Any, Awaitable
 
 from sqrlly.runtime.executor.backends._overload import (
@@ -39,6 +40,39 @@ async def _await_with_timeout(coro: Awaitable[Any], timeout: float | None) -> An
     if timeout is None:
         return await coro
     return await asyncio.wait_for(coro, timeout=timeout)
+
+
+async def _kill_process_group(proc: Any) -> None:
+    """SIGTERM → brief wait → SIGKILL the child's process GROUP, then reap.
+
+    The child is spawned with ``start_new_session=True``, so it is the
+    leader of its own process group and ``os.getpgid(proc.pid)`` is the
+    group containing every descendant ``claude`` forked (MCP servers, test
+    runners, headless browsers). ``proc.kill()`` would signal only the
+    direct child and leak that tree; ``os.killpg`` reaches the whole group.
+
+    No ``/proc`` walk is needed (unlike ``backends/acp.py``): the ACP path
+    kills AFTER the adapter's graceful ``__aexit__``, by which point its
+    grandchildren have reparented to PID 1 and escaped the spawn group. Here
+    the parent is still alive (it is the group leader) when we signal, so the
+    descendants have not reparented and a single group signal reaches them
+    all. We reap the parent with ``proc.wait()`` afterward so the OS does not
+    accumulate a zombie.
+    """
+    try:
+        pgid = os.getpgid(proc.pid)
+    except ProcessLookupError:
+        # Already exited between the timeout and here; just reap.
+        await proc.wait()
+        return
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(pgid, sig)
+        except ProcessLookupError:
+            break  # group already gone
+        if sig is signal.SIGTERM:
+            await asyncio.sleep(0.5)  # grace period for clean shutdown
+    await proc.wait()
 
 
 class CLIBackend:
@@ -89,6 +123,10 @@ class CLIBackend:
         # Overlay the preset env on the inherited environment; empty → None
         # (inherit unchanged), preserving prior behavior exactly.
         proc_env = {**os.environ, **self._env} if self._env else None
+        # start_new_session=True puts the child in its OWN process group
+        # (the child becomes the group leader), so a runaway `claude` that
+        # forked descendants (MCP servers, test runners, headless browsers)
+        # is killable as a GROUP on timeout — see _kill_process_group.
         proc = await asyncio.create_subprocess_exec(
             *argv,
             cwd=workdir,
@@ -96,6 +134,7 @@ class CLIBackend:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            start_new_session=True,
         )
         try:
             stdout_b, stderr_b = await _await_with_timeout(
@@ -103,11 +142,12 @@ class CLIBackend:
                 timeout,
             )
         except asyncio.TimeoutError:
-            # Caller asked for a bounded wait; kill the runaway child
-            # so we don't leak a process per timeout. ``wait()`` reaps
-            # so the OS doesn't accumulate zombies.
-            proc.kill()
-            await proc.wait()
+            # Caller asked for a bounded wait; kill the runaway child AND its
+            # descendants (the whole process group) so we don't leak a tree
+            # per timeout. The parent is still alive here (it is the group
+            # leader), so a single killpg reaches the entire group before any
+            # reparenting. _kill_process_group reaps the parent.
+            await _kill_process_group(proc)
             raise
 
         if proc.returncode != 0:
