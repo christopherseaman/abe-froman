@@ -411,13 +411,15 @@ class TestCLIBackendProcessGroupKill:
     def _stub_with_descendant(self, tmp_path: Path):
         """Stub `claude` that:
           - forks a backgrounded descendant which sleeps 3s then writes
-            `descendant.sentinel` and records its own pid in `descendant.pid`;
-          - records the descendant's pid immediately (before the sleep);
+            `descendant.sentinel`;
+          - the PARENT captures the background subshell's PID via `$!` and
+            writes it to `descendant.pid` (using `$!` is correct: `$$` inside
+            a subshell still expands to the outer shell's PID, not the
+            subshell's PID, so it cannot be used here);
           - then sleeps 10s itself (so the parent is alive and is the group
             leader when the timeout fires).
-        The descendant writes its pid up front so the test can poll liveness,
-        and the sentinel only AFTER the sleep so its presence proves it
-        survived the kill."""
+        The sentinel only appears AFTER the descendant's sleep finishes, so its
+        absence proves the descendant was killed before completing."""
         sentinel = tmp_path / "descendant.sentinel"
         pidfile = tmp_path / "descendant.pid"
         stub = tmp_path / "claude_group_stub.sh"
@@ -425,10 +427,10 @@ class TestCLIBackendProcessGroupKill:
             "#!/bin/sh\n"
             "cat >/dev/null\n"  # drain the prompt on stdin
             "(\n"
-            f'  echo "$$" > "{pidfile}"\n'   # descendant records its pid now
             "  sleep 3\n"
             f'  echo alive > "{sentinel}"\n'  # only reached if NOT killed
             ") &\n"
+            f'echo "$!" > "{pidfile}"\n'  # parent records descendant pid via $!
             "sleep 10\n"  # parent stays alive past the timeout
         )
         stub.chmod(0o755)
@@ -446,8 +448,8 @@ class TestCLIBackendProcessGroupKill:
                 "prompt", "sonnet", str(tmp_path), timeout=0.5,
             )
 
-        # The descendant must have recorded its pid before the parent's
-        # timeout (the fork + echo happen immediately). Poll briefly for it.
+        # The parent writes the descendant's PID (via $!) immediately after
+        # forking, before its own sleep. Poll briefly to let it appear.
         deadline = time.monotonic() + 2.0
         while not pidfile.exists() and time.monotonic() < deadline:
             await asyncio.sleep(0.02)
@@ -457,12 +459,15 @@ class TestCLIBackendProcessGroupKill:
         # Give the kill a beat to propagate through the group, then assert the
         # descendant pid is GONE. os.kill(pid, 0) raises ProcessLookupError on
         # a dead pid; if it does NOT raise, the descendant leaked.
+        # This is a real behavioral discriminator: with the old proc.kill() the
+        # background subshell (descendant_pid != proc.pid) survives here.
         await asyncio.sleep(0.6)
         with pytest.raises(ProcessLookupError):
             os.kill(descendant_pid, 0)
 
-        # And the sentinel the descendant would have written after sleeping 3s
-        # must NEVER appear — proving it was killed before its sleep finished.
+        # Belt-and-suspenders: the sentinel the descendant would write after
+        # its 3s sleep must never appear — confirming it was killed, not just
+        # temporarily paused.
         await asyncio.sleep(3.0)
         assert not sentinel.exists(), (
             "descendant survived the timeout and wrote its sentinel — "
