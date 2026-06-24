@@ -19,6 +19,7 @@ def collect_warnings(config: Graph) -> list[str]:
         _hyphenated_id_warnings(config)
         + _advisory_gate_warnings(config)
         + _worktree_setup_exclude_warnings(config)
+        + _fanout_parent_promote_warnings(config)
     )
 
 
@@ -66,6 +67,26 @@ def _worktree_setup_exclude_warnings(config: Graph) -> list[str]:
             "'src/generated/prisma' or 'node_modules') to worktree_setup_exclude."
         ]
     return []
+
+
+def _fanout_parent_promote_warnings(config: Graph) -> list[str]:
+    """Flag ``node.promote: true`` on a fan-out parent.
+
+    A fan-out parent's OWN worktree holds only the manifest, not the branch
+    deltas. Setting ``node.promote`` there promotes the manifest-only tree,
+    not what the author almost certainly intends. ``fan_out.promote`` is the
+    correct knob — it promotes each Send branch's worktree through the same
+    reconcile path.
+    """
+    out: list[str] = []
+    for node in config.nodes:
+        if node.fan_out is not None and node.promote:
+            out.append(
+                f"node {node.id!r}: promote on a fan-out parent promotes only "
+                f"its (manifest-only) worktree, not the branch worktrees — set "
+                f"fan_out.promote to merge the branch deltas back to base."
+            )
+    return out
 
 
 def _hyphenated_id_warnings(config: Graph) -> list[str]:

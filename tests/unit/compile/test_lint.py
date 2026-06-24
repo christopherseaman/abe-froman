@@ -115,6 +115,38 @@ class TestAdvisoryGateWarnings:
         assert any("fan" in w and "0.7" in w for w in collect_warnings(config))
 
 
+class TestFanoutParentPromoteWarnings:
+    def test_fanout_parent_promote_warns(self):
+        from sqrlly.compile.lint import collect_warnings
+        from sqrlly.schema.models import Graph
+        cfg = Graph(**{
+            "name": "t", "version": "0.0.0",
+            "nodes": [{
+                "id": "build", "name": "build", "promote": True,
+                "fan_out": {"manifest_path": "m.json",
+                            "template": {"execute": {"url": "w.yaml"}}},
+            }],
+            "settings": {},
+        })
+        warns = collect_warnings(cfg)
+        assert any("fan_out.promote" in w and "build" in w for w in warns)
+
+    def test_fanout_promote_no_warn(self):
+        from sqrlly.compile.lint import collect_warnings
+        from sqrlly.schema.models import Graph
+        cfg = Graph(**{
+            "name": "t", "version": "0.0.0",
+            "nodes": [{
+                "id": "build", "name": "build",
+                "fan_out": {"manifest_path": "m.json",
+                            "template": {"execute": {"url": "w.yaml"}},
+                            "promote": True},
+            }],
+            "settings": {},
+        })
+        assert not any("fan_out.promote" in w for w in collect_warnings(cfg))
+
+
 class TestWorktreeSetupExcludeWarnings:
     def test_warns_prisma_generate_without_exclude(self):
         config = make_config(
