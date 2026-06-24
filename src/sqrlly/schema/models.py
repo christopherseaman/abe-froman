@@ -435,8 +435,18 @@ Preset = Annotated[
 
 
 class Settings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     output_directory: str = "output"
     max_retries: int = 3
+    # Transient-backend-error retry budget. DISTINCT from `max_retries`
+    # (the evaluation/gate budget, which retries on a low gate score).
+    # This retries the SAME backend dispatch when the backend raises a
+    # non-OverloadError exception (e.g. `claude exited 1` — a transient
+    # blip), up to this many times with `retry_backoff` between attempts.
+    # OverloadError stays on the model-downgrade path and is not counted
+    # here. 0 (default) = today's behavior: one attempt, terminal.
+    backend_max_retries: int = 0
     default_timeout: float | None = None
     preamble_file: str | None = None
     retry_backoff: list[float] = []
