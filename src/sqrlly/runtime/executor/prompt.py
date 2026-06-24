@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +41,21 @@ def downgrade_model(current: str, chain: list[str]) -> str | None:
     if idx + 1 < len(chain):
         return chain[idx + 1]
     return None
+
+
+def _backend_retry_delay(attempt: int, backoff: list[float]) -> float:
+    """Seconds to sleep before backend-retry ``attempt`` (1-indexed).
+
+    Clamps to the last value past the list length; 0.0 when ``backoff``
+    is empty. Mirrors ``compile/nodes._get_retry_delay`` so gate and
+    backend retries share the same author intuition — duplicated rather
+    than imported because ``runtime/`` must not import ``compile/`` (layer
+    rule), and the function is a two-line clamp.
+    """
+    if not backoff:
+        return 0.0
+    idx = min(attempt - 1, len(backoff) - 1)
+    return backoff[idx]
 
 
 def render_template(template: str, context: dict[str, Any]) -> str:
@@ -116,29 +132,46 @@ class PromptExecutor:
         the merged settings so a subgraph-specific chain is honored.
         """
         s = settings or self._settings
-        current_model = model
-        try:
-            while True:
-                try:
-                    result = await self._backend.send_prompt(
-                        rendered, current_model, workdir, timeout=timeout,
-                    )
-                    break
-                except OverloadError:
-                    next_model = downgrade_model(
-                        current_model, s.model_downgrade_chain
-                    )
-                    if next_model is None:
-                        return ExecutionResult(
-                            success=False,
-                            error=(
-                                f"API overloaded, exhausted model chain "
-                                f"(last: {current_model})"
-                            ),
+        # Bounded transient-retry layer wrapping the overload-downgrade loop.
+        # A non-OverloadError backend exception (e.g. the CLI backend's
+        # `claude exited 1`) re-enters the downgrade loop from the ORIGINAL
+        # model up to `backend_max_retries` times. OverloadError stays inside
+        # the inner loop (model downgrade) and never consumes a backend
+        # retry — overload exhaustion returns from inside the inner loop, so
+        # it never reaches `except Exception` here. attempt 0 = first try.
+        attempt = 0
+        while True:
+            current_model = model
+            try:
+                while True:
+                    try:
+                        result = await self._backend.send_prompt(
+                            rendered, current_model, workdir, timeout=timeout,
                         )
-                    current_model = next_model
-        except Exception as e:
-            return ExecutionResult(success=False, error=f"Backend error: {e}")
+                        break
+                    except OverloadError:
+                        next_model = downgrade_model(
+                            current_model, s.model_downgrade_chain
+                        )
+                        if next_model is None:
+                            return ExecutionResult(
+                                success=False,
+                                error=(
+                                    f"API overloaded, exhausted model chain "
+                                    f"(last: {current_model})"
+                                ),
+                            )
+                        current_model = next_model
+                break
+            except Exception as e:
+                if attempt >= s.backend_max_retries:
+                    return ExecutionResult(
+                        success=False, error=f"Backend error: {e}"
+                    )
+                attempt += 1
+                delay = _backend_retry_delay(attempt, s.retry_backoff)
+                if delay > 0:
+                    await asyncio.sleep(delay)
 
         return ExecutionResult(
             success=True,

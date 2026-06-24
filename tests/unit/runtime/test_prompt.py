@@ -234,6 +234,48 @@ class AlwaysOverloadBackend:
         pass
 
 
+class TransientThenSucceedBackend:
+    """Raises a non-OverloadError (a plain RuntimeError, like the CLI
+    backend's `claude exited 1`) on the first ``fail_count`` calls, then
+    succeeds. Records every call so the test can count attempts. This is
+    a deterministic scripted-exit double for transient-error simulation —
+    sanctioned instrumentation, not a fake of the real network behavior."""
+
+    def __init__(self, fail_count: int = 1, response: str = "recovered"):
+        self._fail_count = fail_count
+        self._response = response
+        self.calls: list[tuple[str, str, str, float | None]] = []
+
+    async def send_prompt(
+        self, prompt: str, model: str, workdir: str,
+        timeout: float | None = None,
+    ) -> ExecutionResult:
+        self.calls.append((prompt, model, workdir, timeout))
+        if len(self.calls) <= self._fail_count:
+            raise RuntimeError(f"claude exited 1: transient blip {len(self.calls)}")
+        return ExecutionResult(output=self._response)
+
+    async def close(self) -> None:
+        pass
+
+
+class AlwaysTransientErrorBackend:
+    """Raises a non-OverloadError on every call. Counts calls."""
+
+    def __init__(self):
+        self.calls: list[tuple[str, str, str, float | None]] = []
+
+    async def send_prompt(
+        self, prompt: str, model: str, workdir: str,
+        timeout: float | None = None,
+    ) -> ExecutionResult:
+        self.calls.append((prompt, model, workdir, timeout))
+        raise RuntimeError("claude exited 1: persistent failure")
+
+    async def close(self) -> None:
+        pass
+
+
 # ---------------------------------------------------------------------------
 # PromptExecutor.apply_preamble
 # ---------------------------------------------------------------------------
@@ -771,4 +813,130 @@ class TestPreambleInjection:
 
         assert result.success is True
         assert backend.calls[0][0] == "Just the prompt"
+
+
+# ---------------------------------------------------------------------------
+# Backend transient-error retry (Settings.backend_max_retries)
+# ---------------------------------------------------------------------------
+
+
+class TestBackendTransientRetry:
+    @pytest.mark.asyncio
+    async def test_zero_retries_is_terminal_today_behavior(self, tmp_path):
+        """backend_max_retries=0 (default): a transient error is terminal,
+        one attempt — exactly today's behavior."""
+        backend = AlwaysTransientErrorBackend()
+        executor = PromptExecutor(
+            backend=backend,
+            settings=Settings(backend_max_retries=0),
+            workdir=str(tmp_path),
+        )
+        result = await executor.execute_rendered(
+            "x", "sonnet", str(tmp_path), timeout=None,
+        )
+        assert result.success is False
+        assert "Backend error" in result.error
+        assert "claude exited 1" in result.error
+        assert len(backend.calls) == 1  # no retry
+
+    @pytest.mark.asyncio
+    async def test_transient_error_retried_then_succeeds(self, tmp_path):
+        """Two transient failures then success, with budget 3 → 3 calls,
+        final success."""
+        backend = TransientThenSucceedBackend(fail_count=2, response="recovered")
+        executor = PromptExecutor(
+            backend=backend,
+            settings=Settings(backend_max_retries=3),
+            workdir=str(tmp_path),
+        )
+        result = await executor.execute_rendered(
+            "x", "sonnet", str(tmp_path), timeout=None,
+        )
+        assert result.success is True
+        assert result.output == "recovered"
+        # 2 failed + 1 success = 3 calls.
+        assert len(backend.calls) == 3
+        # Each attempt re-sent the ORIGINAL model (no downgrade — transient
+        # errors are not overload).
+        assert [c[1] for c in backend.calls] == ["sonnet", "sonnet", "sonnet"]
+
+    @pytest.mark.asyncio
+    async def test_budget_exhausted_returns_failure(self, tmp_path):
+        """Persistent transient error with budget 2 → 1 initial + 2 retries
+        = 3 calls, then terminal failure."""
+        backend = AlwaysTransientErrorBackend()
+        executor = PromptExecutor(
+            backend=backend,
+            settings=Settings(backend_max_retries=2),
+            workdir=str(tmp_path),
+        )
+        result = await executor.execute_rendered(
+            "x", "sonnet", str(tmp_path), timeout=None,
+        )
+        assert result.success is False
+        assert "Backend error" in result.error
+        assert len(backend.calls) == 3  # 1 + 2 retries
+
+    @pytest.mark.asyncio
+    async def test_overload_uses_downgrade_not_backend_retry(self, tmp_path):
+        """Overload must take the model-downgrade path, NOT the backend-retry
+        path — it is not double-counted. With backend_max_retries=5 but a
+        2-step overload, the executor walks opus→sonnet (2 calls) and
+        succeeds; the backend-retry budget is never consumed."""
+        backend = OverloadThenSucceedBackend(fail_count=1, response="recovered")
+        executor = PromptExecutor(
+            backend=backend,
+            settings=Settings(
+                backend_max_retries=5,
+                model_downgrade_chain=["opus", "sonnet", "haiku"],
+            ),
+            workdir=str(tmp_path),
+        )
+        result = await executor.execute_rendered(
+            "x", "opus", str(tmp_path), timeout=None,
+        )
+        assert result.success is True
+        assert result.output == "recovered"
+        # Exactly the downgrade walk — opus then sonnet. No extra
+        # backend-retry attempts (which would re-send opus a 3rd time).
+        assert [c[1] for c in backend.calls] == ["opus", "sonnet"]
+
+    @pytest.mark.asyncio
+    async def test_overload_exhaustion_unchanged_with_backend_budget(self, tmp_path):
+        """Overload at every step still exhausts the model chain and returns
+        the overload failure — the backend-retry budget does NOT re-attempt
+        an exhausted-chain overload."""
+        backend = AlwaysOverloadBackend()
+        executor = PromptExecutor(
+            backend=backend,
+            settings=Settings(
+                backend_max_retries=4,
+                model_downgrade_chain=["opus", "sonnet", "haiku"],
+            ),
+            workdir=str(tmp_path),
+        )
+        result = await executor.execute_rendered(
+            "x", "opus", str(tmp_path), timeout=None,
+        )
+        assert result.success is False
+        assert "exhausted model chain" in result.error
+        # Three downgrade calls, no backend-retry re-walk.
+        assert [c[1] for c in backend.calls] == ["opus", "sonnet", "haiku"]
+
+    @pytest.mark.asyncio
+    async def test_backend_retry_distinct_from_gate_max_retries(self, tmp_path):
+        """The backend-retry budget is read from backend_max_retries, NOT
+        max_retries. A high gate max_retries with backend_max_retries=0 does
+        NOT retry a transient backend error."""
+        backend = AlwaysTransientErrorBackend()
+        executor = PromptExecutor(
+            backend=backend,
+            settings=Settings(max_retries=9, backend_max_retries=0),
+            workdir=str(tmp_path),
+        )
+        result = await executor.execute_rendered(
+            "x", "sonnet", str(tmp_path), timeout=None,
+        )
+        assert result.success is False
+        assert len(backend.calls) == 1  # gate budget irrelevant here
 
