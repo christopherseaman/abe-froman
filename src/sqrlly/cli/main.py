@@ -16,7 +16,9 @@ from sqrlly.compile.graph import build_workflow_graph
 from sqrlly.compile.lint import collect_warnings
 from sqrlly.runtime.executor.dispatch import DispatchExecutor
 from sqrlly.runtime.foreman import ForemanExecutor
-from sqrlly.runtime.promote import PromoteConflictError, reconcile_promotions
+from sqrlly.runtime.promote import (
+    PromoteConflictError, fanout_branch_specs, reconcile_promotions,
+)
 from sqrlly.runtime.runner import run_workflow
 from sqrlly.runtime.state import make_initial_state
 from sqrlly.schema.models import Graph
@@ -553,6 +555,17 @@ async def _execute_workflow(
                         if node.output_contract else None
                     )
                     specs.append((node.id, tree, globs))
+                # Fan-out branch worktrees opt in via fan_out.promote — route
+                # them through the same reconcile path (inherits conflict
+                # detection + promote_exclude). They are recorded in
+                # node_worktrees keyed <parent>::<item>.
+                promote_parents = {
+                    n.id for n in config.nodes
+                    if n.fan_out is not None and n.fan_out.promote
+                }
+                specs.extend(fanout_branch_specs(
+                    promote_parents, result.get("node_worktrees", {}),
+                ))
                 if specs:
                     try:
                         plan = reconcile_promotions(
