@@ -103,10 +103,14 @@ def _make_fan_out_node(
         if child_id in state.get("failed_nodes", set()):
             return {}
 
-        # Resume skip: freeze this child only when its PARENT is also frozen —
-        # a dirty parent re-derives the manifest, so child ids aren't stable.
+        # Resume skip: freeze a child purely on its OWN id being in the frozen
+        # snapshot. Only ids that completed cleanly last run are in the
+        # snapshot, so a completed child stays frozen (not re-billed) even when
+        # a sibling failed and the parent re-fans. The formerly-failed child is
+        # never in prior_completed → never in skip → it runs. Stable-id-safe: a
+        # re-fan that drifts the manifest yields new ids absent from skip.
         skip = state.get("_resume_skip")
-        if skip and parent_node.id in skip and child_id in skip:
+        if skip and child_id in skip:
             return {}
 
         if state.get("dry_run", False):

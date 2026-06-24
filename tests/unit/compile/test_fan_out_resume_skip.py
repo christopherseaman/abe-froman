@@ -1,6 +1,8 @@
-"""Fan-out child resume skip-guard: a child is frozen only when its PARENT
-is also in the skip-set (so the manifest isn't re-derived and child ids are
-stable)."""
+"""Fan-out child resume skip-guard: a child is frozen when its OWN id is in
+the frozen skip snapshot — regardless of whether the parent re-fanned. Only
+ids that completed cleanly last run are in the snapshot, so a completed child
+is never re-billed even when a sibling failed and the parent re-fans; the
+formerly-failed child (never in prior_completed → never in skip) runs."""
 import pytest
 
 from sqrlly.compile.dynamic import _make_fan_out_node
@@ -28,7 +30,8 @@ def _make(parent, executor):
 
 
 @pytest.mark.asyncio
-async def test_child_frozen_when_parent_and_child_in_skip():
+async def test_child_frozen_when_child_in_skip():
+    """Child id in the frozen snapshot → frozen (not re-executed)."""
     ex = MockExecutor()
     nf = _make(_fan_parent(), ex)
     state = make_initial_state(
@@ -40,13 +43,38 @@ async def test_child_frozen_when_parent_and_child_in_skip():
 
 
 @pytest.mark.asyncio
-async def test_child_runs_when_parent_not_in_skip():
-    # Parent dirty (re-fanned) => child must run even if its id is in skip.
+async def test_completed_child_frozen_even_when_parent_refans():
+    """Parent dirty (re-fanned, NOT in skip), but this child completed last
+    run and IS in skip → it must stay frozen (no re-bill of a clean sibling)."""
     ex = MockExecutor()
     nf = _make(_fan_parent(), ex)
     state = make_initial_state(
-        _fan_out_item={"id": "item1"},
-        _resume_skip={"fan::item1"},  # parent "fan" NOT in skip
+        _fan_out_item={"id": "alpha"},
+        _resume_skip={"fan::alpha", "fan::gamma"},  # parent 'fan' NOT in skip
+    )
+    assert await nf(state) == {}
+    assert ex.execution_order == []
+
+
+@pytest.mark.asyncio
+async def test_failed_child_runs_when_not_in_skip():
+    """The formerly-failed child id is NOT in the snapshot (never completed),
+    so it runs on resume even though its siblings are frozen."""
+    ex = MockExecutor()
+    nf = _make(_fan_parent(), ex)
+    state = make_initial_state(
+        _fan_out_item={"id": "beta"},
+        _resume_skip={"fan::alpha", "fan::gamma"},  # beta absent → runs
     )
     result = await nf(state)
     assert result != {}  # proceeded past the skip-guard
+
+
+@pytest.mark.asyncio
+async def test_no_skip_set_runs_normally():
+    """Absent _resume_skip (fresh run) → child runs."""
+    ex = MockExecutor()
+    nf = _make(_fan_parent(), ex)
+    state = make_initial_state(_fan_out_item={"id": "x"})
+    result = await nf(state)
+    assert result != {}
