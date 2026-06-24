@@ -3,7 +3,7 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.7.4] — native fan-out branch promotion
 
 ### Added
 
