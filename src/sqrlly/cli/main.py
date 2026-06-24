@@ -9,7 +9,9 @@ from typing import Any
 import click
 import yaml
 
-from sqrlly.cli.init import init_command, init_skill
+from sqrlly.cli.init import (
+    init_command, init_example, init_list_examples, init_skill,
+)
 from sqrlly.compile.graph import build_workflow_graph
 from sqrlly.compile.lint import collect_warnings
 from sqrlly.runtime.executor.dispatch import DispatchExecutor
@@ -127,22 +129,43 @@ def cli():
 
 
 @cli.command()
-@click.argument("directory", default=".", type=click.Path())
+@click.argument("directory", default=None, required=False, type=click.Path())
 @click.option(
     "--skill", is_flag=True,
     help="Install the agent skill into <repo>/.agents/skills/sqrlly/ "
          "instead of scaffolding a workflow.",
 )
-def init(directory: str, skill: bool):
-    """Scaffold a minimal runnable workflow into DIRECTORY (default `.`).
+@click.option(
+    "--example", "example", default=None, metavar="NAME",
+    help="Scaffold a bundled example (see --list-examples).",
+)
+@click.option(
+    "--list-examples", "list_examples", is_flag=True,
+    help="List the bundled examples available to --example.",
+)
+def init(
+    directory: str | None, skill: bool, example: str | None,
+    list_examples: bool,
+):
+    """Scaffold a runnable workflow into DIRECTORY.
 
-    With --skill, install the sqrlly agent skill into the working repo
-    (repo-aware) so a coding agent auto-discovers it.
+    Bare: a minimal workflow (DIRECTORY default `.`). With --skill: install
+    the agent skill doc into the working repo. With --example NAME: scaffold
+    a bundled example (DIRECTORY default `./NAME`). --list-examples prints the
+    available examples.
     """
-    if skill:
-        init_skill(directory)
+    if sum(bool(x) for x in (skill, example, list_examples)) > 1:
+        raise click.ClickException(
+            "--skill, --example, and --list-examples may not be combined."
+        )
+    if list_examples:
+        init_list_examples()
+    elif example:
+        init_example(example, directory or example)
+    elif skill:
+        init_skill(directory or ".")
     else:
-        init_command(directory)
+        init_command(directory or ".")
 
 
 @cli.command()
