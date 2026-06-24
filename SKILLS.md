@@ -78,6 +78,29 @@ write a YAML file with `name`, `version`, `nodes`, and `settings`.
    match) on `acp`. `cli_args` is a cli-only escape hatch. Defaults
    (all unset): `cli` runs with no tools; `acp` allows all (its
    historical behavior).
+
+   **Supervised cooperating agents (managed teams).** sqrlly has no
+   first-class managed-team or oversight-coordinator node. The
+   supervised-cooperating-agent-team behavior is achievable today as
+   an authoring pattern:
+
+   1. Grant a prompt node's backend the **Task** tool via the
+      preset's `allowed_tools: ["Task", ...]` + a `permission_mode`
+      that permits it (`bypassPermissions` allows all Claude tools).
+   2. Write a coordinator prompt in that single node: "spawn N
+      workers for task X, watch each result, intervene on a
+      diverging/stuck one (re-prompt / kill+retry), synthesize."
+   3. Claude inside that node acts as the supervising team lead — it
+      spawns sub-agent members, sees them report back, intervenes
+      mid-flight, and aggregates.
+
+   Caveats: members are sub-agents inside ONE sqrlly node (one
+   worktree, one process) — they do NOT get per-member sqrlly
+   worktree isolation, gates, or `promote`, and the run log /
+   terminal grid see one node, not the sub-agents. A first-class
+   managed-team node earns its weight only if each member must be a
+   real sqrlly node (own worktree/gate/promote) — essentially
+   `fan_out` + a supervisor, a much bigger build.
 5. **Add a gate** to retry a node until its output is good enough:
    ```yaml
    evaluation:

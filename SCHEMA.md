@@ -125,6 +125,12 @@ defaults to `llm`, so pre-`CommandPreset` YAML still parses).
 > the tool lists are exact on `cli` and best-effort on `acp` (which
 > gates by tool *kind*, not claude tool names).
 
+Granting `Task` in `allowed_tools` (with a `permission_mode` that permits
+it) enables an in-node *managed-team* pattern — Claude inside the node
+spawns and supervises sub-agent members itself. See SKILLS.md for the full
+coordinator pattern and its caveats (the members are sub-agents internal to
+one sqrlly node, not isolated sqrlly nodes).
+
 Both supported transports drive Claude Code; the choice is invocation
 shape, not vendor:
 

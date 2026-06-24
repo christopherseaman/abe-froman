@@ -325,6 +325,13 @@ resolver sees) — distinct from faking what an external system returns.
   are NOT re-billed and only the formerly-failed child (never in the frozen
   snapshot) re-runs. Stable-id-safe: a re-fan that drifts the manifest yields
   new ids absent from the snapshot.
+- **No first-class managed-team / oversight node** — there is no supervised
+  coordinator primitive, and none is planned near-term. The supported approach
+  is an authoring pattern: a prompt node granted the `Task` tool
+  (`allowed_tools: ["Task"]`) runs a coordinator prompt and spawns/supervises
+  sub-agent members via Claude's own agent loop (oversight inside one node).
+  Members are sub-agents within that single node, NOT isolated sqrlly nodes
+  (no per-member worktree/gate/promote). See `SKILLS.md` for the full pattern.
 
 ## Environment quirks
 
