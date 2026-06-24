@@ -415,3 +415,86 @@ class TestResumeDirtyGuards:
         assert "_final_fan_agg" in result_2["completed_nodes"]
         # Aggregation body re-ran.
         assert _read_runs(tmp_path, "agg") == 2
+
+
+def _build_failable_fanout(workdir: Path) -> Graph:
+    """up -> cfan (fans over alpha/beta/gamma) ; each child runs worker.py
+    keyed by the per-item id, so a per-child run-counter (runs_<id>.txt) and
+    the fail.txt marker (holding a bare item id) control exactly one child's
+    failure. No final_nodes — the assertion is purely on per-child re-run."""
+    worker = _worker_path(workdir)
+    manifest = json.dumps(
+        {"items": [{"id": "alpha"}, {"id": "beta"}, {"id": "gamma"}]}
+    )
+    return Graph(
+        name="resume-failable-fanout",
+        version="0.1.0",
+        nodes=[
+            {
+                "id": "up", "name": "up",
+                "execute": {
+                    "url": _PYTHON,
+                    "params": {"args": [str(worker), "up"]},
+                },
+            },
+            {
+                "id": "cfan", "name": "cfan", "depends_on": ["up"],
+                "execute": {
+                    "url": _ECHO,
+                    "params": {"args": ["-n", manifest]},
+                },
+                "fan_out": {
+                    "template": {
+                        "execute": {
+                            "url": _PYTHON,
+                            "params": {"args": [str(worker), "{{id}}"]},
+                        },
+                    },
+                },
+            },
+        ],
+    )
+
+
+class TestResumeFailedChild:
+    @pytest.mark.asyncio
+    async def test_only_failed_child_reruns_on_resume(self, tmp_path):
+        """Fan-out over alpha/beta/gamma; beta fails in phase 1. On resume
+        (bare --resume, no resume-from) ONLY beta re-runs; alpha and gamma
+        are frozen — their run counters stay at 1. The parent re-fans (dirty
+        via the failed child), beta succeeds, the run completes clean."""
+        config = _build_failable_fanout(tmp_path)
+        db_path = str(tmp_path / ".checkpoint.db")
+        thread_id = "failed-child-resume"
+
+        # Phase 1: beta fails.
+        (tmp_path / "fail.txt").write_text("beta")
+        result_1 = await _run_phase(
+            tmp_path, config, db_path, thread_id, resume=False,
+        )
+        assert "cfan" in result_1["completed_nodes"]
+        assert "cfan::alpha" in result_1["completed_nodes"]
+        assert "cfan::gamma" in result_1["completed_nodes"]
+        assert "cfan::beta" in result_1["failed_nodes"]
+        assert _read_runs(tmp_path, "alpha") == 1
+        assert _read_runs(tmp_path, "beta") == 1
+        assert _read_runs(tmp_path, "gamma") == 1
+
+        # Phase 2: clear the marker, bare --resume (no resume-from).
+        (tmp_path / "fail.txt").unlink()
+        result_2 = await _run_phase(
+            tmp_path, config, db_path, thread_id, resume=True,
+        )
+        # The formerly-failed child now succeeds.
+        assert "cfan::beta" in result_2["completed_nodes"]
+        assert result_2["failed_nodes"] == set()
+
+        # ONLY beta re-ran. alpha and gamma frozen — counters stay at 1.
+        assert _read_runs(tmp_path, "alpha") == 1, "completed sibling re-billed"
+        assert _read_runs(tmp_path, "gamma") == 1, "completed sibling re-billed"
+        # beta ran once per phase = 2.
+        assert _read_runs(tmp_path, "beta") == 2
+
+        # 'up' completed cleanly and is upstream of the dirty parent (not
+        # downstream), so it is frozen — runs once total.
+        assert _read_runs(tmp_path, "up") == 1
