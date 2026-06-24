@@ -690,7 +690,7 @@ findings this pass:
   "import file mismatch". Renamed the live file `test_cli_backend_live.py` (the only
   collision in the tree; `--import-mode=importlib` rejected to avoid touching the 36
   `from helpers import` sites). Bare collection now clean (1247 collected).
-- [x] **N2 — `--entry <node>`: run a node / DAG tail from COLD — SHIPPED 0.7.x**
+- [x] **N2 — `--entry <node>`: run a node / DAG tail from COLD — SHIPPED 0.7.7**
   — `sqrlly run --entry <node>` cold-starts at `<node>` (no checkpoint), freezing
   everything upstream and running `<node>` + downstream. Reuses
   `compute_skip_set(config, {all ids}, set(), {entry})`; reseeds
@@ -698,9 +698,10 @@ findings this pass:
   `{{upstream}}` vars). Mutually exclusive with `--resume` family.
 - [ ] **#5 — per-node token budget (Low)** — a declarative `budget_tokens`
   per node/preset that fails the node when exceeded (parallel to `timeout`).
-  (The CLI-killpg half of the original #5 — process-group kill on timeout —
-  SHIPPED 0.7.x: `cli.py` now spawns with `start_new_session=True` and
-  `os.killpg`-escalates on timeout, matching the ACP teardown discipline.)
+  (The CLI-killpg half of the original #5 — process-group kill on timeout
+  AND cancel — SHIPPED 0.7.7: `cli.py` now spawns with `start_new_session=True`
+  and `os.killpg`-escalates on timeout/cancel, matching the ACP teardown
+  discipline; only the `budget_tokens` half above remains open.)
 - [ ] **#6 — managed-team node with mid-flight oversight (Low)** — a coordinator node that
   spawns + supervises fan-out members during execution (check-ins, intervene, aggregate),
   above the fire-and-join `fan_out` primitive. (Folds in the N4 evidence: phase_3_1b auditors
