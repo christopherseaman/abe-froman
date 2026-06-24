@@ -3,6 +3,12 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- `sqrlly init --example <name>` scaffolds a runnable bundled example (`jokes`, `route_classify`, `explicit_join`, `pipeline_style`) onto disk, and `sqrlly init --list-examples` lists them. The run-essential files ship in the wheel, so `pipx`/`uv tool install` users with no repo checkout can scaffold and run an example immediately.
+
 ## [0.7.2] — run output/log/artifact summary
 
 ### Added

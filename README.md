@@ -150,6 +150,7 @@ Full reference (including `CommandPreset` for custom script interpreters): [SCHE
 | Command | Purpose |
 |---|---|
 | `sqrlly init [<dir>]` | Scaffold a minimal runnable workflow into `<dir>` (default `.`). |
+| `sqrlly init --example <name>` | Scaffold a bundled example into `./<name>` (`--list-examples` to see them). |
 | `sqrlly validate <config>` | Compile the workflow; report node count and lint warnings. |
 | `sqrlly run <config>` | Execute the workflow. |
 | `sqrlly graph <config>` | Print the topology as a Mermaid diagram. |
@@ -165,6 +166,8 @@ Full reference (including `CommandPreset` for custom script interpreters): [SCHE
 - `--quiet / -q` — suppress the live terminal renderer (use in CI / piped runs).
 
 `run` shows a live per-node status grid + a clock-driven aliveness spinner when stdout is a TTY. Non-TTY runs (piped, redirected, CI) fall through to the plain summary output automatically. Workflow events only — no LLM-token streaming. On completion `run` prints a `where to find things` summary — the produced output files, the log path (or how to capture one with `--log`), and run artifacts (checkpoint DB + worktree pool); `--quiet` suppresses it.
+
+`init --example <name>` scaffolds a runnable bundled example (`jokes`, `route_classify`, `explicit_join`, `pipeline_style`) — handy after `uv tool install sqrlly` when you have no repo checkout. `init --list-examples` lists them.
 
 ## Examples
 

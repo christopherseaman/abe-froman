@@ -27,6 +27,10 @@ and authenticated — auth is per-CLI, not sqrlly's job:
 
 Script, binary, and subgraph nodes need no backend.
 
+No repo checkout? `sqrlly init --example jokes` scaffolds a runnable
+example on disk (`--list-examples` for the set: `jokes`,
+`route_classify`, `explicit_join`, `pipeline_style`).
+
 ## Author a workflow
 
 Fastest start: `sqrlly init [dir]` scaffolds a schema-valid
