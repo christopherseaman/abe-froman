@@ -11,7 +11,6 @@ so a coding agent auto-discovers it.
 from __future__ import annotations
 
 import importlib.resources
-import re
 import subprocess
 from pathlib import Path
 
@@ -50,18 +49,13 @@ EXAMPLES: dict[str, dict] = {
 
 
 def _rewrite_example_urls(yaml_text: str, name: str) -> str:
-    """Strip the ``examples/<name>/`` prefix from quoted ``url:``/``validator:``
-    path values so a scaffolded workflow resolves them relative to its own
-    directory. Absolute paths (e.g. ``/usr/bin/echo``) and refs to other
-    examples are left untouched."""
-    prefix = f"examples/{name}/"
-    pattern = re.compile(
-        r'((?:url|validator):\s*)(["\'])' + re.escape(prefix) + r'([^"\']+)\2'
-    )
-    yaml_text = pattern.sub(r"\1\2\3\2", yaml_text)
-    # Also rewrite the example path in comments (e.g., in run instructions)
-    yaml_text = yaml_text.replace(f"examples/{name}/workflow.yaml", "workflow.yaml")
-    return yaml_text
+    """Strip the ``examples/<name>/`` prefix wherever it appears in a
+    scaffolded example's workflow YAML — quoted ``url:``/``validator:``
+    path values AND header-comment run commands — so the copy is
+    self-contained and runnable from its own directory. Absolute paths
+    (e.g. ``/usr/bin/echo``) and refs to other examples don't carry the
+    prefix, so they're left untouched."""
+    return yaml_text.replace(f"examples/{name}/", "")
 
 
 def _load_example_file(src_repo_relpath: str) -> str:

@@ -1,7 +1,10 @@
 """Unit tests for `sqrlly init --example` scaffolding (cli/init.py)."""
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
+from click import ClickException
 
 from sqrlly.cli import init as initmod
 
@@ -41,6 +44,17 @@ def test_rewrite_only_touches_named_example():
     assert initmod._rewrite_example_urls(text, "jokes") == text  # different name
 
 
+def test_rewrite_strips_prefix_in_comments():
+    text = (
+        "# Demo:\n"
+        "#   sqrlly run examples/jokes/workflow.yaml --preset cli\n"
+        "nodes: []\n"
+    )
+    out = initmod._rewrite_example_urls(text, "jokes")
+    assert "sqrlly run workflow.yaml --preset cli" in out
+    assert "examples/jokes/" not in out
+
+
 def test_load_example_file_reads_repo_source():
     # In a source checkout the wheel resource is absent; the repo fallback
     # returns the real file content.
@@ -49,13 +63,8 @@ def test_load_example_file_reads_repo_source():
 
 
 def test_load_example_file_unknown_raises():
-    from click import ClickException
     with pytest.raises(ClickException):
         initmod._load_example_file("examples/nope/nope.yaml")
-
-
-from pathlib import Path
-from click import ClickException
 
 
 def test_init_example_scaffolds_files_and_rewrites(tmp_path):
