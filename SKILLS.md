@@ -72,7 +72,7 @@ write a YAML file with `name`, `version`, `nodes`, and `settings`.
 
    **Tool use.** `permission_mode` is the portable knob; on `cli` it maps
    to `claude`'s `--permission-mode`, on `acp` it gates by tool *kind*
-   (`bypassPermissions` = all, `acceptEdits` = edits+reads not bash,
+   (`bypassPermissions` = all, `acceptEdits` = edits+reads not execute,
    `default`/`plan` = read-only). `allowed_tools` / `disallowed_tools`
    are exact claude tool names on `cli` and best-effort (kind/title
    match) on `acp`. `cli_args` is a cli-only escape hatch. Defaults
@@ -343,9 +343,10 @@ created at run time, are absent.
   `node_model` (LLM nodes: the `preset` + `model` that ran the node),
   `node_completed`, `node_failed`, `gate_evaluated`, `node_retried`,
   `workflow_end`. The node id is the `node` field (not `node_id`).
-  Subgraph events are prefixed `parent::child` (one level — a deeper
-  nest shows the *immediate* parent, so keep child ids unique across
-  sibling subgraphs). Note: events carry status/score, not the node's
+  Subgraph events are prefixed with the parent chain (`parent::child`,
+  nesting to `parent::child::grandchild` for deeper subgraphs); child
+  ids need only be unique within their own subgraph, not across
+  siblings. Note: events carry status/score, not the node's
   full output text — capture that from the node itself if you need it.
 - A failed `run` exits non-zero and lists the failed nodes.
 - A node that keeps retrying is failing its gate — inspect the

@@ -41,7 +41,7 @@ and even then likely a content-aware acceptance gate rather than blind
 > (the native-join alternative needs a synthetic marker node per gated
 > node: strictly more complexity).
 
-- [ ] 🚨 **(31) `--resume` discards the checkpointer instead of trusting it** (`cli/main.py:370-392`). Reads `channel_values` from prior checkpoint, builds a cleaned state dict, calls `cp.adelete_thread(thread_id)`, then re-streams from initial-state-like dict. Effectively replays the whole graph (the runs-counter in `test_resume_fan_out.py` still pins this: `_read_runs("a") == 2` after resume). The visible symptom of `completed_nodes` accumulating duplicates was masked by the set-union reducer (2026-05-19), but bodies still re-execute. Re-reading the design landscape: the LangGraph-native "pass thread_id to astream" pattern assumes the graph paused mid-execution (via `interrupt()`); a graph that returned terminal-with-failures has nothing to resume from natively. Fully resolving the DAG case requires picking one of three API shapes in TODO #26 (skip-completed-via-prior-run channel, `--resume-from <node>`, JSONL-driven skip). Defer until that design call lands.
+- [ ] 🚨 **(31) `--resume` rebuilds state instead of native checkpointer resume** (`cli/main.py`, the `--resume` path). Reads `channel_values` from the prior checkpoint, builds a cleaned state dict, calls `cp.adelete_thread(thread_id)`, then re-streams from an initial-state-like dict rather than via LangGraph's native `interrupt()`-based resume. The user-visible "replays the whole graph" symptom was RESOLVED by skip-completed resume (0.6.0): the `_resume_skip` channel freezes completed-node bodies (`test_resume_fan_out.py` asserts `_read_runs(tmp_path, "a") == 1` after resume — node `a` runs once, not twice). What remains is architectural — the LangGraph-native "pass thread_id to astream" pattern assumes the graph paused mid-execution (via `interrupt()`); a graph that returned terminal-with-failures has nothing to resume from natively, so the rebuild-and-re-stream stands. Tracked with the resume-semantics design call in #26. Defer.
 
 ## Hardening — structural footgun checks (2026-05-20)
 
@@ -166,9 +166,9 @@ the construct is unambiguously broken.
 
 - [ ] **Collapse `runtime/executor/backends/` → `runtime/backends/`** — 4-level nesting (`runtime/executor/backends/acp.py`) for 4 small files. Semantic loss: current nesting signals that only `PromptExecutor` uses backends. If we land the anthropic/openai backends (below), the signal still holds but less strongly — multiple executor types might route through one backends/ module. Low value, low risk; defer until a second executor family justifies the flattening.
 
-- [ ] **Fold `compile/dynamic.py` into `compile/nodes.py`** — 182 LOC would bring `nodes.py` to ~530 LOC. The split is defensive today: `_make_fan_out_node` has legitimately divergent semantics (no dep check, no output contract, no retry routing). **Worth revisiting after** the gate-eval unification above — if the gate block is gone and the final remaining divergence is "Send-triggered vs. normal-invocation," the split stops earning its keep.
+- [ ] **Fold `compile/dynamic.py` into `compile/nodes.py`** — currently dynamic.py is 369 LOC and nodes.py is 945 LOC. The split is defensive today: `_make_fan_out_node` has legitimately divergent semantics (no dep check, no output contract, no retry routing). **Worth revisiting after** the gate-eval unification above — if the gate block is gone and the final remaining divergence is "Send-triggered vs. normal-invocation," the split stops earning its keep.
 
-- [ ] **Move `_detect_cycles` + `_find_terminal_phases` → `schema/models.py`** — topology validation belongs with the config model. Blockers: `schema/` is currently langgraph-free Pydantic-only; moving these functions in would require no imports from `langgraph`, which they already don't have. Clean move. Low priority — they're stable and small.
+- [ ] **Move `_detect_cycles` → `schema/models.py`** (+ topology helpers) — topology validation belongs with the config model. Blockers: `schema/` is currently langgraph-free Pydantic-only; moving these functions in would require no imports from `langgraph`, which they already don't have. Clean move. Low priority — they're stable and small.
 
 ## Test doctrine cleanup
 
@@ -688,8 +688,8 @@ findings this pass:
   `tests/cli/test_cli_backend.py` + `tests/unit/runtime/test_cli_backend.py` shared a
   basename (pytest `prepend` mode, no `__init__.py` — which the repo forbids) →
   "import file mismatch". Renamed the live file `test_cli_backend_live.py` (the only
-  collision in the tree; `--import-mode=importlib` rejected to avoid touching the 36
-  `from helpers import` sites). Bare collection now clean (1247 collected).
+  collision in the tree; `--import-mode=importlib` rejected to avoid touching the 16
+  `from helpers import` sites). Bare collection now clean.
 - [x] **N2 — `--entry <node>`: run a node / DAG tail from COLD — SHIPPED 0.7.7**
   — `sqrlly run --entry <node>` cold-starts at `<node>` (no checkpoint), freezing
   everything upstream and running `<node>` + downstream. Reuses

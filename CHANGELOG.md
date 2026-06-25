@@ -3,6 +3,13 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.7.9] — docs: managed-team pattern + full doc review
+
+### Documentation
+
+- Documented the managed-team authoring pattern: prompt nodes granted the `Task` tool via preset `allowed_tools` can spawn and supervise sub-agent members inside the node, run a coordinator prompt, and aggregate results. Members are sub-agents within ONE sqrlly node (not isolated sqrlly nodes). Pattern and caveats detailed in SKILLS.md; cross-referenced in SCHEMA.md and CLAUDE.md.
+- Reviewed every doc against the current source and corrected stale claims: subgraph events nest hierarchically (`parent::child::grandchild`), `--resume` skips completed nodes by default (`--rerun-all` forces a full replay), consistent `promote_include` examples, and refreshed file/test references.
+
 ## [0.7.8] — promote_include re-include allow-list
 
 ### Added
@@ -810,10 +817,10 @@ Until structured-return via output contracts lands, that mismatch
 costs more in user-confusion than the cheap-classifier use case
 gains. The full pre-strip patch lives on
 `experiment/strip-api-transport` and the audit + design notes are in
-[WISHLIST.md][wl35] (item 35) for re-introduction once
+[TODO.md][wl35] (item 35) for re-introduction once
 `transport: cli` provides the agent-shaped alternative.
 
-[wl35]: https://github.com/christopherseaman/sqrlly/blob/main/WISHLIST.md
+[wl35]: https://github.com/christopherseaman/sqrlly/blob/main/TODO.md
 
 ## [dev] — command presets (named script interpreters)
 

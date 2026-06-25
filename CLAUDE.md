@@ -289,9 +289,10 @@ resolver sees) — distinct from faking what an external system returns.
   subgraph *inner*
   nodes aren't individually skippable — a subgraph re-runs in full unless
   its reference node completed cleanly.
-- **Subgraph event prefix is one level** — child events are prefixed
-  `parent::child` (immediate parent only), so child ids must be unique
-  across sibling subgraphs to avoid log collisions.
+- **Subgraph event prefix nests hierarchically** — child events are prefixed
+  with their parent's id (`parent::child`), and nested subgraphs compose
+  naturally into deeper hierarchies (`parent::child::grandchild`). No
+  collision risk; child ids need only be unique within their own subgraph.
 - **Checkpointer migration** — pre-refactor `.sqrlly-state.json` is
   ignored on `--resume`; re-run from scratch.
 - **ACP soak under load** — process-tree cleanup is fixed for the test
