@@ -771,8 +771,13 @@ class TestFullExampleParse:
 
         assert config.name == "Absurd Academic Paper"
         assert len(config.nodes) > 0
-        # Migrated to presets; default preset's model is sonnet.
-        defaults = [p for p in config.settings.presets.values() if p.default]
+        # Migrated to presets; default preset's model is sonnet. The
+        # registry now mixes LlmPresets with a CommandPreset (PDF render),
+        # and CommandPresets carry no `default` flag — hence getattr.
+        defaults = [
+            p for p in config.settings.presets.values()
+            if getattr(p, "default", False)
+        ]
         assert len(defaults) == 1
         assert defaults[0].model == "sonnet"
 

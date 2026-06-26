@@ -5,9 +5,19 @@ All notable changes to sqrlly are documented here. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- `sqrlly init --example absurd-paper` — the full showcase (prompts + gates + fan-out + subgraphs → a rendered PDF) is now scaffoldable and bundled in the wheel, so pipx/uv-tool users can run the complete demo from a fresh directory with no repo checkout. Run-essential files only; sample artifacts (`reference-output/`, `view.html`) are excluded.
+
+### Changed
+
+- The absurd-paper example is portable and self-contained, and runs end-to-end from a plain (non-git) directory. Its python script nodes run under PATH-resolved `uv` (a `uv_script` command preset) instead of hardcoded interpreter paths; it runs in the workdir (`worktree: off`) with workdir-relative `output/` paths so `persist`/`render_pdf`/`submission_check` agree on one location; the paper-composition node gets a larger timeout for its full-document generation; and the `paper` subgraph now projects the composed paper text (`outputs: { reconcile }`) so the reviewer pool actually briefs its reviewers (`{{paper_reconcile}}`). The demo's only external tools are `uv` (already present from `uv tool install sqrlly`) and `claude`.
+
 ### Fixed
 
 - Bundled examples no longer default to the optional `acp` transport. `examples/absurd-paper/` (workflow + both subgraphs) and `examples/smoke_test.yaml` now use `transport: cli`, so they run on the headline `uv tool install sqrlly` / `pipx install sqrlly` install (which omits the `acp` extra) given a `claude` CLI on PATH. Previously the first prompt node crashed with `ModuleNotFoundError: No module named 'acp'`. `examples/jokes/` was already cli-default — its `acp` preset is an opt-in `--preset acp` alternate, never selected by a default run.
+- Missing-executable errors are now actionable. A script/command/binary node whose interpreter isn't on PATH, and the `cli` backend when `claude` isn't on PATH, report `Command not found on PATH: '<name>'` with remediation instead of a bare `FileNotFoundError` errno.
+- `get_backend()` no longer assumes every preset carries a `default` flag, so a workflow that mixes LLM presets (gates) with a command preset (script dispatch) resolves the LLM default regardless of preset declaration order.
 
 ## [0.7.9] — docs: managed-team pattern + full doc review
 

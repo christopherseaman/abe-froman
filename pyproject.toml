@@ -69,6 +69,34 @@ packages = ["src/sqrlly"]
 "examples/route_classify/scripts/triage.py" = "sqrlly/_examples/route_classify/scripts/triage.py"
 "examples/explicit_join.yaml" = "sqrlly/_examples/explicit_join.yaml"
 "examples/pipeline_style/workflow.yaml" = "sqrlly/_examples/pipeline_style/workflow.yaml"
+# absurd-paper: the full showcase (prompts + gates + fan-out + subgraphs →
+# rendered PDF). Only the run-essential files ride along — reference-output/
+# and view.html (sample artifacts) are excluded.
+"examples/absurd-paper/workflow.yaml" = "sqrlly/_examples/absurd-paper/workflow.yaml"
+"examples/absurd-paper/preamble.md" = "sqrlly/_examples/absurd-paper/preamble.md"
+"examples/absurd-paper/subgraphs/compose_and_validate.yaml" = "sqrlly/_examples/absurd-paper/subgraphs/compose_and_validate.yaml"
+"examples/absurd-paper/subgraphs/single_review.yaml" = "sqrlly/_examples/absurd-paper/subgraphs/single_review.yaml"
+"examples/absurd-paper/prompts/abstract.md" = "sqrlly/_examples/absurd-paper/prompts/abstract.md"
+"examples/absurd-paper/prompts/choose_topic.md" = "sqrlly/_examples/absurd-paper/prompts/choose_topic.md"
+"examples/absurd-paper/prompts/critique_review.md" = "sqrlly/_examples/absurd-paper/prompts/critique_review.md"
+"examples/absurd-paper/prompts/discussion.md" = "sqrlly/_examples/absurd-paper/prompts/discussion.md"
+"examples/absurd-paper/prompts/intro.md" = "sqrlly/_examples/absurd-paper/prompts/intro.md"
+"examples/absurd-paper/prompts/methods.md" = "sqrlly/_examples/absurd-paper/prompts/methods.md"
+"examples/absurd-paper/prompts/outline.md" = "sqrlly/_examples/absurd-paper/prompts/outline.md"
+"examples/absurd-paper/prompts/publish_verdict.md" = "sqrlly/_examples/absurd-paper/prompts/publish_verdict.md"
+"examples/absurd-paper/prompts/reconcile.md" = "sqrlly/_examples/absurd-paper/prompts/reconcile.md"
+"examples/absurd-paper/prompts/results.md" = "sqrlly/_examples/absurd-paper/prompts/results.md"
+"examples/absurd-paper/prompts/reviewer_pool.md" = "sqrlly/_examples/absurd-paper/prompts/reviewer_pool.md"
+"examples/absurd-paper/prompts/reviewer_review.md" = "sqrlly/_examples/absurd-paper/prompts/reviewer_review.md"
+"examples/absurd-paper/gates/abstract_multi_dim.md" = "sqrlly/_examples/absurd-paper/gates/abstract_multi_dim.md"
+"examples/absurd-paper/gates/choose_topic_eval.md" = "sqrlly/_examples/absurd-paper/gates/choose_topic_eval.md"
+"examples/absurd-paper/gates/outline_json.py" = "sqrlly/_examples/absurd-paper/gates/outline_json.py"
+"examples/absurd-paper/gates/publish_verdict.md" = "sqrlly/_examples/absurd-paper/gates/publish_verdict.md"
+"examples/absurd-paper/gates/review_quality.py" = "sqrlly/_examples/absurd-paper/gates/review_quality.py"
+"examples/absurd-paper/gates/submission_check.py" = "sqrlly/_examples/absurd-paper/gates/submission_check.py"
+"examples/absurd-paper/scripts/persist_paper.py" = "sqrlly/_examples/absurd-paper/scripts/persist_paper.py"
+"examples/absurd-paper/scripts/pick_topic.py" = "sqrlly/_examples/absurd-paper/scripts/pick_topic.py"
+"examples/absurd-paper/scripts/render_pdf.py" = "sqrlly/_examples/absurd-paper/scripts/render_pdf.py"
 
 [tool.hatch.build.targets.sdist]
 # `.sqrlly/` is the foreman worktree pool — gitignored, but each

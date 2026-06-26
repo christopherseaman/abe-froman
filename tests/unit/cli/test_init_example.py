@@ -9,9 +9,10 @@ from click import ClickException
 from sqrlly.cli import init as initmod
 
 
-def test_catalog_has_curated_four():
+def test_catalog_has_curated_examples():
     assert set(initmod.EXAMPLES) == {
         "jokes", "route_classify", "explicit_join", "pipeline_style",
+        "absurd-paper",
     }
     for name, spec in initmod.EXAMPLES.items():
         assert spec["description"]

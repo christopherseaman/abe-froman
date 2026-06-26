@@ -427,7 +427,20 @@ class DispatchExecutor:
                 output=stdout.decode(),
                 error=f"Exit code {proc.returncode}: {stderr.decode()}",
             )
-        except (FileNotFoundError, OSError) as e:
+        except FileNotFoundError as e:
+            # The interpreter/command/binary isn't on PATH. Name it and say
+            # so plainly — a bare errno ("[Errno 2] ...") reads as a bug, not
+            # a missing tool. (e.g. a workflow whose script nodes run under
+            # `uv` fails here at the first node if `uv` isn't installed.)
+            missing = e.filename or (argv[0] if argv else "?")
+            return ExecutionResult(
+                success=False,
+                error=(
+                    f"Command not found on PATH: {missing!r}. Install it or "
+                    f"correct the node's url/preset command."
+                ),
+            )
+        except OSError as e:
             return ExecutionResult(success=False, error=str(e))
 
     def get_backend(self) -> PromptBackend | None:
@@ -443,7 +456,10 @@ class DispatchExecutor:
         if not self._prompt_backend_builders:
             return None
         for name, preset in self._settings.presets.items():
-            if preset.default and name in self._prompt_backend_builders:
+            # CommandPresets carry no `default` flag; a mixed registry
+            # (LlmPreset gates + CommandPreset script dispatch) must skip
+            # them without AttributeError, regardless of insertion order.
+            if getattr(preset, "default", False) and name in self._prompt_backend_builders:
                 return self._executor_for_preset(name)._backend
         # Defensive: registry/settings out-of-sync (shouldn't happen).
         first_name = sorted(self._prompt_backend_builders)[0]

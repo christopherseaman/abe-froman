@@ -531,3 +531,18 @@ class TestCLIBackendProcessGroupKill:
         )
         assert result.success is True
         assert result.output == "ok-output"
+
+
+class TestCLIBackendMissingBinary:
+    @pytest.mark.asyncio
+    async def test_missing_binary_reports_actionable_error(self, tmp_path):
+        """When the backend binary is absent from PATH the spawn raises a
+        clear error naming the missing command — not a bare
+        FileNotFoundError errno. A user who installed sqrlly but not
+        `claude` hits this at the first prompt node."""
+        backend = CLIBackend(argv_prefix=("sqrlly-no-such-claude-xyz", "-p"))
+        with pytest.raises(RuntimeError) as ei:
+            await backend.send_prompt("hi", "sonnet", str(tmp_path), timeout=10.0)
+        msg = str(ei.value)
+        assert "not found on PATH" in msg
+        assert "sqrlly-no-such-claude-xyz" in msg

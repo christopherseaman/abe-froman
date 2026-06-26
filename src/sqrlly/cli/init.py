@@ -45,16 +45,46 @@ EXAMPLES: dict[str, dict] = {
         "description": "Forward-edge `route: goto` authoring (pure script — no backend).",
         "files": {"workflow.yaml": "examples/pipeline_style/workflow.yaml"},
     },
+    "absurd-paper": {
+        "description": "Full showcase: prompts + gates + fan-out + subgraphs → rendered PDF (needs authed `claude` CLI + `uv`).",
+        "files": {
+            "gates/abstract_multi_dim.md": "examples/absurd-paper/gates/abstract_multi_dim.md",
+            "gates/choose_topic_eval.md": "examples/absurd-paper/gates/choose_topic_eval.md",
+            "gates/outline_json.py": "examples/absurd-paper/gates/outline_json.py",
+            "gates/publish_verdict.md": "examples/absurd-paper/gates/publish_verdict.md",
+            "gates/review_quality.py": "examples/absurd-paper/gates/review_quality.py",
+            "gates/submission_check.py": "examples/absurd-paper/gates/submission_check.py",
+            "preamble.md": "examples/absurd-paper/preamble.md",
+            "prompts/abstract.md": "examples/absurd-paper/prompts/abstract.md",
+            "prompts/choose_topic.md": "examples/absurd-paper/prompts/choose_topic.md",
+            "prompts/critique_review.md": "examples/absurd-paper/prompts/critique_review.md",
+            "prompts/discussion.md": "examples/absurd-paper/prompts/discussion.md",
+            "prompts/intro.md": "examples/absurd-paper/prompts/intro.md",
+            "prompts/methods.md": "examples/absurd-paper/prompts/methods.md",
+            "prompts/outline.md": "examples/absurd-paper/prompts/outline.md",
+            "prompts/publish_verdict.md": "examples/absurd-paper/prompts/publish_verdict.md",
+            "prompts/reconcile.md": "examples/absurd-paper/prompts/reconcile.md",
+            "prompts/results.md": "examples/absurd-paper/prompts/results.md",
+            "prompts/reviewer_pool.md": "examples/absurd-paper/prompts/reviewer_pool.md",
+            "prompts/reviewer_review.md": "examples/absurd-paper/prompts/reviewer_review.md",
+            "scripts/persist_paper.py": "examples/absurd-paper/scripts/persist_paper.py",
+            "scripts/pick_topic.py": "examples/absurd-paper/scripts/pick_topic.py",
+            "scripts/render_pdf.py": "examples/absurd-paper/scripts/render_pdf.py",
+            "subgraphs/compose_and_validate.yaml": "examples/absurd-paper/subgraphs/compose_and_validate.yaml",
+            "subgraphs/single_review.yaml": "examples/absurd-paper/subgraphs/single_review.yaml",
+            "workflow.yaml": "examples/absurd-paper/workflow.yaml",
+        },
+    },
 }
 
 
 def _rewrite_example_urls(yaml_text: str, name: str) -> str:
     """Strip the ``examples/<name>/`` prefix wherever it appears in a
-    scaffolded example's workflow YAML — quoted ``url:``/``validator:``
-    path values AND header-comment run commands — so the copy is
-    self-contained and runnable from its own directory. Absolute paths
-    (e.g. ``/usr/bin/echo``) and refs to other examples don't carry the
-    prefix, so they're left untouched."""
+    scaffolded example's YAML (workflow + subgraphs) — quoted
+    ``url:``/``validator:`` path values AND header-comment run commands —
+    so the copy is self-contained and runnable from its own directory.
+    Absolute paths (e.g. ``/usr/bin/echo``) and refs to other examples
+    don't carry the prefix, so they're left untouched."""
     return yaml_text.replace(f"examples/{name}/", "")
 
 
@@ -83,8 +113,9 @@ def init_example(name: str, directory: str) -> None:
     """Scaffold the curated example ``name`` into ``directory``.
 
     Writes each catalog file (creating subdirs like ``gates/``/``scripts/``),
-    rewriting the workflow YAML's ``examples/<name>/`` URL prefixes so the
-    copy is self-contained. Refuses to clobber an existing ``workflow.yaml``.
+    rewriting every YAML's ``examples/<name>/`` URL prefixes (workflow +
+    subgraphs) so the copy is self-contained. Refuses to clobber an existing
+    ``workflow.yaml``.
     """
     if name not in EXAMPLES:
         raise click.ClickException(
@@ -100,7 +131,9 @@ def init_example(name: str, directory: str) -> None:
         )
     for dest_rel, src_rel in EXAMPLES[name]["files"].items():
         text = _load_example_file(src_rel)
-        if dest_rel == "workflow.yaml":
+        # Rewrite every YAML (workflow + subgraphs) — subgraph files also
+        # carry ``examples/<name>/`` prefixes on their prompt/gate URLs.
+        if dest_rel.endswith((".yaml", ".yml")):
             text = _rewrite_example_urls(text, name)
         out = target / dest_rel
         out.parent.mkdir(parents=True, exist_ok=True)

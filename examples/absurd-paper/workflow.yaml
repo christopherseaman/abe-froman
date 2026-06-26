@@ -4,10 +4,13 @@ version: "0.1.0"
 nodes:
   - id: seed_inspiration
     name: "Gather Topic Inspirations"
+    # First node runs under the `uv_script` command preset — so a missing
+    # `uv` fails fast here (before any LLM call) with a clear error,
+    # instead of surfacing only at the PDF-render step at the end.
     execute:
-      url: /home/christopher/projects/sqrlly/.venv/bin/python3
+      url: "examples/absurd-paper/scripts/pick_topic.py"
       params:
-        args: ["examples/absurd-paper/scripts/pick_topic.py"]
+        preset: uv_script
 
   - id: choose_topic
     name: "Synthesize Absurd Research Domain"
@@ -85,7 +88,10 @@ nodes:
   # project the five body-section outputs into the subgraph's
   # `node_inputs` channel so the subgraph never sees the parent's full
   # state. The subgraph's terminal output (submission_check) surfaces
-  # at `node_outputs["paper"]` here.
+  # at `node_outputs["paper"]` here; the `outputs:` projection also
+  # exposes the composed paper text (reconcile's output) as the parent
+  # var `{{paper_reconcile}}`, which `reviewer_pool` reads to brief the
+  # reviewers on the paper they're judging.
   - id: paper
     name: "Compose & Validate Paper"
     depends_on: [abstract, intro, methods, results, discussion]
@@ -98,11 +104,15 @@ nodes:
           methods: "{{methods}}"
           results: "{{results}}"
           discussion: "{{discussion}}"
+        outputs:
+          reconcile: "{{reconcile}}"
 
   # Deterministic PDF render via `uv run --script` + PEP 723 inline
   # dependencies (markdown + weasyprint). No project-wide install — uv
   # resolves deps on first invocation and caches them. Journal-ish CSS
-  # (2-column serif, small-caps section headers, page numbers).
+  # (2-column serif, small-caps section headers, page numbers). The
+  # `render_pdf_cmd` command preset runs the script under PATH-resolved
+  # `uv` (no hardcoded interpreter path).
   - id: render_pdf
     name: "Render Paper to PDF"
     depends_on: [paper]
@@ -110,14 +120,12 @@ nodes:
       base_directory: "output"
       required_files: ["paper.pdf"]
     execute:
-      url: /home/christopher/.local/bin/uv
+      url: "examples/absurd-paper/scripts/render_pdf.py"
       params:
+        preset: uv_script
         args:
-          - "run"
-          - "--script"
-          - "examples/absurd-paper/scripts/render_pdf.py"
-          - "../../output/paper.md"
-          - "../../output/paper.pdf"
+          - "output/paper.md"
+          - "output/paper.pdf"
 
   - id: reviewer_pool
     name: "Reviewer Pool Manifest"
@@ -160,6 +168,13 @@ nodes:
 settings:
   preamble_file: "examples/absurd-paper/preamble.md"
   output_directory: "paper"
+  # Run every node in the workdir (no per-node git worktrees). The paper
+  # is assembled across nodes via the shared `output/` directory, so the
+  # nodes must agree on one filesystem location — `persist` writes
+  # `output/paper.md`, `render_pdf` reads it, `submission_check` reads
+  # `$WORKDIR/output/paper.md`. This also lets the example run from a
+  # plain (non-git) directory, e.g. a fresh `sqrlly init --example`.
+  worktree: off
   max_retries: 2
   default_timeout: 180.0
   retry_backoff: [5.0, 15.0]
@@ -177,3 +192,11 @@ settings:
       transport: cli
       provider: anthropic
       model: "opus"
+    uv_script:
+      kind: command
+      # Every python script node runs under PATH-resolved `uv` — so the
+      # demo's only executable deps are `uv` (you already have it from
+      # `uv tool install sqrlly`) and `claude`. `--script` resolves any
+      # PEP 723 inline deps on demand (render_pdf.py needs markdown +
+      # weasyprint; the stdlib scripts declare none).
+      command: "uv run --script"

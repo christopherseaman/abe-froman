@@ -99,6 +99,29 @@ class TestCommandPresetDispatch:
         assert "['--flag', 'v']" in result.output
 
     @pytest.mark.asyncio
+    async def test_missing_command_reports_actionable_error(self, tmp_path):
+        """A command preset naming a binary absent from PATH yields an
+        actionable 'not found on PATH' error naming the command — not a
+        bare errno string. A user without `uv` hits exactly this at the
+        first script node."""
+        script = tmp_path / "s.py"
+        script.write_text("print('x')")
+        settings = Settings(presets={
+            "ghost": CommandPreset(command="sqrlly-no-such-binary-xyz"),
+        })
+        ex = DispatchExecutor(workdir=str(tmp_path), settings=settings)
+        node = Node(
+            id="n", name="N",
+            execute=Execute(url="s.py", params={"preset": "ghost"}),
+        )
+        result = await ex.execute(
+            node, {}, workdir=str(tmp_path), settings_override=settings,
+        )
+        assert not result.success
+        assert "not found on PATH" in result.error
+        assert "sqrlly-no-such-binary-xyz" in result.error
+
+    @pytest.mark.asyncio
     async def test_file_placeholder_substitution(self, tmp_path):
         """{{file}} token places the path explicitly mid-command."""
         script = tmp_path / "s.py"

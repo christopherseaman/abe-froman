@@ -127,15 +127,27 @@ class CLIBackend:
         # (the child becomes the group leader), so a runaway `claude` that
         # forked descendants (MCP servers, test runners, headless browsers)
         # is killable as a GROUP on timeout — see _kill_process_group.
-        proc = await asyncio.create_subprocess_exec(
-            *argv,
-            cwd=workdir,
-            env=proc_env,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            start_new_session=True,
-        )
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *argv,
+                cwd=workdir,
+                env=proc_env,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                start_new_session=True,
+            )
+        except FileNotFoundError as e:
+            # The CLI binary (default `claude`) isn't on PATH. Surface an
+            # actionable message instead of a bare FileNotFoundError errno —
+            # a user who installed sqrlly but not `claude` hits this on the
+            # first prompt node.
+            missing = e.filename or self._argv_prefix[0]
+            raise RuntimeError(
+                f"Command not found on PATH: {missing!r}. The "
+                f"{self._argv_prefix[0]!r} CLI must be installed and on PATH "
+                f"for transport: cli."
+            ) from e
         try:
             stdout_b, stderr_b = await _await_with_timeout(
                 proc.communicate(input=prompt.encode()),

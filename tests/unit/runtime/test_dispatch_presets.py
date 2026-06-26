@@ -146,6 +146,37 @@ class TestGetBackend:
     def test_no_backends_returns_none(self):
         assert DispatchExecutor().get_backend() is None
 
+    def test_skips_command_preset_ordered_before_default(self):
+        """A mixed registry where a CommandPreset precedes the default
+        LlmPreset still returns the LLM default. CommandPresets carry no
+        ``default`` flag, so get_backend must not assume every preset has
+        one — regression for the absurd-paper example, the first workflow
+        to mix an LlmPreset (gates) with a CommandPreset (PDF render)."""
+        from sqrlly.schema.models import CommandPreset
+
+        built: list[str] = []
+
+        def cli_builder():
+            built.append("cli")
+            return CLIBackend()
+
+        settings = Settings(presets={
+            # CommandPreset FIRST in insertion order — get_backend iterates
+            # it before reaching the default LlmPreset.
+            "render_cmd": CommandPreset(command="uv run --script"),
+            "default": LlmPreset(
+                transport="cli", provider="anthropic",
+                model="sonnet", default=True,
+            ),
+        })
+        dispatcher = DispatchExecutor(
+            prompt_backend_builders={"default": cli_builder},
+            settings=settings,
+        )
+        backend = dispatcher.get_backend()
+        assert isinstance(backend, CLIBackend)
+        assert built == ["cli"]
+
 
 class TestFactoryThreadsAcpEnv:
     """ACPBackend construction is offline-safe (spawn deferred to first

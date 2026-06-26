@@ -16,7 +16,10 @@ version: "1.0.0"
 nodes:
   - id: reconcile
     name: "Compose Paper"
-    timeout: 240.0
+    # Stitches all five sections into one full-paper markdown — a large
+    # single generation, so it gets a generous ceiling (the body-section
+    # nodes each run under the 180s default).
+    timeout: 600.0
 
     execute:
       url: "examples/absurd-paper/prompts/reconcile.md"
@@ -29,9 +32,10 @@ nodes:
     execute:
       url: "examples/absurd-paper/scripts/persist_paper.py"
       params:
+        preset: uv_script
         args:
           - "{{reconcile}}"
-          - "../../output/paper.md"
+          - "output/paper.md"
 
   - id: submission_check
     name: "Submission Structural Check"
@@ -41,9 +45,18 @@ nodes:
       threshold: 1.0
       blocking: true
 settings:
+  # Run in the workdir (no per-node worktrees) so `persist` writes
+  # `output/paper.md` to the same shared location the parent's
+  # `render_pdf` reads — see the parent workflow's worktree note.
+  worktree: off
   presets:
     default:
       transport: cli
       provider: anthropic
       model: sonnet
       default: true
+    uv_script:
+      kind: command
+      # `persist_paper.py` runs under PATH-resolved `uv` (stdlib-only, no
+      # PEP 723 deps) — same interpreter story as the parent workflow.
+      command: "uv run --script"

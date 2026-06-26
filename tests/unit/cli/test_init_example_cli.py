@@ -9,8 +9,44 @@ from sqrlly.cli.main import cli
 def test_list_examples_flag_lists_all():
     res = CliRunner().invoke(cli, ["init", "--list-examples"])
     assert res.exit_code == 0
-    for name in ("jokes", "route_classify", "explicit_join", "pipeline_style"):
+    for name in (
+        "jokes", "route_classify", "explicit_join", "pipeline_style",
+        "absurd-paper",
+    ):
         assert name in res.output
+
+
+def test_absurd_paper_scaffolds_multifile_and_rewrites_subgraph(tmp_path):
+    """The multi-file showcase scaffolds every runnable file and rewrites
+    the ``examples/absurd-paper/`` prefix in ALL yaml (workflow + subgraphs),
+    not just workflow.yaml — and the result is a valid workflow."""
+    from pathlib import Path
+
+    from sqrlly.cli.main import load_config
+
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=tmp_path):
+        res = runner.invoke(cli, ["init", "--example", "absurd-paper"])
+        assert res.exit_code == 0, res.output
+        root = Path("absurd-paper")
+        # Representative files across every subdir are present.
+        for rel in (
+            "workflow.yaml",
+            "subgraphs/compose_and_validate.yaml",
+            "subgraphs/single_review.yaml",
+            "prompts/choose_topic.md",
+            "gates/outline_json.py",
+            "scripts/render_pdf.py",
+            "preamble.md",
+        ):
+            assert (root / rel).is_file(), rel
+        # The prefix is stripped from the subgraph too (not only workflow.yaml).
+        sub = (root / "subgraphs/single_review.yaml").read_text()
+        assert "examples/absurd-paper/" not in sub
+        assert "prompts/reviewer_review.md" in sub
+        # And the scaffolded copy is a valid, self-contained workflow.
+        config = load_config(str(root / "workflow.yaml"))
+        assert config.name == "Absurd Academic Paper"
 
 
 def test_example_scaffolds_into_named_subdir_by_default(tmp_path):
