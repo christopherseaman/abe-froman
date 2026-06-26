@@ -1,4 +1,4 @@
-name: "ACP Smoke Test"
+name: "Smoke Test"
 version: "0.1.0"
 
 nodes:
@@ -9,7 +9,7 @@ nodes:
 settings:
   presets:
     default:
-      transport: acp
+      transport: cli
       provider: anthropic
       model: "sonnet"
       default: true

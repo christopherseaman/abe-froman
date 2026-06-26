@@ -3,6 +3,12 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- Bundled examples no longer default to the optional `acp` transport. `examples/absurd-paper/` (workflow + both subgraphs) and `examples/smoke_test.yaml` now use `transport: cli`, so they run on the headline `uv tool install sqrlly` / `pipx install sqrlly` install (which omits the `acp` extra) given a `claude` CLI on PATH. Previously the first prompt node crashed with `ModuleNotFoundError: No module named 'acp'`. `examples/jokes/` was already cli-default — its `acp` preset is an opt-in `--preset acp` alternate, never selected by a default run.
+
 ## [0.7.9] — docs: managed-team pattern + full doc review
 
 ### Documentation

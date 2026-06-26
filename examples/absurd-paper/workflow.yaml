@@ -169,11 +169,11 @@ settings:
     opus: 1
   presets:
     default:
-      transport: acp
+      transport: cli
       provider: anthropic
       model: "sonnet"
       default: true
     _auto_opus:
-      transport: acp
+      transport: cli
       provider: anthropic
       model: "opus"
