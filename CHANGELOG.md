@@ -3,6 +3,12 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.7.12] — clean paper output under custom Claude output styles
+
+### Fixed
+
+- The absurd-paper example runs Claude with `--safe-mode`, so an operator's configured output style (e.g. "explanatory") no longer prepends commentary — like a `★ Insight` block — into the generated `paper.md` or a gate's JSON. `--safe-mode` also isolates the run from the operator's CLAUDE.md / skills / MCP / hooks, making the demo reproducible across machines. Scoped to the example's preset (`cli_args: ["--safe-mode"]`); not a global default, since `--safe-mode` would disable tools/MCP that other workflows rely on.
+
 ## [0.7.11] — trim absurd-paper to end on the PDF
 
 ### Changed

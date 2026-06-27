@@ -144,6 +144,11 @@ settings:
       provider: anthropic
       model: "sonnet"
       default: true
+      # Generate with a clean, reproducible Claude. `--safe-mode` disables
+      # operator customizations (output styles, CLAUDE.md, skills, MCP,
+      # hooks), so e.g. an "explanatory" output style can't prepend
+      # commentary into paper.md — or into a gate's JSON output.
+      cli_args: ["--safe-mode"]
     uv_script:
       kind: command
       # Every python script node runs under PATH-resolved `uv` — so the
