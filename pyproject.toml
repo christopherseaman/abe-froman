@@ -69,7 +69,7 @@ packages = ["src/sqrlly"]
 "examples/route_classify/scripts/triage.py" = "sqrlly/_examples/route_classify/scripts/triage.py"
 "examples/explicit_join.yaml" = "sqrlly/_examples/explicit_join.yaml"
 "examples/pipeline_style/workflow.yaml" = "sqrlly/_examples/pipeline_style/workflow.yaml"
-# absurd-paper: the full showcase (prompts + gates + fan-out + subgraphs →
+# absurd-paper: the showcase (prompts + multi-dim gates + subgraph →
 # rendered PDF). Only the run-essential files ride along — reference-output/
 # and view.html (sample artifacts) are excluded.
 "examples/absurd-paper/workflow.yaml" = "sqrlly/_examples/absurd-paper/workflow.yaml"
