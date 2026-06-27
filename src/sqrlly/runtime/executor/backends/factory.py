@@ -57,7 +57,9 @@ _BACKEND_BUILDERS: dict[tuple[str, str], Callable[["LlmPreset"], PromptBackend]]
 }
 
 
-def create_backend_from_preset(preset: "LlmPreset") -> PromptBackend:
+def create_backend_from_preset(
+    preset: "LlmPreset", *, safe_mode: bool = False,
+) -> PromptBackend:
     """Instantiate a PromptBackend matching the preset's transport+provider.
 
     The preset's ``model`` is consulted per-call via ``send_prompt(model=...)``;
@@ -65,5 +67,18 @@ def create_backend_from_preset(preset: "LlmPreset") -> PromptBackend:
     in model share an instance shape, but each preset gets its own backend
     instance at the registry level for lifecycle clarity (separate ``close()``
     paths, separate semaphore accounting if added later).
+
+    ``safe_mode`` appends ``--safe-mode`` to a cli backend's argv, so the
+    invocation ignores the operator's Claude customizations (output styles,
+    CLAUDE.md, skills, MCP, hooks) — keeping workflow generation reproducible
+    and free of e.g. an "explanatory" output style leaking commentary into
+    node output. It is a ``claude`` CLI flag with no acp equivalent, so it
+    only applies to ``transport: cli`` presets.
     """
+    if safe_mode and preset.transport == "cli":
+        existing = preset.cli_args or []
+        if "--safe-mode" not in existing:
+            preset = preset.model_copy(
+                update={"cli_args": [*existing, "--safe-mode"]},
+            )
     return _BACKEND_BUILDERS[(preset.transport, preset.provider)](preset)

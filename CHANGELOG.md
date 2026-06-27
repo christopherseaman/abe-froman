@@ -3,6 +3,12 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.7.13] — opt-in `safe_mode` for clean, reproducible runs
+
+### Added
+
+- `settings.safe_mode: bool` (default `false`) and a `sqrlly run --safe-mode / --no-safe-mode` flag. When on, every cli-backend Claude call runs with `--safe-mode`, disabling operator customizations (output styles, CLAUDE.md, skills, MCP, hooks) so workflow generation stays reproducible and free of e.g. an "explanatory" output style prepending commentary into node output. The flag overrides the setting per run; sqrlly never overrides operator settings by default. cli transport only — it's a `claude` CLI flag with no acp equivalent. The bundled LLM examples (`jokes`, `absurd-paper`, `smoke_test`) set `safe_mode: true` so they run cleanly out of the box regardless of the operator's Claude config; absurd-paper's prior `cli_args: ["--safe-mode"]` is replaced by the setting.
+
 ## [0.7.12] — clean paper output under custom Claude output styles
 
 ### Fixed

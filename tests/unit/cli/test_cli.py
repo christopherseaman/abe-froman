@@ -8,6 +8,7 @@ from sqrlly.cli.main import (
     CHECKPOINT_DB,
     _collect_subgraph_presets,
     _db_path,
+    _effective_safe_mode,
     _is_git_repo,
     _thread_id_for,
     cli,
@@ -17,6 +18,24 @@ from sqrlly.cli.main import (
 @pytest.fixture
 def runner():
     return CliRunner()
+
+
+class TestEffectiveSafeMode:
+    """`--safe-mode/--no-safe-mode` (tri-state, default None) overrides
+    `settings.safe_mode`; absent flag falls back to the setting."""
+
+    def test_flag_absent_uses_setting(self):
+        from sqrlly.schema.models import Settings
+        assert _effective_safe_mode(None, Settings(safe_mode=True)) is True
+        assert _effective_safe_mode(None, Settings(safe_mode=False)) is False
+
+    def test_flag_forces_on(self):
+        from sqrlly.schema.models import Settings
+        assert _effective_safe_mode(True, Settings(safe_mode=False)) is True
+
+    def test_flag_forces_off(self):
+        from sqrlly.schema.models import Settings
+        assert _effective_safe_mode(False, Settings(safe_mode=True)) is False
 
 
 class TestValidateCommand:

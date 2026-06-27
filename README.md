@@ -165,6 +165,7 @@ Full reference (including `CommandPreset` for custom script interpreters): [SCHE
 - `--entry <node>` — cold-start at `<node>`: run it and everything downstream WITHOUT a checkpoint (the upstream artifacts must already be on disk). Mutually exclusive with `--resume` / `--resume-from` / `--rerun-all`.
 - `--log <path>` — write a JSONL event log.
 - `--quiet / -q` — suppress the live terminal renderer (use in CI / piped runs).
+- `--safe-mode / --no-safe-mode` — run Claude with operator customizations (output styles, CLAUDE.md, skills, MCP, hooks) disabled, for clean reproducible output (cli transport). Overrides `settings.safe_mode`; absent, the setting applies.
 
 `run` shows a live per-node status grid + a clock-driven aliveness spinner when stdout is a TTY. Non-TTY runs (piped, redirected, CI) fall through to the plain summary output automatically. Workflow events only — no LLM-token streaming. On completion `run` prints a `where to find things` summary — the produced output files, the log path (or how to capture one with `--log`), and run artifacts (checkpoint DB + worktree pool); `--quiet` suppresses it.
 

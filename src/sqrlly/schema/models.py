@@ -447,6 +447,13 @@ class Settings(BaseModel):
     # OverloadError stays on the model-downgrade path and is not counted
     # here. 0 (default) = today's behavior: one attempt, terminal.
     backend_max_retries: int = 0
+    # Run Claude with `--safe-mode` (cli transport only): operator
+    # customizations — output styles, CLAUDE.md, skills, MCP, hooks — are
+    # disabled, so workflow generation stays reproducible and free of e.g.
+    # an "explanatory" output style prepending commentary into node output.
+    # Default off: sqrlly never overrides operator settings unless asked.
+    # The `--safe-mode` / `--no-safe-mode` CLI flag overrides this per run.
+    safe_mode: bool = False
     default_timeout: float | None = None
     preamble_file: str | None = None
     retry_backoff: list[float] = []

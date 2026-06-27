@@ -178,6 +178,58 @@ class TestGetBackend:
         assert built == ["cli"]
 
 
+class TestSafeMode:
+    """`create_backend_from_preset(preset, safe_mode=True)` appends
+    ``--safe-mode`` to a cli backend's argv (isolating the run from the
+    operator's Claude customizations) and leaves acp untouched — it's a
+    `claude` CLI flag with no acp equivalent."""
+
+    def test_safe_mode_appends_flag_to_cli_backend(self):
+        from sqrlly.runtime.executor.backends.factory import (
+            create_backend_from_preset,
+        )
+        be = create_backend_from_preset(
+            LlmPreset(transport="cli", provider="anthropic", model="sonnet"),
+            safe_mode=True,
+        )
+        assert "--safe-mode" in (be._cli_args or [])
+
+    def test_safe_mode_off_leaves_cli_args_clean(self):
+        from sqrlly.runtime.executor.backends.factory import (
+            create_backend_from_preset,
+        )
+        be = create_backend_from_preset(
+            LlmPreset(transport="cli", provider="anthropic", model="sonnet"),
+            safe_mode=False,
+        )
+        assert "--safe-mode" not in (be._cli_args or [])
+
+    def test_safe_mode_preserves_existing_cli_args_and_dedups(self):
+        from sqrlly.runtime.executor.backends.factory import (
+            create_backend_from_preset,
+        )
+        be = create_backend_from_preset(
+            LlmPreset(
+                transport="cli", provider="anthropic", model="sonnet",
+                cli_args=["--safe-mode", "--verbose"],
+            ),
+            safe_mode=True,
+        )
+        assert be._cli_args.count("--safe-mode") == 1
+        assert "--verbose" in be._cli_args
+
+    def test_safe_mode_does_not_affect_acp_backend(self):
+        from sqrlly.runtime.executor.backends.factory import (
+            create_backend_from_preset,
+        )
+        be = create_backend_from_preset(
+            LlmPreset(transport="acp", provider="anthropic", model="sonnet"),
+            safe_mode=True,
+        )
+        # acp built fine; --safe-mode is cli-only, never injected.
+        assert isinstance(be, ACPBackend)
+
+
 class TestFactoryThreadsAcpEnv:
     """ACPBackend construction is offline-safe (spawn deferred to first
     send_prompt), so we can assert env wiring without launching the adapter."""

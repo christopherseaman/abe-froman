@@ -62,6 +62,7 @@ uv run sqrlly run config.yaml             # uses settings.presets (required)
 uv run sqrlly run config.yaml -p <name>   # force a named preset from settings.presets
 uv run sqrlly run config.yaml --resume    # resume from checkpoint
 uv run sqrlly run config.yaml --entry <node>  # cold-start: run <node> + downstream, no checkpoint
+uv run sqrlly run config.yaml --safe-mode  # claude --safe-mode (no operator output-styles/CLAUDE.md/skills/MCP); overrides settings.safe_mode
 uv run sqrlly run config.yaml --log out.jsonl
 uv run sqrlly graph config.yaml           # Mermaid topology
 uv run sqrlly view config.yaml            # self-contained HTML viewer

@@ -39,6 +39,13 @@ def _is_git_repo(workdir: str) -> bool:
         return False
 
 
+def _effective_safe_mode(flag: bool | None, settings: "Settings") -> bool:
+    """Resolve the run's safe-mode: the ``--safe-mode``/``--no-safe-mode``
+    flag (tri-state) overrides ``settings.safe_mode`` when given, else the
+    setting applies."""
+    return flag if flag is not None else settings.safe_mode
+
+
 def load_config(config_file: str) -> Graph:
     path = Path(config_file)
     if not path.exists():
@@ -270,6 +277,7 @@ async def _run_async(
     log_file: str | None,
     quiet: bool = False,
     entry: str | None = None,
+    safe_mode: bool | None = None,
 ) -> dict:
     """Inner async runner — wires checkpointer, executor, and state.
 
@@ -318,7 +326,7 @@ async def _run_async(
     try:
         result = await _execute_workflow(
             config, workdir, dry_run, preset_override, resume, resume_from, rerun_all,
-            thread_id=thread_id, logger=logger, entry=entry,
+            thread_id=thread_id, logger=logger, entry=entry, safe_mode=safe_mode,
         )
         return result
     finally:
@@ -387,6 +395,7 @@ async def _execute_workflow(
     thread_id: str,
     logger: Any | None,
     entry: str | None = None,
+    safe_mode: bool | None = None,
 ) -> dict:
     """Compile the graph, wire executors / checkpointer / state, then run.
 
@@ -452,8 +461,15 @@ async def _execute_workflow(
     # the jokes example ships both `cli` and `acp`) never constructs its
     # backend, so its optional dependency (the `acp` package) is only
     # imported if a node actually dispatches to it.
+    # `--safe-mode`/`--no-safe-mode` overrides `settings.safe_mode`; the
+    # resolved value is threaded into every cli backend (appends
+    # `--safe-mode` to its argv). Applies to all presets including subgraph
+    # ones — it's a per-claude-invocation isolation flag for the whole run.
+    run_safe_mode = _effective_safe_mode(safe_mode, config.settings)
     prompt_backend_builders = {
-        name: functools.partial(create_backend_from_preset, preset)
+        name: functools.partial(
+            create_backend_from_preset, preset, safe_mode=run_safe_mode,
+        )
         for name, preset in all_presets.items()
         if isinstance(preset, LlmPreset)
     }
@@ -662,6 +678,13 @@ async def _execute_workflow(
     "--quiet", "-q", is_flag=True,
     help="Suppress the live terminal renderer (useful in CI/piped runs).",
 )
+@click.option(
+    "--safe-mode/--no-safe-mode", "safe_mode", default=None,
+    help="Run Claude with operator customizations (output styles, CLAUDE.md, "
+         "skills, MCP, hooks) disabled — clean, reproducible output, cli "
+         "transport only. Overrides settings.safe_mode; absent flag uses the "
+         "setting.",
+)
 def run(
     config_file: str,
     workdir: str,
@@ -673,6 +696,7 @@ def run(
     entry: str | None,
     log_file: str | None,
     quiet: bool,
+    safe_mode: bool | None,
 ):
     """Run a workflow from a configuration file."""
     try:
@@ -721,7 +745,7 @@ def run(
     from sqrlly.runtime.result import EvaluationError, ManifestError, RouteError
     try:
         result = asyncio.run(
-            _run_async(config, workdir, dry_run, preset, resume, resume_from, rerun_all, log_file, quiet, entry)
+            _run_async(config, workdir, dry_run, preset, resume, resume_from, rerun_all, log_file, quiet, entry, safe_mode)
         )
     except (EvaluationError, ManifestError, RouteError) as e:
         # Infrastructure failures (broken validator / unreadable manifest

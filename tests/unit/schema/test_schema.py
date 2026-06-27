@@ -419,6 +419,18 @@ class TestSettingsMemoryGates:
             Settings(memory_min_available_bytes="four-gigabytes")
 
 
+class TestSettingsSafeMode:
+    """`settings.safe_mode` opts a workflow into running Claude with
+    `--safe-mode` (operator customizations disabled). Default off — sqrlly
+    never overrides operator settings unless asked."""
+
+    def test_default_off(self):
+        assert Settings().safe_mode is False
+
+    def test_accepts_true(self):
+        assert Settings(safe_mode=True).safe_mode is True
+
+
 class TestSettingsRemoteUrlGates:
     """Stage 5b: Settings extended for execute.url remote URL gates."""
 

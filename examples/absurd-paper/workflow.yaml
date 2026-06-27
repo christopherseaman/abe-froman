@@ -125,6 +125,12 @@ nodes:
 settings:
   preamble_file: "examples/absurd-paper/preamble.md"
   output_directory: "paper"
+  # Generate with a clean, reproducible Claude: safe_mode runs every cli
+  # call as `claude --safe-mode`, disabling operator customizations (output
+  # styles, CLAUDE.md, skills, MCP, hooks). Without it, e.g. an
+  # "explanatory" output style prepends commentary into paper.md or a
+  # gate's JSON. Override per run with `--safe-mode` / `--no-safe-mode`.
+  safe_mode: true
   # Run every node in the workdir (no per-node git worktrees). The paper
   # is assembled across nodes via the shared `output/` directory, so the
   # nodes must agree on one filesystem location — `persist` writes
@@ -144,11 +150,6 @@ settings:
       provider: anthropic
       model: "sonnet"
       default: true
-      # Generate with a clean, reproducible Claude. `--safe-mode` disables
-      # operator customizations (output styles, CLAUDE.md, skills, MCP,
-      # hooks), so e.g. an "explanatory" output style can't prepend
-      # commentary into paper.md — or into a gate's JSON output.
-      cli_args: ["--safe-mode"]
     uv_script:
       kind: command
       # Every python script node runs under PATH-resolved `uv` — so the

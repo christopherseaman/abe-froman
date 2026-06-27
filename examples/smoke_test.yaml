@@ -7,6 +7,9 @@ nodes:
     execute:
       url: "examples/prompts/hello.md"
 settings:
+  # `claude --safe-mode`: ignore operator customizations (output styles,
+  # CLAUDE.md, skills, MCP, hooks) so the smoke test is reproducible.
+  safe_mode: true
   presets:
     default:
       transport: cli
