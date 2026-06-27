@@ -782,7 +782,7 @@ class TestFullExampleParse:
         assert defaults[0].model == "sonnet"
 
     def test_example_has_all_execution_types(self, kitchen_sink_workflow_path):
-        """Kitchen-sink YAML exercises prompt, subgraph reference, and fan-out."""
+        """Kitchen-sink YAML exercises prompt, subgraph reference, and script nodes."""
         with open(kitchen_sink_workflow_path) as f:
             raw = yaml.safe_load(f)
         config = Graph(**raw)
@@ -827,21 +827,6 @@ class TestFullExampleParse:
         assert paper.execute is not None
         assert Path(paper.execute.url).suffix == ".yaml"
         assert "inputs" in paper.execute.params
-
-    def test_example_fan_out(self, kitchen_sink_workflow_path):
-        """reviewer_pool fans out per reviewer; template runs a per-child
-        subgraph (Stage 5b carve)."""
-        with open(kitchen_sink_workflow_path) as f:
-            raw = yaml.safe_load(f)
-        config = Graph(**raw)
-        node_map = {p.id: p for p in config.nodes}
-
-        rp = node_map["reviewer_pool"]
-        assert rp.fan_out is not None
-        # Stage 5b: template's execute.url ends in .yaml → per-child subgraph
-        assert Path(rp.fan_out.template.execute.url).suffix == ".yaml"
-        assert len(rp.fan_out.final_nodes) > 0
-
 
 # ---------------------------------------------------------------------------
 # Node timeout fields + effective_timeout

@@ -88,10 +88,7 @@ nodes:
   # project the five body-section outputs into the subgraph's
   # `node_inputs` channel so the subgraph never sees the parent's full
   # state. The subgraph's terminal output (submission_check) surfaces
-  # at `node_outputs["paper"]` here; the `outputs:` projection also
-  # exposes the composed paper text (reconcile's output) as the parent
-  # var `{{paper_reconcile}}`, which `reviewer_pool` reads to brief the
-  # reviewers on the paper they're judging.
+  # at `node_outputs["paper"]` here.
   - id: paper
     name: "Compose & Validate Paper"
     depends_on: [abstract, intro, methods, results, discussion]
@@ -104,15 +101,14 @@ nodes:
           methods: "{{methods}}"
           results: "{{results}}"
           discussion: "{{discussion}}"
-        outputs:
-          reconcile: "{{reconcile}}"
 
   # Deterministic PDF render via `uv run --script` + PEP 723 inline
   # dependencies (markdown + weasyprint). No project-wide install — uv
   # resolves deps on first invocation and caches them. Journal-ish CSS
   # (2-column serif, small-caps section headers, page numbers). The
-  # `render_pdf_cmd` command preset runs the script under PATH-resolved
-  # `uv` (no hardcoded interpreter path).
+  # `uv_script` command preset runs the script under PATH-resolved `uv`
+  # (no hardcoded interpreter path). This is the final node — the demo
+  # ends on the rendered PDF.
   - id: render_pdf
     name: "Render Paper to PDF"
     depends_on: [paper]
@@ -126,45 +122,6 @@ nodes:
         args:
           - "output/paper.md"
           - "output/paper.pdf"
-
-  - id: reviewer_pool
-    name: "Reviewer Pool Manifest"
-    depends_on: [paper, render_pdf]
-    timeout: 360.0
-    fan_out:
-      template:
-        evaluation:
-          validator: "examples/absurd-paper/gates/review_quality.py"
-          threshold: 1.0
-          blocking: false
-        # Per-child subgraph: each reviewer drafts then self-critiques in
-        # its own Send branch (Stage 5b carve-out). Manifest fields
-        # (name/affiliation/style/focus/paper_summary) project as inputs.
-        execute:
-          url: "examples/absurd-paper/subgraphs/single_review.yaml"
-          params:
-            inputs:
-              name: "{{name}}"
-              affiliation: "{{affiliation}}"
-              style: "{{style}}"
-              focus: "{{focus}}"
-              paper_summary: "{{paper_summary}}"
-      final_nodes:
-        - id: publish_verdict
-          name: "Editorial Publication Verdict"
-          evaluation:
-            validator: "examples/absurd-paper/gates/publish_verdict.md"
-            blocking: true
-            dimensions:
-              - {field: tone, min: 0.7}
-              - {field: coherence, min: 0.6}
-
-          execute:
-            url: "examples/absurd-paper/prompts/publish_verdict.md"
-            params:
-              preset: _auto_opus
-    execute:
-      url: "examples/absurd-paper/prompts/reviewer_pool.md"
 settings:
   preamble_file: "examples/absurd-paper/preamble.md"
   output_directory: "paper"
@@ -181,17 +138,12 @@ settings:
   max_parallel_jobs: 2
   per_model_limits:
     sonnet: 2
-    opus: 1
   presets:
     default:
       transport: cli
       provider: anthropic
       model: "sonnet"
       default: true
-    _auto_opus:
-      transport: cli
-      provider: anthropic
-      model: "opus"
     uv_script:
       kind: command
       # Every python script node runs under PATH-resolved `uv` — so the

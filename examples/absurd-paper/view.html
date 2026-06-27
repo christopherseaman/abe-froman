@@ -152,7 +152,6 @@
         paper[["Compose & Validate Paper"]]
         render_pdf["Render Paper to PDF"]
         results["Results"]
-        reviewer_pool{{"Reviewer Pool Manifest"}}
         seed_inspiration["Gather Topic Inspirations"]
         choose_topic --> abstract
         seed_inspiration --> choose_topic
@@ -171,12 +170,10 @@
         paper --> render_pdf
         abstract --> results
         outline --> results
-        paper --> reviewer_pool
-        render_pdf --> reviewer_pool
     end
 
     START --> seed_inspiration
-    reviewer_pool --> END
+    render_pdf --> END
 
     classDef gated stroke:#9333ea,stroke-width:2px</pre>
     </noscript>
@@ -197,7 +194,6 @@
         paper[["Compose & Validate Paper"]]
         render_pdf["Render Paper to PDF"]
         results["Results"]
-        reviewer_pool{{"Reviewer Pool Manifest"}}
         seed_inspiration["Gather Topic Inspirations"]
         choose_topic --> abstract
         seed_inspiration --> choose_topic
@@ -216,12 +212,10 @@
         paper --> render_pdf
         abstract --> results
         outline --> results
-        paper --> reviewer_pool
-        render_pdf --> reviewer_pool
     end
 
     START --> seed_inspiration
-    reviewer_pool --> END
+    render_pdf --> END
 
     classDef gated stroke:#9333ea,stroke-width:2px</div>
     <div id="mermaid-fallback" style="display:none">
@@ -245,7 +239,6 @@
         paper[["Compose & Validate Paper"]]
         render_pdf["Render Paper to PDF"]
         results["Results"]
-        reviewer_pool{{"Reviewer Pool Manifest"}}
         seed_inspiration["Gather Topic Inspirations"]
         choose_topic --> abstract
         seed_inspiration --> choose_topic
@@ -264,12 +257,10 @@
         paper --> render_pdf
         abstract --> results
         outline --> results
-        paper --> reviewer_pool
-        render_pdf --> reviewer_pool
     end
 
     START --> seed_inspiration
-    reviewer_pool --> END
+    render_pdf --> END
 
     classDef gated stroke:#9333ea,stroke-width:2px</pre>
     </div>
@@ -295,11 +286,9 @@
       "id": "seed_inspiration",
       "name": "Gather Topic Inspirations",
       "execute": {
-        "url": "/home/christopher/projects/sqrlly/.venv/bin/python3",
+        "url": "examples/absurd-paper/scripts/pick_topic.py",
         "params": {
-          "args": [
-            "examples/absurd-paper/scripts/pick_topic.py"
-          ]
+          "preset": "uv_script"
         }
       }
     },
@@ -451,14 +440,12 @@
         "paper"
       ],
       "execute": {
-        "url": "/home/christopher/.local/bin/uv",
+        "url": "examples/absurd-paper/scripts/render_pdf.py",
         "params": {
+          "preset": "uv_script",
           "args": [
-            "run",
-            "--script",
-            "examples/absurd-paper/scripts/render_pdf.py",
-            "../../output/paper.md",
-            "../../output/paper.pdf"
+            "output/paper.md",
+            "output/paper.pdf"
           ]
         }
       },
@@ -466,24 +453,6 @@
         "base_directory": "output",
         "required_files": [
           "paper.pdf"
-        ]
-      }
-    },
-    "reviewer_pool": {
-      "id": "reviewer_pool",
-      "name": "Reviewer Pool Manifest",
-      "depends_on": [
-        "paper",
-        "render_pdf"
-      ],
-      "timeout": 360.0,
-      "execute": {
-        "url": "examples/absurd-paper/prompts/reviewer_pool.md"
-      },
-      "fan_out": {
-        "template": "(per-child execute block)",
-        "final_nodes": [
-          "publish_verdict"
         ]
       }
     }
@@ -553,13 +522,6 @@
       "events": []
     },
     "render_pdf": {
-      "status": "untouched",
-      "fired_count": 0,
-      "retry_count": 0,
-      "last_error": null,
-      "events": []
-    },
-    "reviewer_pool": {
       "status": "untouched",
       "fired_count": 0,
       "retry_count": 0,

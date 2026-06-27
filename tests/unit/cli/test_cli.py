@@ -70,7 +70,7 @@ class TestGraphCommand:
         # absurd-paper has these named nodes
         assert "abstract" in result.output
         assert "paper" in result.output
-        assert "reviewer_pool" in result.output
+        assert "render_pdf" in result.output
 
     def test_graph_mermaid_format(self, runner, kitchen_sink_workflow_path):
         """Default format is Mermaid — output should contain the header."""

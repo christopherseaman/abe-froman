@@ -334,12 +334,9 @@ async def test_absurd_paper_carve_compiles_with_subgraph(tmp_path):
     assert set(paper.execute.params["inputs"].keys()) == {
         "abstract", "intro", "methods", "results", "discussion"
     }
-    # publish_verdict was lifted (still a final_node under reviewer_pool).
-    # Downstream nodes wire to the new `paper` parent, not the old chain.
+    # render_pdf wires to the `paper` subgraph parent and is the terminal node.
     render_pdf = next(n for n in config.nodes if n.id == "render_pdf")
-    reviewer_pool = next(n for n in config.nodes if n.id == "reviewer_pool")
     assert render_pdf.depends_on == ["paper"]
-    assert reviewer_pool.depends_on == ["paper", "render_pdf"]
 
     # Compile against the example dir as base (so config-ref resolves).
     executor = DispatchExecutor(workdir=str(repo_root))

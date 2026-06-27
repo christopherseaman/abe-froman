@@ -33,7 +33,6 @@ def test_absurd_paper_scaffolds_multifile_and_rewrites_subgraph(tmp_path):
         for rel in (
             "workflow.yaml",
             "subgraphs/compose_and_validate.yaml",
-            "subgraphs/single_review.yaml",
             "prompts/choose_topic.md",
             "gates/outline_json.py",
             "scripts/render_pdf.py",
@@ -41,9 +40,9 @@ def test_absurd_paper_scaffolds_multifile_and_rewrites_subgraph(tmp_path):
         ):
             assert (root / rel).is_file(), rel
         # The prefix is stripped from the subgraph too (not only workflow.yaml).
-        sub = (root / "subgraphs/single_review.yaml").read_text()
+        sub = (root / "subgraphs/compose_and_validate.yaml").read_text()
         assert "examples/absurd-paper/" not in sub
-        assert "prompts/reviewer_review.md" in sub
+        assert "scripts/persist_paper.py" in sub
         # And the scaffolded copy is a valid, self-contained workflow.
         config = load_config(str(root / "workflow.yaml"))
         assert config.name == "Absurd Academic Paper"

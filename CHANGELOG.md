@@ -3,6 +3,12 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.7.11] — trim absurd-paper to end on the PDF
+
+### Changed
+
+- Simplified the `absurd-paper` example: dropped the reviewer-pool fan-out stage. Its gate was non-blocking (a weak fan-out demonstration), and the per-reviewer subgraphs plus the opus editorial verdict were a slow, opaque tail that ran after the PDF was already produced. The example now ends on the rendered PDF — the artifact the demo opens. Removed the reviewer prompts/gates, the per-reviewer subgraph, the `_auto_opus` preset, and the `{{paper_reconcile}}` projection added for it. Dynamic fan-out remains covered by the schema/runtime test suites.
+
 ## [0.7.10] — runnable absurd-paper demo via `init --example`
 
 ### Added
