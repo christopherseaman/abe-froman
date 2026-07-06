@@ -154,8 +154,9 @@ langgraph-free).
   header `${VAR}` expansion.
 - `worktree_share.py` — `write_worktree_excludes` / `materialize_shares` / `ensure_setup` (worktree dep sharing: info/exclude write, read-only symlinks, sentinel-gated rehydrate).
 - `executor/dispatch.py` — `DispatchExecutor` (10-row URL dispatch).
-- `executor/prompt.py` — `PromptExecutor` (template render, model
-  downgrade).
+- `executor/prompt.py` — module functions `apply_preamble` +
+  `execute_with_downgrade` (template render, eval preamble, model
+  downgrade); flattened from the former `PromptExecutor` class.
 - `executor/preset.py` — `resolve_preset_name` / `build_preset_registry`
   (named-preset → backend registry; CLI `--preset` override).
 - `executor/backends/{acp,cli,factory}.py`. Two LLM backends
@@ -305,7 +306,7 @@ resolver sees) — distinct from faking what an external system returns.
   (default `0`) retries the SAME backend dispatch on a non-`OverloadError`
   exception (a `claude exited 1` blip) up to N times with `retry_backoff`
   between attempts, wrapped around the `OverloadError`→downgrade loop in
-  `runtime/executor/prompt.py::execute_rendered`. Distinct from the
+  `runtime/executor/prompt.py::execute_with_downgrade`. Distinct from the
   gate/evaluation `max_retries`; overload still flows through the
   model-downgrade chain (not double-counted). `0` = terminal on first
   backend error (the historical behavior).

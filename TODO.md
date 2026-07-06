@@ -223,7 +223,7 @@ the construct is unambiguously broken.
 
 ## Simplification candidates (surfaced by 2026-04-17 refactor-done review)
 
-- [ ] **Collapse `runtime/executor/backends/` → `runtime/backends/`** — 4-level nesting (`runtime/executor/backends/acp.py`) for 4 small files. Semantic loss: current nesting signals that only `PromptExecutor` uses backends. If we land the anthropic/openai backends (below), the signal still holds but less strongly — multiple executor types might route through one backends/ module. Low value, low risk; defer until a second executor family justifies the flattening.
+- [ ] **Collapse `runtime/executor/backends/` → `runtime/backends/`** — 4-level nesting (`runtime/executor/backends/acp.py`) for 4 small files. Semantic loss: current nesting signals that only the prompt executor uses backends. If we land the anthropic/openai backends (below), the signal still holds but less strongly — multiple executor types might route through one backends/ module. Low value, low risk; defer until a second executor family justifies the flattening.
 
 - [ ] **Fold `compile/dynamic.py` into `compile/nodes.py`** — currently dynamic.py is 369 LOC and nodes.py is 945 LOC. The split is defensive today: `_make_fan_out_node` has legitimately divergent semantics (no dep check, no output contract, no retry routing). **Worth revisiting after** the gate-eval unification above — if the gate block is gone and the final remaining divergence is "Send-triggered vs. normal-invocation," the split stops earning its keep.
 
@@ -231,7 +231,7 @@ the construct is unambiguously broken.
 
 ## Test doctrine cleanup
 
-- [ ] **Resolve MemoryBackend / ErrorBackend / SleepyBackend / TrackingBackend policy conflict** — `tests/unit/runtime/test_prompt.py` has `MemoryBackend` + `ErrorBackend` used by ~14 orchestration tests; `tests/unit/runtime/test_foreman.py::TestPerModelBackpressure` has `SleepyBackend` + `TrackingBackend`. All four are hand-written Protocol doubles that strict reading of `feedback_no_fake_backends.md` forbids. They instrument `PromptExecutor` / `ForemanExecutor` orchestration (template, preamble, timeout, token threading; per-model concurrency caps) — NOT Claude behavior — so the strict interpretation may be wrong.
+- [ ] **Resolve MemoryBackend / ErrorBackend policy conflict** — `tests/unit/runtime/test_prompt.py` has `MemoryBackend` + `ErrorBackend` used by ~14 orchestration tests. Both are hand-written Protocol doubles that strict reading of `feedback_no_fake_backends.md` forbids. They instrument the prompt-executor orchestration (template, preamble, timeout, token threading) — NOT Claude behavior — so the strict interpretation may be wrong.
     - Three options (detailed at `/home/christopher/.claude/plans/memory-backend-policy.md`):
         1. Extend `StubBackend` with `record=True` to produce one sanctioned recording path; migrate all doubles to it.
         2. Amend the policy memo to permit orchestration-testing doubles, making the existing code compliant.
@@ -267,7 +267,7 @@ Building the 13-phase demo surfaced issues not previously cataloged. Kept here a
     - Workflow-author workaround today: avoid Write/Bash to non-workdir paths; pass state via text outputs only. This blocks the documented "author-written merge phase" pattern in CLAUDE.md.
 
 - [ ] **`acp.exceptions.RequestError: Internal error` appears under concurrent LLM calls even with `_send_lock` in place**
-    - Stack trace fires from `acp/connection.py:237` via `acp/task/dispatcher.py:81`. Observed under `max_parallel_jobs=2` + `per_model_limits.sonnet=2` while the ACP backend serializes `send_prompt` via `_send_lock`.
+    - Stack trace fires from `acp/connection.py:237` via `acp/task/dispatcher.py:81`. Observed under `max_parallel_jobs=2` while the ACP backend serializes `send_prompt` via `_send_lock`.
     - Phases still complete in these runs — the error is logged but recovery happens somewhere. Suggests the SDK is raising and the dispatcher is retrying or dropping.
     - Needs root-cause diagnosis. Possibly related to background tasks per the supervisor traceback, or to in-flight session state while a new prompt arrives.
 
@@ -460,16 +460,6 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
 ## Execution engines
 
 ### Backend-selection ergonomics (high priority)
-
-- [ ] **Soft-deprecate `execute.mode`'s interpreter values** — follow-up
-  to command presets. `execute.mode` accepts `python` / `node` / `tsx` /
-  `bash` (force a script interpreter) alongside `prompt` / `subgraph` /
-  `exec` (handler-family disambiguation). The interpreter values are now
-  redundant with command presets — a `command: "python3"` preset does
-  the same job, more flexibly. The handler-family values stay (they
-  disambiguate URL-extension-ambiguous nodes). Consider documenting the
-  interpreter values as soft-deprecated and steering authors to command
-  presets; eventual removal is a breaking change, defer.
 
 - [ ] **Revisit `Settings.base_url` naming** — after the command-preset
   work lands. `Settings.base_url` resolves relative `execute.url` paths
@@ -682,9 +672,7 @@ e.g. `pnpm install`; sentinel-gated, fatal-per-branch) with
 `worktree_setup_exclude` (paths written to the shared `info/exclude` so
 rehydrate artifacts stay out of the promote footprint; explicit, with a
 `validate` lint when `prisma generate` runs without a matching exclude)
-and `worktree_setup_store_dir` (exports the package store dir so
-hardlinks work instead of EXDEV full-copy), and
-`settings.promote_exclude` (git pathspecs filtered from every promoting
+and `settings.promote_exclude` (git pathspecs filtered from every promoting
 node's footprint). The load-bearing piece is the `info/exclude` write:
 git has no per-worktree exclude, so the entries land in the base repo's
 shared `.git/info/exclude` (persists after the run, not reclaimed by
@@ -725,7 +713,7 @@ duplicate child id before dispatch.
 ### ✅ B9 — Transient-backend-error resilience for fan-out builds — SHIPPED 0.7.6
 
 `settings.backend_max_retries` (default `0`) wraps
-`runtime/executor/prompt.py::execute_rendered` in a bounded transient-retry
+`runtime/executor/prompt.py::execute_with_downgrade` in a bounded transient-retry
 layer: a non-`OverloadError` backend exception (e.g. `claude exited 1`) is
 retried up to N times with `retry_backoff` between attempts, distinct from the
 gate/evaluation `max_retries`. Overload still flows through the inner
@@ -773,16 +761,14 @@ findings this pass:
 
 ## Low-priority / judgment calls
 
-### 🤞 U1 (residual) — `file://` URLs still bypass script + workdir gates
+### 🤞 U1 (residual) — `file://` URLs still bypass workdir gates
 
 `runtime/url.py`. The `max_remote_fetch_bytes` size cap now applies to
-`file://` reads, but two gaps remain: `file://` still skips
-`allow_remote_scripts`, and there is no path-within-workdir
+`file://` reads, but a gap remains: there is no path-within-workdir
 confinement — `url: /etc/passwd` reads unconfined. Low severity under
 the current trust model (a workflow author already controls what
 executes), but a real robustness gap if workflow YAML ever comes from
-a less-trusted source. Workdir confinement is the larger of the two
-and deserves its own design pass.
+a less-trusted source. Workdir confinement deserves its own design pass.
 
 The behavior is now **explicitly documented** as trusted-input (no
 `file://` confinement) in `SCHEMA.md`,

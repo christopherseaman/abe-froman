@@ -5,6 +5,16 @@ All notable changes to sqrlly are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-06
+
+A footprint-reduction pass (four batches). Net effect: ~13k lines removed
+(code + retired design docs), one runtime dependency dropped
+(`ruamel.yaml`, 9 → 8), and several breaking removals of documented but
+dead/unused config surface — hence the minor bump. No behavior change for
+any workflow that wasn't setting a removed field. `settings:` is
+`extra=forbid`, so any stale removed key fails loud at `sqrlly validate`;
+the migration notes below name each one.
+
 ### Security
 
 - Remote-URL fetch (`allow_remote_urls`) is surfaced loudly, not silent: `sqrlly validate`/`run` emit a lint warning for any node whose `execute.url` or gate validator is an `http(s)://` source, and the runtime logs a `SECURITY` warning on every remote fetch. The feature is retained (it's the foundation for a future remote-assets/cloud-execution milestone, tracked in TODO) — just no longer quiet.

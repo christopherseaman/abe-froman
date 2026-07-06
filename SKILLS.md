@@ -393,8 +393,8 @@ large parallel build that loses one branch resumes cheaply.
 - **Workflow YAML is trusted input** — `file://` / local paths are NOT
   confined to the workdir: an absolute (`/etc/…`) or `../`-relative
   `execute.url` or `validator` reads/runs with the orchestrator
-  process's full filesystem access, and `allow_remote_scripts` gates
-  only *remote* schemes. Don't run workflow files you don't trust.
+  process's full filesystem access, and remote schemes are unsupported
+  for scripts/binaries entirely. Don't run workflow files you don't trust.
 - **`prisma generate` in `worktree_setup` needs a matching exclude** —
   a `prisma generate` command without its output path in
   `worktree_setup_exclude` lets the generated client leak into the
