@@ -263,22 +263,15 @@ resolver sees) — distinct from faking what an external system returns.
 - **Hyphenated node IDs in Jinja templates** — `{{research-phase}}`
   parses as subtraction; use underscores. `validate`/`run` emit an
   advisory warning (`compile/lint.py`).
-- **`graph` under-draws fan-out topology (use `view` instead)** —
-  `graph` renders the static compiled LangGraph only; inline-route
-  targets AND fan-out `Send` dispatch are both runtime `Command(goto=...)`
-  (routes via `_route_<id>`, fan-out via the `_fan_<id>` dispatcher node).
-  For fan-out the degradation is worse than losing the fork edges: the
-  only static in-path to a fan-out parent's downstream (`_sub_<id>`) is
-  Send-only and thus unreachable in `get_graph()`, so pruning cascades
-  transitively — the parent's dependents render edge-less too (their plain
-  `depends_on` edges included), and a whole fan-out subgraph can appear as
-  disconnected nodes. The `_fan_<id> --> __end__` edge that `graph` draws
-  is a LangGraph implicit-finish rendering artifact, not a real exit
-  (runtime exits are Command-driven Sends). `view` reconstructs declared
-  `route:` edges and fan-out (hexagon) structure from the schema
-  (`cli/view.py::_route_targets`), so it *does* draw them — only realized
-  per-manifest fan-out children (created at run time) are absent. Use
-  `view` for real topology.
+- **`graph` and `view` render the AUTHORED topology, not the compiled
+  graph** — both use the same schema reconstruction
+  (`cli/view.py::render_mermaid` / `_route_targets`): depends_on edges,
+  declared `route:` edges (dashed), fan-out parents as hexagons, gated
+  nodes stroke-styled. Compiled synthetics (`_eval_`/`_route_`/`_fan_`/
+  `_sub_`) are never drawn — their routing is runtime `Command(goto=...)`,
+  invisible to a static render (a compiled-graph render would show
+  gated/fan-out topology edge-less). Only realized per-manifest fan-out
+  children (created at run time) are absent from both.
 - **Remote script/binary execution not wired** — `http(s)://` urls
   fetch-and-run for *prompt* nodes only; `_dispatch_script` /
   `_dispatch_binary` require `file://` and halt on a remote scheme.

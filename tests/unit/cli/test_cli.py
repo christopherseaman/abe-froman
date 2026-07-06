@@ -14,6 +14,8 @@ from sqrlly.cli.main import (
     cli,
 )
 
+EXAMPLES_DIR = Path(__file__).resolve().parents[3] / "examples"
+
 
 @pytest.fixture
 def runner():
@@ -95,27 +97,55 @@ class TestGraphCommand:
         """Default format is Mermaid — output should contain the header."""
         result = runner.invoke(cli, ["graph", str(kitchen_sink_workflow_path)])
         assert result.exit_code == 0
-        assert "graph TD" in result.output
+        assert "flowchart TB" in result.output
 
-    def test_graph_shows_gate_edges(self, runner, kitchen_sink_workflow_path):
-        """A gated node compiles to a single collapsed gate node.
-
-        The gate is registered under the existing ``_eval_<id>`` name and
-        reached by one plain edge ``exec → _eval_<id>``; routing is via
-        Command(goto=) at runtime, not static edges. There is no
-        ``_decide_<id>`` node anymore."""
+    def test_graph_renders_authored_topology_not_compiled_internals(
+        self, runner, kitchen_sink_workflow_path
+    ):
+        """`graph` shares `view`'s schema reconstruction: it draws the
+        AUTHORED workflow (gated nodes marked ``:::gated``), never the
+        compiled synthetics (``_eval_``/``_sub_``/``_fan_``) whose routing
+        is runtime Command(goto=) and would render edge-less."""
         result = runner.invoke(cli, ["graph", str(kitchen_sink_workflow_path)])
         assert result.exit_code == 0
-        assert "_eval_choose_topic" in result.output
-        assert "_decide_choose_topic" not in result.output
-        assert "choose_topic --> _eval_choose_topic" in result.output
+        assert "choose_topic" in result.output
+        assert ":::gated" in result.output
+        assert "classDef gated" in result.output
+        assert "_eval_" not in result.output
+        assert "_sub_" not in result.output
+        assert "_fan_" not in result.output
+
+    def test_graph_draws_depends_on_edges(
+        self, runner, kitchen_sink_workflow_path
+    ):
+        """Plain depends_on edges appear as solid arrows between real ids."""
+        result = runner.invoke(cli, ["graph", str(kitchen_sink_workflow_path)])
+        assert result.exit_code == 0
+        assert "paper --> render_pdf" in result.output
 
     def test_graph_shows_start_and_end(self, runner, kitchen_sink_workflow_path):
-        """Mermaid output contains LangGraph's start/end terminal nodes."""
+        """START/END stadium nodes plus the invisible layout spine that
+        anchors the workflow subgraph between them."""
         result = runner.invoke(cli, ["graph", str(kitchen_sink_workflow_path)])
         assert result.exit_code == 0
-        assert "__start__" in result.output
-        assert "__end__" in result.output
+        assert "START([START])" in result.output
+        assert "END([END])" in result.output
+        assert "START ~~~ workflow" in result.output
+
+    def test_graph_draws_route_edges(self, runner):
+        """Declared route: targets render as dashed edges — the pre-Batch-E
+        `graph` (compiled-LangGraph render) could not draw these at all."""
+        wf = EXAMPLES_DIR / "route_classify" / "workflow.yaml"
+        result = runner.invoke(cli, ["graph", str(wf)])
+        assert result.exit_code == 0
+        assert "-.->" in result.output
+
+    def test_graph_draws_fanout_hexagon(self, runner):
+        """A fan-out parent renders as a hexagon, same as in `view`."""
+        wf = EXAMPLES_DIR / "wave_planner" / "workflow.yaml"
+        result = runner.invoke(cli, ["graph", str(wf)])
+        assert result.exit_code == 0
+        assert "{{" in result.output
 
 
 class TestRunCommand:

@@ -202,14 +202,18 @@ def validate(config_file: str):
 @cli.command()
 @click.argument("config_file", type=click.Path())
 def graph(config_file: str):
-    """Render the compiled LangGraph as a Mermaid diagram."""
-    try:
-        config = load_config(config_file)
-        compiled = build_workflow_graph(config)
-    except Exception as e:
-        raise click.ClickException(str(e))
+    """Render the workflow topology as a Mermaid diagram.
 
-    click.echo(compiled.get_graph().draw_mermaid())
+    Uses the same schema reconstruction as ``view`` — the AUTHORED
+    graph (depends_on edges, route edges, fan-out hexagons, gated-node
+    styling), not the compiled LangGraph. Compiled routing is runtime
+    ``Command(goto=...)``, invisible to a static render, so drawing the
+    compiled graph would show gated/fan-out topology edge-less.
+    """
+    from sqrlly.cli.view import render_mermaid
+
+    config = load_config(config_file)
+    click.echo(render_mermaid(config))
 
 
 @cli.command()
