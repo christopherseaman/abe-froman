@@ -62,11 +62,14 @@ does not re-flag them.
   to any target — retry an upstream node OR hand failure context to a
   downstream fixer. Do not remove; extend toward first-class
   route-with-failure-context.
-- **`worktree_group` (feature-team shared tree)** — kept; aligns with
-  the champion's documented #6 "cooperating agent teams" (their stated
-  strongest pattern) and `worktree: off` is not equivalent (off writes
-  live to base; a group is isolated + atomic-promote). Pending explicit
-  champion confirmation (see the write-up passed to them).
+- **`worktree_group` (feature-team shared tree)** — **kept (champion
+  confirmed 2026-07).** It is the named primitive for their painpoint #1
+  ("worktree per feature *team*") and #6 (cooperating agent teams); their
+  `adapter-sqrlly/NATIVE-TRANSLATION-EXPERIMENT.md:276-280` reserves
+  `worktree_group`+`promote` as "the builder's tool (feature-team
+  isolation + controlled promotion)." `worktree: off` is not equivalent
+  (off writes live to base; a group is isolated + atomic-promote). Do
+  not remove.
 - **Remote-URL fetch machinery** — kept (see the design task above),
   not removed. Now surfaced by a security lint + runtime warning.
 
