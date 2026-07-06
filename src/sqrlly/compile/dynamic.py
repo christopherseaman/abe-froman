@@ -6,14 +6,14 @@ import asyncio
 from typing import TYPE_CHECKING, Any
 
 from sqrlly.compile.nodes import (
-    _get_retry_delay,
     _make_execution_node,
     build_context,
     run_evaluation_and_outcome,
-    execute_with_timeout,
+    run_with_timeout,
     inject_retry_reason,
     make_failure_update,
 )
+from sqrlly.runtime.executor.prompt import retry_delay
 from sqrlly.runtime.result import ExecutionResult
 from sqrlly.runtime.state import REDUCERS, WorkflowState
 from sqrlly.schema.models import Node, Graph, Settings
@@ -163,7 +163,7 @@ def _make_fan_out_node(
         while True:
             context = dict(base_context)
             if retries_local > 0:
-                delay = _get_retry_delay(retries_local, retry_backoff)
+                delay = retry_delay(retries_local, retry_backoff)
                 if delay > 0:
                     await asyncio.sleep(delay)
                 synthetic_state: WorkflowState = {
@@ -191,29 +191,23 @@ def _make_fan_out_node(
                 # (e.g. ``reviewer_pool::maverick``) becomes the JSONL
                 # prefix so each per-Send subgraph's internals surface
                 # under their own namespace.
-                async def _run_sub() -> ExecutionResult:
-                    return await sub_invoker(
+                exec_result = await run_with_timeout(
+                    sub_invoker(
                         context,
                         state.get("workdir", "."),
                         state.get("dry_run", False),
                         prefix=child_id,
-                    )
-                if timeout is not None:
-                    try:
-                        exec_result = await asyncio.wait_for(_run_sub(), timeout=timeout)
-                    except asyncio.TimeoutError:
-                        exec_result = "timeout"
-                else:
-                    exec_result = await _run_sub()
-            else:
-                exec_result = await execute_with_timeout(
-                    executor, synthetic_node, context, timeout,
-                    settings_override=effective_settings,
+                    ),
+                    timeout,
                 )
-            if exec_result == "timeout":
-                return _merge_updates(update, make_failure_update(
-                    child_id, f"Node timed out after {timeout}s"
-                ))
+            else:
+                exec_result = await run_with_timeout(
+                    executor.execute(
+                        synthetic_node, context,
+                        settings_override=effective_settings,
+                    ),
+                    timeout,
+                )
             if not exec_result.success:
                 return _merge_updates(update, make_failure_update(
                     child_id, exec_result.error

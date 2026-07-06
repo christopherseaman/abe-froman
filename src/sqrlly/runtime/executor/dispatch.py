@@ -9,7 +9,8 @@ from urllib.parse import urlsplit
 
 from sqrlly.runtime.executor.preset import resolve_preset_name
 from sqrlly.runtime.executor.prompt import (
-    PromptExecutor,
+    apply_preamble,
+    execute_with_downgrade,
     prepend_eval_preamble,
     render_template,
 )
@@ -128,30 +129,26 @@ class DispatchExecutor:
         for name, backend in (prompt_backends or {}).items():
             builders[name] = lambda b=backend: b
         self._prompt_backend_builders = builders
-        # Lazy cache: a preset's PromptExecutor is built on first resolve.
-        self._prompt_executors: dict[str, PromptExecutor] = {}
+        # Lazy cache: a preset's backend is built on first resolve.
+        self._backends: dict[str, PromptBackend] = {}
 
-    def _executor_for_preset(self, name: str) -> PromptExecutor:
-        """Build (once) and cache the PromptExecutor for a registered preset.
+    def _backend_for_preset(self, name: str) -> PromptBackend:
+        """Build (once) and cache the PromptBackend for a registered preset.
 
         The backend builder runs here — on first dispatch to ``name`` — not
         at construction, so unused presets never materialize a backend.
         """
-        cached = self._prompt_executors.get(name)
+        cached = self._backends.get(name)
         if cached is not None:
             return cached
-        executor = PromptExecutor(
-            backend=self._prompt_backend_builders[name](),
-            settings=self._settings,
-            workdir=self._workdir,
-        )
-        self._prompt_executors[name] = executor
-        return executor
+        backend = self._prompt_backend_builders[name]()
+        self._backends[name] = backend
+        return backend
 
-    def _resolve_prompt_executor(
+    def _resolve_prompt_backend(
         self, node: Node, settings: Settings,
-    ) -> PromptExecutor | None:
-        """Pick the PromptExecutor for a node by resolved preset name.
+    ) -> tuple[str, PromptBackend] | None:
+        """Resolve a node's ``(preset_name, backend)`` for prompt dispatch.
 
         Returns ``None`` when no presets are registered (caller refuses
         prompt dispatch). Raises ``RuntimeError`` if the resolved preset
@@ -167,7 +164,7 @@ class DispatchExecutor:
                 f"but no backend is registered for it. Registry contains: "
                 f"{sorted(self._prompt_backend_builders)}. CLI wiring bug."
             )
-        return self._executor_for_preset(preset_name)
+        return preset_name, self._backend_for_preset(preset_name)
 
     async def execute(
         self, node: Node, context: dict[str, Any],
@@ -246,14 +243,15 @@ class DispatchExecutor:
         settings: Settings,
     ) -> ExecutionResult:
         """Read prompt body (file or remote), render Jinja, send to backend."""
-        prompt_executor = self._resolve_prompt_executor(node, settings)
-        if prompt_executor is None:
+        resolved_backend = self._resolve_prompt_backend(node, settings)
+        if resolved_backend is None:
             raise RuntimeError(
                 f"Cannot dispatch prompt node {node.id!r}: no prompt "
                 f"backend wired. DispatchExecutor was constructed without "
                 f"a prompt_backend or prompt_backends; pass one or run via "
                 f"the CLI which auto-detects from settings.presets / env."
             )
+        preset_name, backend = resolved_backend
 
         try:
             body = fetch_url(resolved, settings, self._fetch_cache).decode()
@@ -264,7 +262,11 @@ class DispatchExecutor:
             )
 
         try:
-            applied = prompt_executor.apply_preamble(body, settings=settings)
+            # Preamble lives with the config (base workdir), not the
+            # per-node worktree — pass the executor's BASE workdir.
+            applied = apply_preamble(
+                body, settings=settings, base_workdir=self._workdir,
+            )
         except FileNotFoundError as e:
             return ExecutionResult(
                 success=False,
@@ -273,20 +275,16 @@ class DispatchExecutor:
         rendered = render_template(applied, context)
         rendered = prepend_eval_preamble(rendered, context)
 
-        # Model resolution: the resolved preset's model.
-        # ``params.preset`` (when set on the node) overrides the
-        # default preset; otherwise the preset marked ``default: true``
-        # applies. The CLI synthesizes an auto-detect preset when YAML
-        # didn't declare any, so the registry is always populated.
-        preset_name = resolve_preset_name(node, settings)
+        # The resolved preset's model. The registry is always populated
+        # (schema validation caught name typos before this point).
         current_model = settings.presets[preset_name].model
         params_timeout = getattr(params, "timeout", None)
         timeout = (
             params_timeout if params_timeout is not None
             else node.effective_timeout(settings)
         )
-        result = await prompt_executor.execute_rendered(
-            rendered, current_model, workdir, timeout=timeout,
+        result = await execute_with_downgrade(
+            backend, rendered, current_model, workdir, timeout=timeout,
             settings=settings,
         )
         # Record which preset/model ran this node for the JSONL log.
@@ -460,13 +458,13 @@ class DispatchExecutor:
             # (LlmPreset gates + CommandPreset script dispatch) must skip
             # them without AttributeError, regardless of insertion order.
             if getattr(preset, "default", False) and name in self._prompt_backend_builders:
-                return self._executor_for_preset(name)._backend
+                return self._backend_for_preset(name)
         # Defensive: registry/settings out-of-sync (shouldn't happen).
         first_name = sorted(self._prompt_backend_builders)[0]
-        return self._executor_for_preset(first_name)._backend
+        return self._backend_for_preset(first_name)
 
     async def close(self) -> None:
         """Close every PromptBackend that was actually built. Lazily-unbuilt
         presets never opened a process/handle, so there is nothing to close."""
-        for executor in self._prompt_executors.values():
-            await executor.close()
+        for backend in self._backends.values():
+            await backend.close()

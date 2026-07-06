@@ -2,31 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from sqrlly.runtime._json import extract_json
 from sqrlly.runtime.result import EvaluationError
-
-_CODE_FENCE_RE = re.compile(r"```(?:json|JSON)?\s*\n?(.*?)\n?```", re.DOTALL)
-
-
-def _extract_json(text: str) -> str:
-    """Pull a JSON object out of common LLM wrappings so a verdict still
-    parses: a Markdown code fence (```json … ```), or a JSON object
-    embedded in a reasoning preamble (first ``{`` … last ``}``). Returns
-    the candidate substring, or the original text when neither applies
-    (then the caller's ``json.loads`` decides — genuine garbage still
-    raises ``EvaluationError``)."""
-    fence = _CODE_FENCE_RE.search(text)
-    if fence:
-        return fence.group(1).strip()
-    start, end = text.find("{"), text.rfind("}")
-    if 0 <= start < end:
-        return text[start : end + 1]
-    return text
 from sqrlly.schema.models import Evaluation, OutputContract
 
 
@@ -177,7 +159,7 @@ def _parse_evaluation_output(
     # preamble) before declaring the output unparseable — otherwise a
     # legitimate verdict would trip the loud-halt path.
     try:
-        data = json.loads(_extract_json(stripped))
+        data = json.loads(extract_json(stripped, objects_only=True))
     except (json.JSONDecodeError, TypeError):
         raise EvaluationError(
             f"gate returned unparseable response (no numeric score): "

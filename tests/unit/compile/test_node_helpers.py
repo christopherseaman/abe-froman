@@ -10,17 +10,17 @@ import pytest
 
 from sqrlly.compile.nodes import (
     _evaluation_result_payload,
-    _get_retry_delay,
     assemble_success_update,
     build_context,
     build_evaluation_outcome_update,
     check_dep_failed,
     check_dry_run,
     classify_evaluation_outcome,
-    execute_with_timeout,
+    run_with_timeout,
     inject_retry_reason,
     make_failure_update,
 )
+from sqrlly.runtime.executor.prompt import retry_delay
 from sqrlly.runtime.gates import EvaluationResult
 from sqrlly.schema.models import Evaluation
 
@@ -78,19 +78,19 @@ def _gate(threshold=0.8, blocking=True, max_retries=None):
 
 class TestGetRetryDelay:
     def test_empty_backoff(self):
-        assert _get_retry_delay(1, []) == 0.0
+        assert retry_delay(1, []) == 0.0
 
     def test_first_attempt(self):
-        assert _get_retry_delay(1, [10, 30, 60]) == 10
+        assert retry_delay(1, [10, 30, 60]) == 10
 
     def test_second_attempt(self):
-        assert _get_retry_delay(2, [10, 30, 60]) == 30
+        assert retry_delay(2, [10, 30, 60]) == 30
 
     def test_clamps_to_last(self):
-        assert _get_retry_delay(5, [10, 30, 60]) == 60
+        assert retry_delay(5, [10, 30, 60]) == 60
 
     def test_single_value(self):
-        assert _get_retry_delay(3, [5]) == 5
+        assert retry_delay(3, [5]) == 5
 
 
 class TestCheckDepFailed:
@@ -442,35 +442,33 @@ class TestInjectRetryReason:
         assert "Unmet criteria:" not in reason
 
 
-class TestExecuteWithTimeout:
+class TestRunWithTimeout:
     @pytest.mark.asyncio
     async def test_successful_execution(self):
-        class FakeExec:
-            async def execute(self, node, context, **_):
-                return ExecutionResult(output="done")
+        async def _coro():
+            return ExecutionResult(output="done")
 
-        result = await execute_with_timeout(FakeExec(), _phase(), {}, None)
+        result = await run_with_timeout(_coro(), None)
         assert isinstance(result, ExecutionResult)
         assert result.output == "done"
 
     @pytest.mark.asyncio
     async def test_with_timeout_succeeds(self):
-        class FakeExec:
-            async def execute(self, node, context, **_):
-                return ExecutionResult(output="fast")
+        async def _coro():
+            return ExecutionResult(output="fast")
 
-        result = await execute_with_timeout(FakeExec(), _phase(), {}, 5.0)
+        result = await run_with_timeout(_coro(), 5.0)
         assert result.output == "fast"
 
     @pytest.mark.asyncio
-    async def test_timeout_returns_sentinel(self):
-        class SlowExec:
-            async def execute(self, node, context, **_):
-                await asyncio.sleep(10)
-                return ExecutionResult(output="never")
+    async def test_timeout_returns_failure_result(self):
+        async def _slow():
+            await asyncio.sleep(10)
+            return ExecutionResult(output="never")
 
-        result = await execute_with_timeout(SlowExec(), _phase(), {}, 0.01)
-        assert result == "timeout"
+        result = await run_with_timeout(_slow(), 0.01)
+        assert result.success is False
+        assert "timed out after 0.01s" in result.error
 
 
 class TestMakeFailureUpdate:

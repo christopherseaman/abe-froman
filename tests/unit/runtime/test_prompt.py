@@ -1,12 +1,12 @@
-"""Tests for PromptExecutor (Stage 5b API) and template rendering.
+"""Tests for the prompt module (Stage 5b API) and template rendering.
 
 Stage 5b removed the legacy ``PromptExecutor.execute(node, context)``
-method. The class now exposes a narrow surface used by
+method. The module now exposes a narrow set of free functions used by
 ``DispatchExecutor._dispatch_prompt``:
 
-  - ``apply_preamble(template) -> str | ExecutionResult``
-  - ``execute_rendered(rendered, model, workdir, timeout) -> ExecutionResult``
-  - ``close()``
+  - ``apply_preamble(template, *, settings, base_workdir) -> str``
+  - ``execute_with_downgrade(backend, rendered, model, workdir, timeout)
+    -> ExecutionResult``
 
 Module-level helpers ``resolve_model``, ``downgrade_model``,
 ``render_template`` are also covered here. End-to-end prompt-execution
@@ -18,8 +18,9 @@ import pytest
 
 from sqrlly.runtime.executor.dispatch import DispatchExecutor
 from sqrlly.runtime.executor.prompt import (
-    PromptExecutor,
-    _backend_retry_delay,
+    apply_preamble,
+    execute_with_downgrade,
+    retry_delay,
     downgrade_model,
     prepend_eval_preamble,
     render_template,
@@ -278,28 +279,24 @@ class AlwaysTransientErrorBackend:
 
 
 # ---------------------------------------------------------------------------
-# PromptExecutor.apply_preamble
+# apply_preamble
 # ---------------------------------------------------------------------------
 
 
 class TestApplyPreamble:
     def test_no_preamble_returns_template_unchanged(self, tmp_path):
-        executor = PromptExecutor(
-            backend=MemoryBackend(),
-            settings=Settings(),
-            workdir=str(tmp_path),
+        result = apply_preamble(
+            "body", settings=Settings(), base_workdir=str(tmp_path),
         )
-        result = executor.apply_preamble("body")
         assert result == "body"
 
     def test_preamble_prepended_with_separator(self, tmp_path):
         (tmp_path / "preamble.md").write_text("SHARED CONTEXT")
-        executor = PromptExecutor(
-            backend=MemoryBackend(),
+        result = apply_preamble(
+            "Do the thing",
             settings=Settings(preamble_file="preamble.md"),
-            workdir=str(tmp_path),
+            base_workdir=str(tmp_path),
         )
-        result = executor.apply_preamble("Do the thing")
         assert result == "SHARED CONTEXT\n\nDo the thing"
 
     def test_missing_preamble_raises(self, tmp_path):
@@ -307,31 +304,29 @@ class TestApplyPreamble:
         # _dispatch_prompt translates to ExecutionResult(success=False)
         # at the boundary so the rest of the runtime sees a single
         # return type from apply_preamble.
-        executor = PromptExecutor(
-            backend=MemoryBackend(),
-            settings=Settings(preamble_file="missing.md"),
-            workdir=str(tmp_path),
-        )
         with pytest.raises(FileNotFoundError):
-            executor.apply_preamble("body")
+            apply_preamble(
+                "body",
+                settings=Settings(preamble_file="missing.md"),
+                base_workdir=str(tmp_path),
+            )
 
-    def test_preamble_resolved_from_constructor_workdir(self, tmp_path):
-        """Preamble lives with the config (constructor workdir), not any
-        per-call worktree. The class has no per-call workdir for preamble."""
+    def test_preamble_resolved_from_base_workdir(self, tmp_path):
+        """Preamble lives with the config (base_workdir), not any
+        per-call worktree. base_workdir is the DispatchExecutor's base."""
         base = tmp_path / "base"
         base.mkdir()
         (base / "preamble.md").write_text("BASE PREAMBLE")
-        executor = PromptExecutor(
-            backend=MemoryBackend(),
+        result = apply_preamble(
+            "X",
             settings=Settings(preamble_file="preamble.md"),
-            workdir=str(base),
+            base_workdir=str(base),
         )
-        result = executor.apply_preamble("X")
         assert result == "BASE PREAMBLE\n\nX"
 
 
 # ---------------------------------------------------------------------------
-# PromptExecutor.execute_rendered
+# execute_with_downgrade
 # ---------------------------------------------------------------------------
 
 
@@ -339,13 +334,9 @@ class TestExecuteRendered:
     @pytest.mark.asyncio
     async def test_sends_rendered_prompt_to_backend(self, tmp_path):
         backend = MemoryBackend()
-        executor = PromptExecutor(
-            backend=backend,
+        result = await execute_with_downgrade(
+            backend, "rendered prompt", "sonnet", str(tmp_path), timeout=None,
             settings=Settings(),
-            workdir=str(tmp_path),
-        )
-        result = await executor.execute_rendered(
-            "rendered prompt", "sonnet", str(tmp_path), timeout=None,
         )
         assert result.success is True
         assert result.output == "backend-output"
@@ -356,66 +347,46 @@ class TestExecuteRendered:
     @pytest.mark.asyncio
     async def test_model_argument_passed_through(self, tmp_path):
         backend = MemoryBackend()
-        executor = PromptExecutor(
-            backend=backend,
+        await execute_with_downgrade(
+            backend, "x", "opus", str(tmp_path), timeout=None,
             settings=Settings(),
-            workdir=str(tmp_path),
-        )
-        await executor.execute_rendered(
-            "x", "opus", str(tmp_path), timeout=None,
         )
         assert backend.calls[0][1] == "opus"
 
     @pytest.mark.asyncio
     async def test_timeout_threaded_to_backend(self, tmp_path):
         backend = MemoryBackend()
-        executor = PromptExecutor(
-            backend=backend,
+        await execute_with_downgrade(
+            backend, "x", "sonnet", str(tmp_path), timeout=15.5,
             settings=Settings(),
-            workdir=str(tmp_path),
-        )
-        await executor.execute_rendered(
-            "x", "sonnet", str(tmp_path), timeout=15.5,
         )
         assert backend.calls[0][3] == 15.5
 
     @pytest.mark.asyncio
     async def test_timeout_none_passed_through(self, tmp_path):
         backend = MemoryBackend()
-        executor = PromptExecutor(
-            backend=backend,
+        await execute_with_downgrade(
+            backend, "x", "sonnet", str(tmp_path), timeout=None,
             settings=Settings(),
-            workdir=str(tmp_path),
-        )
-        await executor.execute_rendered(
-            "x", "sonnet", str(tmp_path), timeout=None,
         )
         assert backend.calls[0][3] is None
 
     @pytest.mark.asyncio
     async def test_per_call_workdir_forwarded_to_backend(self, tmp_path):
-        """The workdir passed to execute_rendered is the one the backend
-        sees — independent of the constructor workdir."""
+        """The workdir passed to execute_with_downgrade is the one the
+        backend sees."""
         backend = MemoryBackend()
-        executor = PromptExecutor(
-            backend=backend,
+        await execute_with_downgrade(
+            backend, "x", "sonnet", str(tmp_path), timeout=None,
             settings=Settings(),
-            workdir="/should/not/leak",
-        )
-        await executor.execute_rendered(
-            "x", "sonnet", str(tmp_path), timeout=None,
         )
         assert backend.calls[0][2] == str(tmp_path)
 
     @pytest.mark.asyncio
     async def test_backend_error_returns_failure(self, tmp_path):
-        executor = PromptExecutor(
-            backend=ErrorBackend(),
+        result = await execute_with_downgrade(
+            ErrorBackend(), "x", "sonnet", str(tmp_path), timeout=None,
             settings=Settings(),
-            workdir=str(tmp_path),
-        )
-        result = await executor.execute_rendered(
-            "x", "sonnet", str(tmp_path), timeout=None,
         )
         assert result.success is False
         assert "connection failed" in result.error
@@ -423,20 +394,16 @@ class TestExecuteRendered:
     @pytest.mark.asyncio
     async def test_structured_output_passed_through(self, tmp_path):
         backend = MemoryBackend(response="text", structured={"key": "value"})
-        executor = PromptExecutor(
-            backend=backend,
+        result = await execute_with_downgrade(
+            backend, "x", "sonnet", str(tmp_path), timeout=None,
             settings=Settings(),
-            workdir=str(tmp_path),
-        )
-        result = await executor.execute_rendered(
-            "x", "sonnet", str(tmp_path), timeout=None,
         )
         assert result.success is True
         assert result.structured_output == {"key": "value"}
 
 
 # ---------------------------------------------------------------------------
-# Overload → downgrade fallback (covers execute_rendered's retry loop)
+# Overload → downgrade fallback (covers execute_with_downgrade's retry loop)
 # ---------------------------------------------------------------------------
 
 
@@ -446,13 +413,9 @@ class TestOverloadDowngrade:
         """First call raises OverloadError; executor downgrades and retries
         with the next model from the chain."""
         backend = OverloadThenSucceedBackend(fail_count=1, response="recovered")
-        executor = PromptExecutor(
-            backend=backend,
+        result = await execute_with_downgrade(
+            backend, "x", "opus", str(tmp_path), timeout=None,
             settings=Settings(),
-            workdir=str(tmp_path),
-        )
-        result = await executor.execute_rendered(
-            "x", "opus", str(tmp_path), timeout=None,
         )
         assert result.success is True
         assert result.output == "recovered"
@@ -463,13 +426,9 @@ class TestOverloadDowngrade:
     async def test_overload_walks_full_chain(self, tmp_path):
         """Overload at every step walks the entire chain before giving up."""
         backend = OverloadThenSucceedBackend(fail_count=2, response="haiku-ok")
-        executor = PromptExecutor(
-            backend=backend,
+        result = await execute_with_downgrade(
+            backend, "x", "opus", str(tmp_path), timeout=None,
             settings=Settings(),
-            workdir=str(tmp_path),
-        )
-        result = await executor.execute_rendered(
-            "x", "opus", str(tmp_path), timeout=None,
         )
         assert result.success is True
         assert result.output == "haiku-ok"
@@ -480,13 +439,9 @@ class TestOverloadDowngrade:
         """OverloadError at every step exhausts chain → failure result
         naming the last model attempted."""
         backend = AlwaysOverloadBackend()
-        executor = PromptExecutor(
-            backend=backend,
+        result = await execute_with_downgrade(
+            backend, "x", "opus", str(tmp_path), timeout=None,
             settings=Settings(),
-            workdir=str(tmp_path),
-        )
-        result = await executor.execute_rendered(
-            "x", "opus", str(tmp_path), timeout=None,
         )
         assert result.success is False
         assert "exhausted model chain" in result.error
@@ -498,13 +453,9 @@ class TestOverloadDowngrade:
         """A starting model not in the chain → downgrade returns None →
         the executor cannot retry, surfaces the failure."""
         backend = AlwaysOverloadBackend()
-        executor = PromptExecutor(
-            backend=backend,
+        result = await execute_with_downgrade(
+            backend, "x", "gpt-4", str(tmp_path), timeout=None,
             settings=Settings(),
-            workdir=str(tmp_path),
-        )
-        result = await executor.execute_rendered(
-            "x", "gpt-4", str(tmp_path), timeout=None,
         )
         assert result.success is False
         assert "exhausted model chain" in result.error
@@ -540,7 +491,7 @@ class TestDowngradeModel:
 
 
 # ---------------------------------------------------------------------------
-# _backend_retry_delay — delay-indexing and clamp logic
+# retry_delay — delay-indexing and clamp logic
 # ---------------------------------------------------------------------------
 
 
@@ -554,7 +505,7 @@ class TestBackendRetryDelay:
         (99, [0.5], 0.5),               # single element clamps at any attempt
     ])
     def test_delay_cases(self, attempt, backoff, expected):
-        assert _backend_retry_delay(attempt, backoff) == expected
+        assert retry_delay(attempt, backoff) == expected
 
 
 class TestMemoryBackendProtocol:
@@ -837,13 +788,9 @@ class TestBackendTransientRetry:
         """backend_max_retries=0 (default): a transient error is terminal,
         one attempt — exactly today's behavior."""
         backend = AlwaysTransientErrorBackend()
-        executor = PromptExecutor(
-            backend=backend,
+        result = await execute_with_downgrade(
+            backend, "x", "sonnet", str(tmp_path), timeout=None,
             settings=Settings(backend_max_retries=0),
-            workdir=str(tmp_path),
-        )
-        result = await executor.execute_rendered(
-            "x", "sonnet", str(tmp_path), timeout=None,
         )
         assert result.success is False
         assert "Backend error" in result.error
@@ -855,13 +802,9 @@ class TestBackendTransientRetry:
         """Two transient failures then success, with budget 3 → 3 calls,
         final success."""
         backend = TransientThenSucceedBackend(fail_count=2, response="recovered")
-        executor = PromptExecutor(
-            backend=backend,
+        result = await execute_with_downgrade(
+            backend, "x", "sonnet", str(tmp_path), timeout=None,
             settings=Settings(backend_max_retries=3),
-            workdir=str(tmp_path),
-        )
-        result = await executor.execute_rendered(
-            "x", "sonnet", str(tmp_path), timeout=None,
         )
         assert result.success is True
         assert result.output == "recovered"
@@ -876,13 +819,9 @@ class TestBackendTransientRetry:
         """Persistent transient error with budget 2 → 1 initial + 2 retries
         = 3 calls, then terminal failure."""
         backend = AlwaysTransientErrorBackend()
-        executor = PromptExecutor(
-            backend=backend,
+        result = await execute_with_downgrade(
+            backend, "x", "sonnet", str(tmp_path), timeout=None,
             settings=Settings(backend_max_retries=2),
-            workdir=str(tmp_path),
-        )
-        result = await executor.execute_rendered(
-            "x", "sonnet", str(tmp_path), timeout=None,
         )
         assert result.success is False
         assert "Backend error" in result.error
@@ -895,13 +834,9 @@ class TestBackendTransientRetry:
         2-step overload, the executor walks opus→sonnet (2 calls) and
         succeeds; the backend-retry budget is never consumed."""
         backend = OverloadThenSucceedBackend(fail_count=1, response="recovered")
-        executor = PromptExecutor(
-            backend=backend,
+        result = await execute_with_downgrade(
+            backend, "x", "opus", str(tmp_path), timeout=None,
             settings=Settings(backend_max_retries=5),
-            workdir=str(tmp_path),
-        )
-        result = await executor.execute_rendered(
-            "x", "opus", str(tmp_path), timeout=None,
         )
         assert result.success is True
         assert result.output == "recovered"
@@ -915,13 +850,9 @@ class TestBackendTransientRetry:
         the overload failure — the backend-retry budget does NOT re-attempt
         an exhausted-chain overload."""
         backend = AlwaysOverloadBackend()
-        executor = PromptExecutor(
-            backend=backend,
+        result = await execute_with_downgrade(
+            backend, "x", "opus", str(tmp_path), timeout=None,
             settings=Settings(backend_max_retries=4),
-            workdir=str(tmp_path),
-        )
-        result = await executor.execute_rendered(
-            "x", "opus", str(tmp_path), timeout=None,
         )
         assert result.success is False
         assert "exhausted model chain" in result.error
@@ -934,14 +865,9 @@ class TestBackendTransientRetry:
         max_retries. A high gate max_retries with backend_max_retries=0 does
         NOT retry a transient backend error."""
         backend = AlwaysTransientErrorBackend()
-        executor = PromptExecutor(
-            backend=backend,
+        result = await execute_with_downgrade(
+            backend, "x", "sonnet", str(tmp_path), timeout=None,
             settings=Settings(max_retries=9, backend_max_retries=0),
-            workdir=str(tmp_path),
-        )
-        result = await executor.execute_rendered(
-            "x", "sonnet", str(tmp_path), timeout=None,
         )
         assert result.success is False
         assert len(backend.calls) == 1  # gate budget irrelevant here
-

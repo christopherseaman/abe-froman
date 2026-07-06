@@ -4,7 +4,11 @@ import shutil
 import pytest
 
 from sqrlly.compile.graph import build_workflow_graph
-from sqrlly.runtime.gates import EvaluationResult, run_evaluation
+from sqrlly.runtime.gates import (
+    EvaluationResult,
+    _parse_evaluation_output,
+    run_evaluation,
+)
 from sqrlly.runtime.result import EvaluationError
 from sqrlly.runtime.state import make_initial_state
 from sqrlly.runtime.executor.dispatch import DispatchExecutor
@@ -422,7 +426,7 @@ class TestGateEnvironment:
 class TestRetryBackoff:
     """Real-sleep integration test for stepped retry backoff.
 
-    The pure `_get_retry_delay` function is unit-tested in
+    The pure `retry_delay` function is unit-tested in
     tests/unit/compile/test_node_helpers.py. This test verifies the delay
     values are actually awaited between retry attempts.
     """
@@ -1275,3 +1279,14 @@ class TestGateScopingByDeps:
         state = {"node_outputs": {}}
         deps, _, _ = _scope_dep_outputs_for_gate(node, state)
         assert deps is None
+
+
+class TestJsonExtractionTolerance:
+    """The gate verdict parser must scan for {...} ONLY — a '[' in a
+    reasoning preamble (e.g. "range is [0,1]") must not widen the
+    extraction slice and break parsing."""
+
+    def test_bracket_in_preamble_does_not_break_verdict(self):
+        out = 'range is [0,1].\n{"score": 0.7}'
+        result = _parse_evaluation_output(out)
+        assert result.score == 0.7

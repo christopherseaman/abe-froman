@@ -15,6 +15,7 @@ All notable changes to sqrlly are documented here. Format follows
 
 ### Changed
 
+- Internal refactors (no schema/CLI/behavior change): one tolerant JSON extractor (`runtime/_json.py::extract_json`) shared by gate-verdict and fan-out-manifest parsing (was two drifting copies); one retry-backoff clamp (`runtime/executor/prompt.py::retry_delay`) shared by gate and backend retries; a single YAML→Graph load path (`cli.load_config` delegates to `compile.subgraph.load_graph`); `PromptExecutor` flattened from a class into module functions (`apply_preamble`, `execute_with_downgrade`) with the backend cache moving onto `DispatchExecutor`, which now resolves a node's preset once per dispatch; and `execute_with_timeout` replaced by a generic `run_with_timeout(awaitable, timeout)` returning a failure `ExecutionResult` on timeout (deletes the `"timeout"` sentinel/union and a hand-rolled duplicate in the fan-out path).
 - Repo hygiene: regenerable example artifacts (`view.html` / `view-debug.html` / `reference-run.jsonl` / absurd-paper `reference-output/`, ~230 KB) are untracked and gitignored — rebuild locally with `sqrlly view` or `examples/regenerate_views.sh`. Shipped-feature design docs (`docs/superpowers/`, 12 files) removed; git history preserves them. Sdist excludes hardened so in-flight plan docs and `.superpowers/` scratch can never ship to PyPI.
 
 ## [0.7.13] — opt-in `safe_mode` for clean, reproducible runs

@@ -1,12 +1,12 @@
 """Verify DispatchExecutor's preset-aware backend resolution.
 
-Tests focus on _resolve_prompt_executor + the registry-shape construction:
-given a registry of preset-keyed PromptExecutors, the dispatcher picks
+Tests focus on _resolve_prompt_backend + the registry-shape construction:
+given a registry of preset-keyed backends, the dispatcher picks
 the right one for a node based on params.preset vs the default flag.
 
 No actual network calls — ACPBackend defers process spawn until the
 first ``send_prompt``; construction is offline-safe. The tests inspect
-the returned PromptExecutor's identity and per-call model resolution.
+the returned backend's identity and per-call model resolution.
 """
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ def _settings_with_presets():
     })
 
 
-class TestResolvePromptExecutor:
+class TestResolvePromptBackend:
     def test_single_preset_via_registry(self):
         """One-entry registry: node resolves to that backend via default preset."""
         from sqrlly.schema.models import LlmPreset
@@ -52,9 +52,9 @@ class TestResolvePromptExecutor:
         dispatcher = DispatchExecutor(
             prompt_backends={"default": backend}, settings=settings,
         )
-        executor = dispatcher._resolve_prompt_executor(_node(), settings)
-        assert executor is not None
-        assert executor._backend is backend
+        resolved = dispatcher._resolve_prompt_backend(_node(), settings)
+        assert resolved is not None
+        assert resolved[1] is backend
 
     def test_multi_preset_uses_default(self):
         settings = _settings_with_presets()
@@ -65,8 +65,9 @@ class TestResolvePromptExecutor:
             settings=settings,
         )
         # Node without params.preset → uses default (smart).
-        executor = dispatcher._resolve_prompt_executor(_node(), settings)
-        assert executor._backend is smart_be
+        resolved = dispatcher._resolve_prompt_backend(_node(), settings)
+        assert resolved is not None
+        assert resolved[1] is smart_be
 
     def test_multi_preset_params_override(self):
         settings = _settings_with_presets()
@@ -78,12 +79,13 @@ class TestResolvePromptExecutor:
         )
         # Node with params.preset=cheap → uses cheap.
         node = _node(params={"preset": "cheap"})
-        executor = dispatcher._resolve_prompt_executor(node, settings)
-        assert executor._backend is cheap_be
+        resolved = dispatcher._resolve_prompt_backend(node, settings)
+        assert resolved is not None
+        assert resolved[1] is cheap_be
 
     def test_no_backends_returns_none(self):
         dispatcher = DispatchExecutor(settings=Settings())
-        assert dispatcher._resolve_prompt_executor(_node(), Settings()) is None
+        assert dispatcher._resolve_prompt_backend(_node(), Settings()) is None
 
     def test_missing_backend_for_preset_raises(self):
         settings = _settings_with_presets()
@@ -93,7 +95,7 @@ class TestResolvePromptExecutor:
             settings=settings,
         )
         with pytest.raises(RuntimeError, match="no backend is registered"):
-            dispatcher._resolve_prompt_executor(_node(), settings)
+            dispatcher._resolve_prompt_backend(_node(), settings)
 
 class TestResolveModel:
     def test_no_presets_returns_none(self):
@@ -293,8 +295,8 @@ class TestLazyBackendBuild:
             settings=s,
         )
         # A node with no params.preset resolves to the default (cli).
-        executor = d._resolve_prompt_executor(_node(), s)
-        assert executor is not None
+        resolved = d._resolve_prompt_backend(_node(), s)
+        assert resolved is not None
         assert built == ["cli"]  # acp_builder never called
 
     def test_builder_invoked_once_then_cached(self):
@@ -312,9 +314,9 @@ class TestLazyBackendBuild:
             },
             settings=s,
         )
-        first = d._resolve_prompt_executor(_node("a"), s)
-        second = d._resolve_prompt_executor(_node("b"), s)
-        assert first is second        # cached PromptExecutor
+        first = d._resolve_prompt_backend(_node("a"), s)
+        second = d._resolve_prompt_backend(_node("b"), s)
+        assert first[1] is second[1]  # cached backend
         assert calls == [1]           # backend built exactly once
 
     def test_get_backend_builds_only_default(self):
@@ -350,7 +352,7 @@ class TestLazyBackendBuild:
             },
             settings=s,
         )
-        d._resolve_prompt_executor(_node(), s)  # builds cli only
+        d._resolve_prompt_backend(_node(), s)  # builds cli only
         await d.close()  # must not touch the unbuilt acp builder
 
     def test_prebuilt_backends_still_supported(self):

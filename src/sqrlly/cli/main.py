@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Any
 
 import click
-import yaml
 
 from sqrlly.cli.init import (
     init_command, init_example, init_list_examples, init_skill,
@@ -47,11 +46,19 @@ def _effective_safe_mode(flag: bool | None, settings: "Settings") -> bool:
 
 
 def load_config(config_file: str) -> Graph:
-    path = Path(config_file)
-    if not path.exists():
+    """Load a workflow YAML via the single loader (`compile.subgraph.
+    load_graph`), translating load/parse errors to Click errors here so
+    call sites don't need their own wrappers."""
+    from sqrlly.compile.subgraph import load_graph
+
+    if not Path(config_file).exists():
         raise click.BadParameter(f"File not found: {config_file}")
-    raw = yaml.safe_load(path.read_text())
-    return Graph(**raw)
+    try:
+        return load_graph(config_file)
+    except click.ClickException:
+        raise
+    except Exception as e:
+        raise click.ClickException(str(e))
 
 
 def _thread_id_for(config: Graph, workdir: str) -> str:
@@ -246,10 +253,7 @@ def view(
     """
     from sqrlly.cli.view import read_jsonl_log, render_view
 
-    try:
-        config = load_config(config_file)
-    except Exception as e:
-        raise click.ClickException(str(e))
+    config = load_config(config_file)
 
     events: list[dict] | None = None
     if log_file:
@@ -703,10 +707,7 @@ def run(
     safe_mode: bool | None,
 ):
     """Run a workflow from a configuration file."""
-    try:
-        config = load_config(config_file)
-    except Exception as e:
-        raise click.ClickException(str(e))
+    config = load_config(config_file)
 
     resume = resume or bool(resume_from)
     if rerun_all and resume_from:

@@ -48,14 +48,13 @@ def downgrade_model(current: str, chain: list[str]) -> str | None:
     return None
 
 
-def _backend_retry_delay(attempt: int, backoff: list[float]) -> float:
-    """Seconds to sleep before backend-retry ``attempt`` (1-indexed).
+def retry_delay(attempt: int, backoff: list[float]) -> float:
+    """Seconds to sleep before retry ``attempt`` (1-indexed).
 
     Clamps to the last value past the list length; 0.0 when ``backoff``
-    is empty. Mirrors ``compile/nodes._get_retry_delay`` so gate and
-    backend retries share the same author intuition — duplicated rather
-    than imported because ``runtime/`` must not import ``compile/`` (layer
-    rule), and the function is a two-line clamp.
+    is empty. The single clamp shared by gate retries (compile layer —
+    the allowed import direction is compile → runtime) and backend
+    retries here.
     """
     if not backoff:
         return 0.0
@@ -87,102 +86,84 @@ def prepend_eval_preamble(rendered: str, context: dict[str, Any]) -> str:
     return f"{eval_preamble}\n\n{rendered}"
 
 
-class PromptExecutor:
-    """Renders prompt templates, resolves models, delegates to a PromptBackend.
+def apply_preamble(
+    template: str, *, settings: Settings, base_workdir: str,
+) -> str:
+    """Prepend ``settings.preamble_file`` if configured.
 
-    Used by DispatchExecutor's `_dispatch_prompt`: callers fetch the
-    prompt body, apply preamble, render Jinja, then call
-    `execute_rendered` for the overload-downgrade loop.
+    Returns the modified template (or the original if no preamble is
+    configured). Raises ``FileNotFoundError`` with the resolved path if
+    the configured preamble file is missing — caller translates to
+    ``ExecutionResult`` once. ``base_workdir`` is the DispatchExecutor's
+    BASE workdir: the preamble lives with the config, never in a
+    per-node worktree. ``settings`` is scope-aware — pass the merged
+    settings so a subgraph's preamble_file is honored for its nodes.
     """
+    if not settings.preamble_file:
+        return template
+    preamble_path = Path(base_workdir) / settings.preamble_file
+    return preamble_path.read_text() + "\n\n" + template
 
-    def __init__(self, backend: PromptBackend, settings: Settings, workdir: str = "."):
-        self._backend = backend
-        self._settings = settings
-        self._workdir = workdir
 
-    def apply_preamble(
-        self, template: str, *, settings: Settings | None = None,
-    ) -> str:
-        """Prepend ``settings.preamble_file`` if configured.
+async def execute_with_downgrade(
+    backend: PromptBackend,
+    rendered: str,
+    model: str,
+    workdir: str,
+    timeout: float | None = None,
+    *,
+    settings: Settings,
+) -> ExecutionResult:
+    """Send a pre-rendered prompt with overload→downgrade fallback.
 
-        Returns the modified template (or the original if no preamble
-        is configured). Raises ``FileNotFoundError`` with the resolved
-        path if the configured preamble file is missing — caller
-        translates to ``ExecutionResult`` once. Preamble lives with the
-        config (base workdir), not in any per-node worktree.
+    ``settings`` is scope-aware — provides ``backend_max_retries`` /
+    ``retry_backoff`` for this scope (subgraph wrappers pass the
+    merged settings).
 
-        ``settings`` (Phase 3 / scope-aware): when provided, used in
-        place of ``self._settings`` so a subgraph's preamble_file is
-        honored for nodes inside that subgraph.
-        """
-        s = settings or self._settings
-        if not s.preamble_file:
-            return template
-        preamble_path = Path(self._workdir) / s.preamble_file
-        return preamble_path.read_text() + "\n\n" + template
-
-    async def execute_rendered(
-        self,
-        rendered: str,
-        model: str,
-        workdir: str,
-        timeout: float | None = None,
-        *,
-        settings: Settings | None = None,
-    ) -> ExecutionResult:
-        """Send a pre-rendered prompt with overload→downgrade fallback.
-
-        ``settings`` (Phase 3 / scope-aware): provides
-        ``backend_max_retries`` / ``retry_backoff`` for this scope.
-        Subgraph wrappers pass the merged settings.
-        """
-        s = settings or self._settings
-        # Bounded transient-retry layer wrapping the overload-downgrade loop.
-        # A non-OverloadError backend exception (e.g. the CLI backend's
-        # `claude exited 1`) re-enters the downgrade loop from the ORIGINAL
-        # model up to `backend_max_retries` times. OverloadError stays inside
-        # the inner loop (model downgrade) and never consumes a backend
-        # retry — overload exhaustion returns from inside the inner loop, so
-        # it never reaches `except Exception` here. attempt 0 = first try.
-        attempt = 0
-        while True:
-            current_model = model
-            try:
-                while True:
-                    try:
-                        result = await self._backend.send_prompt(
-                            rendered, current_model, workdir, timeout=timeout,
-                        )
-                        break
-                    except OverloadError:
-                        next_model = downgrade_model(
-                            current_model, MODEL_DOWNGRADE_CHAIN
-                        )
-                        if next_model is None:
-                            return ExecutionResult(
-                                success=False,
-                                error=(
-                                    f"API overloaded, exhausted model chain "
-                                    f"(last: {current_model})"
-                                ),
-                            )
-                        current_model = next_model
-                break
-            except Exception as e:
-                if attempt >= s.backend_max_retries:
-                    return ExecutionResult(
-                        success=False, error=f"Backend error: {e}"
+    Bounded transient-retry layer wrapping the overload-downgrade loop:
+    a non-OverloadError backend exception (e.g. the CLI backend's
+    `claude exited 1`) re-enters the downgrade loop from the ORIGINAL
+    model up to `backend_max_retries` times. OverloadError stays inside
+    the inner loop (model downgrade) and never consumes a backend
+    retry — overload exhaustion returns from inside the inner loop, so
+    it never reaches the outer `except Exception`. attempt 0 = first try.
+    """
+    attempt = 0
+    while True:
+        current_model = model
+        try:
+            while True:
+                try:
+                    result = await backend.send_prompt(
+                        rendered, current_model, workdir, timeout=timeout,
                     )
-                attempt += 1
-                delay = _backend_retry_delay(attempt, s.retry_backoff)
-                if delay > 0:
-                    await asyncio.sleep(delay)
+                    break
+                except OverloadError:
+                    next_model = downgrade_model(
+                        current_model, MODEL_DOWNGRADE_CHAIN
+                    )
+                    if next_model is None:
+                        return ExecutionResult(
+                            success=False,
+                            error=(
+                                f"API overloaded, exhausted model chain "
+                                f"(last: {current_model})"
+                            ),
+                        )
+                    current_model = next_model
+            break
+        except Exception as e:
+            if attempt >= settings.backend_max_retries:
+                return ExecutionResult(
+                    success=False, error=f"Backend error: {e}"
+                )
+            attempt += 1
+            delay = retry_delay(attempt, settings.retry_backoff)
+            if delay > 0:
+                await asyncio.sleep(delay)
 
-        return ExecutionResult(
-            success=True,
-            output=result.output,
-            structured_output=result.structured_output,
-        )
-
-    async def close(self) -> None:
-        await self._backend.close()
+    return ExecutionResult(
+        success=True,
+        output=result.output,
+        structured_output=result.structured_output,
+    )

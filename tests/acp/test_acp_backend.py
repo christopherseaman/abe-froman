@@ -150,7 +150,7 @@ class TestACPIntegration:
 
     @pytest.mark.asyncio
     async def test_full_pipeline_via_dispatch(self, tmp_path):
-        """End-to-end: DispatchExecutor → PromptExecutor → ACPBackend."""
+        """End-to-end: DispatchExecutor → prompt path → ACPBackend."""
         from sqrlly.runtime.executor.backends.acp import ACPBackend
         from sqrlly.runtime.executor.dispatch import DispatchExecutor
         from sqrlly.schema.models import Execute, Node, LlmPreset, Settings

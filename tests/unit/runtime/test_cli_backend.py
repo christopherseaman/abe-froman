@@ -149,7 +149,7 @@ class TestCLIBackendOverload:
     async def test_stderr_overload_substring_raises_overload(self, tmp_path):
         """exit 1 + stderr containing 'overload' → OverloadError.
 
-        The downgrade chain in PromptExecutor relies on this mapping;
+        The downgrade chain in execute_with_downgrade relies on this mapping;
         the substring set comes from _overload.ACP_OVERLOAD_SUBSTRINGS
         (shared with the ACP path).
         """
@@ -333,7 +333,7 @@ class TestLlmPresetEnvWiring:
 class TestCLIBackendRetryViaDispatch:
     """End-to-end: a real CLIBackend (real subprocess) whose `claude` stub
     exits non-zero the first K times then succeeds is retried by the
-    execute_rendered backend-retry layer when backend_max_retries is set.
+    execute_with_downgrade backend-retry layer when backend_max_retries is set.
     No mock — a /bin/sh stub stands in for `claude`."""
 
     def _stub_claude(self, tmp_path, fail_times: int):
@@ -364,18 +364,14 @@ class TestCLIBackendRetryViaDispatch:
     @pytest.mark.asyncio
     async def test_real_cli_backend_retried_then_succeeds(self, tmp_path):
         from sqrlly.runtime.executor.backends.cli import CLIBackend
-        from sqrlly.runtime.executor.prompt import PromptExecutor
+        from sqrlly.runtime.executor.prompt import execute_with_downgrade
         from sqrlly.schema.models import Settings
 
         stub, counter = self._stub_claude(tmp_path, fail_times=2)
         backend = CLIBackend(argv_prefix=(str(stub),))
-        executor = PromptExecutor(
-            backend=backend,
+        result = await execute_with_downgrade(
+            backend, "prompt body", "sonnet", str(tmp_path), timeout=30.0,
             settings=Settings(backend_max_retries=3),
-            workdir=str(tmp_path),
-        )
-        result = await executor.execute_rendered(
-            "prompt body", "sonnet", str(tmp_path), timeout=30.0,
         )
         assert result.success is True
         assert result.output == "stub-output"
@@ -385,18 +381,14 @@ class TestCLIBackendRetryViaDispatch:
     @pytest.mark.asyncio
     async def test_real_cli_backend_zero_budget_terminal(self, tmp_path):
         from sqrlly.runtime.executor.backends.cli import CLIBackend
-        from sqrlly.runtime.executor.prompt import PromptExecutor
+        from sqrlly.runtime.executor.prompt import execute_with_downgrade
         from sqrlly.schema.models import Settings
 
         stub, counter = self._stub_claude(tmp_path, fail_times=2)
         backend = CLIBackend(argv_prefix=(str(stub),))
-        executor = PromptExecutor(
-            backend=backend,
+        result = await execute_with_downgrade(
+            backend, "prompt body", "sonnet", str(tmp_path), timeout=30.0,
             settings=Settings(backend_max_retries=0),
-            workdir=str(tmp_path),
-        )
-        result = await executor.execute_rendered(
-            "prompt body", "sonnet", str(tmp_path), timeout=30.0,
         )
         assert result.success is False
         assert "Backend error" in result.error

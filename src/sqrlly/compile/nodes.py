@@ -26,6 +26,7 @@ from sqrlly.runtime.gates import (
     scaffold_output_directory,
     validate_output_contract,
 )
+from sqrlly.runtime.executor.prompt import retry_delay
 from sqrlly.runtime.gates import run_evaluation
 from sqrlly.runtime.result import ExecutionResult
 from sqrlly.runtime.state import WorkflowState
@@ -33,18 +34,6 @@ from sqrlly.schema.models import Node, Settings, Graph
 
 if TYPE_CHECKING:
     from sqrlly.runtime.result import NodeExecutor
-
-
-def _get_retry_delay(retry_count: int, backoff: list[float]) -> float:
-    """Return delay in seconds for the given retry attempt (1-indexed).
-
-    Uses the backoff list, clamping to the last value for attempts
-    beyond the list length. Returns 0.0 if backoff is empty.
-    """
-    if not backoff:
-        return 0.0
-    idx = min(retry_count - 1, len(backoff) - 1)
-    return backoff[idx]
 
 
 def check_dep_failed(node: Node, state: WorkflowState) -> dict | None:
@@ -228,31 +217,24 @@ def inject_retry_reason(
     return context
 
 
-async def execute_with_timeout(
-    executor, node: Node, context: dict[str, Any], timeout: float | None,
-    *, settings_override: Settings | None = None,
-) -> ExecutionResult | str:
-    """Run executor.execute with optional timeout + scope settings override.
+async def run_with_timeout(
+    awaitable: Any, timeout: float | None,
+) -> ExecutionResult:
+    """Await an execute-coroutine with an optional timeout.
 
-    ``settings_override`` (Phase 3 / scope-aware): the scope's effective
-    settings, threaded into ``NodeExecutor.execute`` so a subgraph's
-    ``default_model``, ``base_url``, etc. apply to its own nodes.
+    On timeout, returns a failure ``ExecutionResult`` (rather than a
+    sentinel) so callers handle it through the ordinary
+    ``if not result.success`` path. ``timeout=None`` awaits unbounded.
+    The awaitable must resolve to an ``ExecutionResult``.
     """
+    if timeout is None:
+        return await awaitable
     try:
-        if timeout is not None:
-            result = await asyncio.wait_for(
-                executor.execute(
-                    node, context, settings_override=settings_override,
-                ),
-                timeout=timeout,
-            )
-        else:
-            result = await executor.execute(
-                node, context, settings_override=settings_override,
-            )
-        return result
+        return await asyncio.wait_for(awaitable, timeout=timeout)
     except asyncio.TimeoutError:
-        return "timeout"
+        return ExecutionResult(
+            success=False, error=f"Node timed out after {timeout}s",
+        )
 
 
 def make_failure_update(node_id: str, error_message: str) -> dict[str, Any]:
@@ -633,7 +615,7 @@ def _make_execution_node(
         context = build_context(node, state)
         retry_count = state.get("retries", {}).get(node.id, 0)
         if retry_count > 0:
-            delay = _get_retry_delay(retry_count, settings.retry_backoff)
+            delay = retry_delay(retry_count, settings.retry_backoff)
             if delay > 0:
                 await asyncio.sleep(delay)
         context = inject_retry_reason(context, node, state, max_retries)
@@ -643,14 +625,12 @@ def _make_execution_node(
                 node.output_contract, state.get("workdir", ".")
             )
 
-        exec_result = await execute_with_timeout(
-            executor, node, context, timeout,
-            settings_override=effective_settings,
+        exec_result = await run_with_timeout(
+            executor.execute(
+                node, context, settings_override=effective_settings,
+            ),
+            timeout,
         )
-        if exec_result == "timeout":
-            return make_failure_update(
-                node.id, f"Node timed out after {timeout}s"
-            )
         if not exec_result.success:
             return make_failure_update(node.id, exec_result.error)
 

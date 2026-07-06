@@ -1,7 +1,7 @@
 """Unit tests for DispatchExecutor's Stage-5b execute.url path.
 
 Function-level + small e2e tests cover the four dispatch branches:
-    - prompt URL (.md/.txt/.prompt) → PromptExecutor pipeline
+    - prompt URL (.md/.txt/.prompt) → prompt pipeline
     - script URL (.py/.js/.sh) → interpreter subprocess
     - binary URL (no extension / unknown) → direct subprocess
     - join sentinel → no-op output
@@ -221,7 +221,7 @@ class TestExecuteModeOverride:
 
     @pytest.mark.asyncio
     async def test_prompt_mode_routes_unknown_extension_through_prompt(self, tmp_path):
-        """A URL with `.foo` suffix runs through PromptExecutor when mode=prompt.
+        """A URL with `.foo` suffix runs through the prompt pipeline when mode=prompt.
 
         Verification signal: with no backend wired, the prompt branch
         raises the no-backend RuntimeError. Other branches return

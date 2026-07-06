@@ -60,6 +60,7 @@ class TestCompileLayerIsolation:
     # new compile→runtime import means adding it here AND justifying
     # why the imported thing is shared shape rather than orchestration.
     ALLOWED_RUNTIME_MODULES = frozenset({
+        "sqrlly.runtime._json",            # extract_json (pure shared shape)
         "sqrlly.runtime.executor.prompt",  # render_template (pure)
         "sqrlly.runtime.gates",            # eval execution + preamble
         "sqrlly.runtime.logging",          # SubgraphLogger (subgraph wrap)
