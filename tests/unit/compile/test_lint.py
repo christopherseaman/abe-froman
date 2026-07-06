@@ -170,3 +170,26 @@ class TestWorktreeSetupExcludeWarnings:
             worktree_setup=["pnpm install --prefer-offline"],
         )
         assert not any("prisma generate" in w for w in collect_warnings(config))
+
+
+class TestRemoteUrlWarning:
+    """SECURITY lint: a remote http(s) execution input is flagged at
+    validate/run so it is never silent."""
+
+    def test_remote_prompt_url_flagged(self):
+        from sqrlly.compile.lint import collect_warnings
+        from sqrlly.schema.models import Graph, Node, Execute
+        g = Graph(name="w", version="1", nodes=[
+            Node(id="a", name="A",
+                 execute=Execute(url="https://prompts.example.com/p.md")),
+        ], settings={"allow_remote_urls": True})
+        warns = collect_warnings(g)
+        assert any("REMOTE" in w and "a" in w for w in warns)
+
+    def test_local_url_not_flagged(self):
+        from sqrlly.compile.lint import collect_warnings
+        from sqrlly.schema.models import Graph, Node, Execute
+        g = Graph(name="w", version="1", nodes=[
+            Node(id="a", name="A", execute=Execute(url="prompts/p.md")),
+        ])
+        assert not any("REMOTE" in w for w in collect_warnings(g))

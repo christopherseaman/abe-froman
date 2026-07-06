@@ -66,16 +66,6 @@ _SCRIPT_INTERPRETERS: dict[str, list[str]] = {
     ".sh": ["bash"],
 }
 
-# Mode-name → interpreter prefix for `execute.mode:` overrides. Lets
-# authors force script dispatch when the URL has no extension or a
-# misleading one (e.g. `mode: python` on `scripts/run-thing`).
-_MODE_INTERPRETERS: dict[str, list[str]] = {
-    "python": ["python3"],
-    "node": ["node"],
-    "tsx": ["tsx"],
-    "bash": ["bash"],
-}
-
 _PROMPT_EXTS = {".md", ".txt", ".prompt"}
 
 
@@ -217,11 +207,6 @@ class DispatchExecutor:
                 node, resolved, params, context, effective_workdir,
                 settings=s,
             )
-        if execute.mode in _MODE_INTERPRETERS:
-            return await self._dispatch_script(
-                node, resolved, params, context, effective_workdir,
-                settings=s, interpreter=_MODE_INTERPRETERS[execute.mode],
-            )
         if execute.mode is None and ext in _SCRIPT_INTERPRETERS:
             return await self._dispatch_script(
                 node, resolved, params, context, effective_workdir,
@@ -304,15 +289,15 @@ class DispatchExecutor:
         workdir: str,
         *,
         settings: Settings,
-        interpreter: list[str] | None = None,
     ) -> ExecutionResult:
         """Run a script under its interpreter.
 
         Two interpreter sources:
           - ``params.preset`` naming a command preset → the preset's
             command string (assembled via ``_assemble_command_argv``).
-          - Otherwise the URL-extension map (``_SCRIPT_INTERPRETERS``),
-            or ``interpreter`` when ``execute.mode:`` forced one.
+          - Otherwise the URL-extension map (``_SCRIPT_INTERPRETERS``).
+            For an arbitrary interpreter (a specific venv, ``uv run``,
+            etc.) name a command preset — it is the flexible path.
         """
         scheme = urlsplit(resolved).scheme
         if scheme != "file":
@@ -350,10 +335,9 @@ class DispatchExecutor:
             )
             return await self._exec_argv(argv, rendered_env, workdir)
 
-        # Extension-map / mode-override path.
-        if interpreter is None:
-            ext = Path(urlsplit(resolved).path).suffix.lower()
-            interpreter = _SCRIPT_INTERPRETERS[ext]
+        # Extension-map path.
+        ext = Path(urlsplit(resolved).path).suffix.lower()
+        interpreter = _SCRIPT_INTERPRETERS[ext]
         return await self._run_subprocess(
             [*interpreter, local_path], params, context, workdir,
         )

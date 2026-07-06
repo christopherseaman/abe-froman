@@ -139,8 +139,9 @@ langgraph-free).
   renderer (JsonlLogger-shaped `emit`/`log_update`/`close`).
 - `gates.py` — `run_evaluation_script`, `run_evaluation_llm`,
   output parsing, `EvaluationResult`.
-- `foreman.py` — `ForemanExecutor` (semaphores + memory back-pressure
-  + worktree pool).
+- `foreman.py` — `ForemanExecutor` (global semaphore + worktree pool).
+- `memory_gate.py` — `wait_for_memory` (optional, default-off host-memory
+  back-pressure; isolates the sole `psutil` dependency).
 - `promote.py` — `discover_changes` / `apply_changes` / `plan_promotions`
   / `reconcile_promotions` / `PromoteConflictError`: cross-node promote
   reconciliation under `settings.on_promote_conflict` (discover→plan→apply).
@@ -265,10 +266,6 @@ resolver sees) — distinct from faking what an external system returns.
 - **Remote script/binary execution not wired** — `http(s)://` urls
   fetch-and-run for *prompt* nodes only; `_dispatch_script` /
   `_dispatch_binary` require `file://` and halt on a remote scheme.
-- **Per-model backpressure under downgrade** — Foreman holds the
-  semaphore for the node's *original* model; an `OverloadError`
-  opus→sonnet downgrade mid-call does not acquire the sonnet semaphore.
-  Intent, not enforcement under downgrade.
 - **Worktree cleanup is opt-in** — `settings.worktree_gc: on_success`
   reclaims end-of-run on a clean exit; default `never` keeps trees under
   `<workdir>/.sqrlly/` for inspection and `--resume`. `git worktree

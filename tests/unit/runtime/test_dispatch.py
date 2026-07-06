@@ -205,21 +205,6 @@ class TestExecuteModeOverride:
     """`execute.mode:` forces a dispatch handler regardless of URL extension."""
 
     @pytest.mark.asyncio
-    async def test_python_mode_dispatches_extensionless_url_as_script(self, tmp_path):
-        """A URL with no `.py` suffix runs through python3 when mode=python."""
-        script = tmp_path / "doer"  # no extension
-        script.write_text("import sys; sys.stdout.write('forced-py')")
-        node = Node(
-            id="p", name="P",
-            execute=Execute(url=f"file://{script}", mode="python"),
-        )
-        # Make `python3` resolve to the test interpreter for portability.
-        executor = DispatchExecutor(workdir=str(tmp_path))
-        result = await executor.execute(node, {}, workdir=str(tmp_path))
-        assert result.success is True, result.error
-        assert "forced-py" in result.output
-
-    @pytest.mark.asyncio
     async def test_prompt_mode_routes_unknown_extension_through_prompt(self, tmp_path):
         """A URL with `.foo` suffix runs through the prompt pipeline when mode=prompt.
 

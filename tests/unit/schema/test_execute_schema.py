@@ -61,23 +61,21 @@ class TestExecuteModeOverride:
     """``execute.mode:`` forces dispatch routing when the URL extension
     is missing or misleading. Only legal in URL mode."""
 
-    def test_url_mode_with_python_override_parses(self):
-        e = Execute(url="scripts/run-thing", mode="python")
-        assert e.mode == "python"
-
     def test_url_mode_with_subgraph_override_parses(self):
         e = Execute(url="subgraphs/registry-entry", mode="subgraph")
         assert e.mode == "subgraph"
 
-    @pytest.mark.parametrize(
-        "mode", ["prompt", "subgraph", "exec", "python", "node", "tsx", "bash"],
-    )
+    @pytest.mark.parametrize("mode", ["prompt", "subgraph", "exec"])
     def test_all_documented_modes_parse(self, mode):
         Execute(url="x", mode=mode)
 
-    def test_unknown_mode_rejected(self):
+    @pytest.mark.parametrize("mode", ["python", "node", "tsx", "bash", "ruby"])
+    def test_removed_and_unknown_modes_rejected(self, mode):
+        # The interpreter-alias modes (python/node/tsx/bash) were removed;
+        # only prompt/subgraph/exec force dispatch. Arbitrary interpreters
+        # go through a command preset, not `mode:`.
         with pytest.raises(ValidationError):
-            Execute(url="x", mode="ruby")
+            Execute(url="x", mode=mode)
 
     def test_mode_on_join_rejected(self):
         with pytest.raises(ValidationError) as ei:

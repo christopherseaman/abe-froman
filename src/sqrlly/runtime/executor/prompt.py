@@ -11,28 +11,6 @@ from sqrlly.runtime.result import ExecutionResult, OverloadError, PromptBackend
 from sqrlly.schema.models import LlmPreset, Node, Settings
 
 
-def resolve_model(node: Node, settings: Settings) -> str | None:
-    """Pick the declared LLM model for a node — used by foreman for
-    per-model semaphore selection.
-
-    Returns ``None`` (foreman → "no per-model semaphore") whenever no
-    LLM model applies:
-      - ``settings.presets`` is empty;
-      - the node resolves to a ``CommandPreset`` (a script node — no
-        model);
-      - the node has no ``params.preset`` and there is no default LLM
-        preset (a script node in a command-preset-only workflow —
-        ``resolve_preset_name`` raises, caught here).
-    """
-    if not settings.presets:
-        return None
-    try:
-        preset = settings.presets[resolve_preset_name(node, settings)]
-    except ValueError:
-        return None
-    return preset.model if isinstance(preset, LlmPreset) else None
-
-
 # Tier list for OverloadError auto-downgrade. Fixed — the chain mirrors
 # Anthropic's model tiers, not a per-workflow knob.
 MODEL_DOWNGRADE_CHAIN = ["opus", "sonnet", "haiku"]

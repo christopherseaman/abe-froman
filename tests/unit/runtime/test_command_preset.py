@@ -181,7 +181,7 @@ class TestCommandPresetValidation:
                 "nodes": [{
                     "id": "n", "name": "N",
                     "execute": {
-                        "url": "s.py", "mode": "python",
+                        "url": "s.py", "mode": "exec",
                         "params": {"preset": "uv"},
                     },
                 }],

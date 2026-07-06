@@ -59,7 +59,6 @@ Unknown keys in `settings:` are rejected with a `ValidationError` — no silent 
 | Field | Type | Default | Effect |
 |---|---|---|---|
 | `max_parallel_jobs` | `int` | `4` | Foreman global semaphore. |
-| `per_model_limits` | `dict[str, int]` | `{}` | Per-model caps layered inside the global semaphore. |
 | `memory_threshold_pct` | `float \| None` | `None` | Foreman blocks new dispatches while host memory percent is above this (0–100). `None` disables. |
 
 ### Worktree isolation
@@ -230,7 +229,10 @@ done with `params.preset`, not a node `model` field.
 
 Exactly one of `url` or `type: join` must be set. `type: join` rejects
 `params` and `mode`. `ExecuteMode` is one of `prompt`, `subgraph`,
-`exec`, `python`, `node`, `tsx`, `bash`.
+`exec` — it forces the dispatch *kind* when the URL extension is
+missing or misleading. To run a script under an arbitrary interpreter
+(a specific venv, `uv run`, …), name a **command preset** via
+`params.preset`, not `mode`.
 
 ```yaml
 execute:

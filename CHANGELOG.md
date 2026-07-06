@@ -5,8 +5,14 @@ All notable changes to sqrlly are documented here. Format follows
 
 ## [Unreleased]
 
+### Security
+
+- Remote-URL fetch (`allow_remote_urls`) is surfaced loudly, not silent: `sqrlly validate`/`run` emit a lint warning for any node whose `execute.url` or gate validator is an `http(s)://` source, and the runtime logs a `SECURITY` warning on every remote fetch. The feature is retained (it's the foundation for a future remote-assets/cloud-execution milestone, tracked in TODO) — just no longer quiet.
+
 ### Removed
 
+- `settings.per_model_limits` (per-model concurrency sub-caps) and the `resolve_model` cascade behind it — YAGNI: every real setting had the cap equal to `max_parallel_jobs` (a no-op). Concurrency is bounded by `max_parallel_jobs` alone. `extra=forbid` means a stale `per_model_limits:` key now fails at load — remove it from any workflow that sets one.
+- `execute.mode`'s interpreter values (`python`/`node`/`tsx`/`bash`). `mode:` now only forces the dispatch *kind* (`prompt`/`subgraph`/`exec`); an arbitrary interpreter (a specific venv, `uv run`, …) goes through a **command preset** (`params.preset`), which is strictly more capable. A stale `mode: python` now fails validation.
 - Zero-consumer settings fields (unknown keys fail loud at `validate` via `extra=forbid`; none were set by any known workflow): `output_directory` (never read by any code), `max_subgraph_depth` (now a fixed internal cap of 10), `worktree_setup_store_dir` (pass the store through the tool's own flag, e.g. `pnpm install --store-dir=/abs/path`), `allow_remote_scripts` (gated a feature that does not exist — remote script/binary execution is refused at dispatch), `memory_min_available_bytes` and its byte-size suffix parser (`memory_threshold_pct` remains the memory gate), and `model_downgrade_chain` (the opus→sonnet→haiku overload downgrade is now a fixed internal constant).
 - `runtime/secrets.py::resolve_secret` — retracted; nothing in-tree called it. The module keeps the project-local `.env` discovery/parsing that powers `settings.url_headers` `${VAR}` expansion (process env first, then `.env`).
 
@@ -15,6 +21,7 @@ All notable changes to sqrlly are documented here. Format follows
 
 ### Changed
 
+- Host-memory back-pressure extracted from the foreman into its own `runtime/memory_gate.py` (behavior unchanged — still default-off via `settings.memory_threshold_pct`), isolating the sole `psutil` dependency to one small module.
 - Internal refactors (no schema/CLI/behavior change): one tolerant JSON extractor (`runtime/_json.py::extract_json`) shared by gate-verdict and fan-out-manifest parsing (was two drifting copies); one retry-backoff clamp (`runtime/executor/prompt.py::retry_delay`) shared by gate and backend retries; a single YAML→Graph load path (`cli.load_config` delegates to `compile.subgraph.load_graph`); `PromptExecutor` flattened from a class into module functions (`apply_preamble`, `execute_with_downgrade`) with the backend cache moving onto `DispatchExecutor`, which now resolves a node's preset once per dispatch; and `execute_with_timeout` replaced by a generic `run_with_timeout(awaitable, timeout)` returning a failure `ExecutionResult` on timeout (deletes the `"timeout"` sentinel/union and a hand-rolled duplicate in the fan-out path).
 - Repo hygiene: regenerable example artifacts (`view.html` / `view-debug.html` / `reference-run.jsonl` / absurd-paper `reference-output/`, ~230 KB) are untracked and gitignored — rebuild locally with `sqrlly view` or `examples/regenerate_views.sh`. Shipped-feature design docs (`docs/superpowers/`, 12 files) removed; git history preserves them. Sdist excludes hardened so in-flight plan docs and `.superpowers/` scratch can never ship to PyPI.
 

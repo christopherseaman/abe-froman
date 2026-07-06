@@ -1,12 +1,11 @@
-"""ForemanExecutor: queue + per-model semaphores + worktree pool.
+"""ForemanExecutor: queue + memory gate + worktree pool.
 
 Wraps an inner `NodeExecutor` (typically `DispatchExecutor`) and adds:
   - A **global** `asyncio.Semaphore` bounding parallel jobs.
-  - **Per-model** semaphores layered inside the global cap.
   - **Memory back-pressure** — when ``settings.memory_threshold_pct`` is
-    set, blocks new dispatches while host memory percent is above it.
-    Composes (AND) with the semaphores; in-flight jobs are never
-    aborted by this gate.
+    set, blocks new dispatches while host memory percent is above it
+    (see ``runtime/memory_gate.py``; default off). Composes (AND) with
+    the semaphore; in-flight jobs are never aborted by this gate.
   - A **worktree pool** — per-node trees for ``auto``/``isolated`` nodes;
     group nodes share one tree keyed by group name; ``off`` nodes run in
     the base workdir.
@@ -23,41 +22,32 @@ by default (``never``) they persist for inspection / ``--resume``.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 import subprocess
 import uuid
 from pathlib import Path
 from typing import Any
 
-import psutil
-
-from sqrlly.runtime.executor.prompt import resolve_model
 from sqrlly.runtime.gates import scaffold_output_directory
+from sqrlly.runtime.memory_gate import POLL_INTERVAL_S, wait_for_memory
 from sqrlly.runtime.result import ExecutionResult, NodeExecutor, PromptBackend
 from sqrlly.runtime.worktree_share import ensure_setup, materialize_shares
 from sqrlly.schema.models import Node, Settings
 
 logger = logging.getLogger(__name__)
 
-# How long to wait between memory-pressure re-checks while gated.
-# Short enough to react quickly when an in-flight job releases
-# memory; long enough to avoid burning CPU polling.
-_MEMORY_POLL_INTERVAL_S = 1.0
-
 
 class ForemanExecutor:
-    """NodeExecutor wrapper adding concurrency caps + worktree pool."""
+    """NodeExecutor wrapper adding a concurrency cap + worktree pool."""
 
     def __init__(
         self,
         inner: NodeExecutor,
         base_workdir: str,
         max_parallel_jobs: int = 4,
-        per_model_limits: dict[str, int] | None = None,
         rehydrate: dict[str, str] | None = None,
         settings: Settings | None = None,
-        memory_poll_interval_s: float = _MEMORY_POLL_INTERVAL_S,
+        memory_poll_interval_s: float = POLL_INTERVAL_S,
     ):
         self._inner = inner
         # Resolve to absolute so recorded worktree paths (node_worktrees,
@@ -65,10 +55,6 @@ class ForemanExecutor:
         # of the `--workdir` form — a fan-in consumer needn't re-resolve them.
         self._base = str(Path(base_workdir).resolve())
         self._global_sem = asyncio.Semaphore(max_parallel_jobs)
-        self._model_sems: dict[str, asyncio.Semaphore] = {
-            model: asyncio.Semaphore(n)
-            for model, n in (per_model_limits or {}).items()
-        }
         self._worktrees: dict[str, str] = dict(rehydrate or {})
         self._created_paths: set[str] = set()
         self._worktree_lock = asyncio.Lock()
@@ -87,64 +73,32 @@ class ForemanExecutor:
         workdir: str | None = None,
         settings_override: Settings | None = None,
     ) -> ExecutionResult:
-        # Per-model semaphore selection respects the scope's settings —
-        # a subgraph that overrides default_model gets its concurrency
-        # accounted under the subgraph's tier, not the parent's.
         s = settings_override or self._settings
-        model = resolve_model(node, s)
-        model_sem = self._model_sems.get(model) if model is not None else None
 
-        # Memory back-pressure runs OUTSIDE the semaphores so that gated
+        # Memory back-pressure runs OUTSIDE the semaphore so that gated
         # acquisitions don't sit holding a slot while waiting for memory
-        # to drop. Defaults to ``None`` (disabled).
-        await self._wait_for_memory(
-            threshold_pct=s.memory_threshold_pct, node_id=node.id,
+        # to drop. Defaults to ``None`` (disabled — a fast no-op).
+        await wait_for_memory(
+            s.memory_threshold_pct, node_id=node.id,
+            poll_interval=self._memory_poll_s,
         )
 
         async with self._global_sem:
-            async with (model_sem or _null_async_cm()):
-                kind, group = node.effective_worktree(s)
-                if kind == "off":
-                    run_dir = workdir or self._base
-                else:
-                    pool_key = f"group:{group}" if kind == "group" else node.id
-                    run_dir = await self._acquire_worktree(node.id, pool_key, group)
-                if node.output_contract:
-                    scaffold_output_directory(node.output_contract, run_dir)
-                result = await self._inner.execute(
-                    node, context, workdir=run_dir,
-                    settings_override=settings_override,
-                )
-                if kind != "off" and result.worktree is None:
-                    result.worktree = run_dir
-                return result
-
-    async def _wait_for_memory(
-        self,
-        *,
-        threshold_pct: float | None,
-        node_id: str,
-    ) -> None:
-        """Block while host memory percent is above ``threshold_pct``.
-
-        ``None`` disables the gate (fast no-op). In-flight jobs are
-        never affected — only new acquisitions wait.
-        """
-        if threshold_pct is None:
-            return
-        first_block = True
-        while True:
-            mem = psutil.virtual_memory()
-            if mem.percent <= threshold_pct:
-                return
-            if first_block:
-                logger.info(
-                    "foreman: memory back-pressure gating dispatch of %r "
-                    "(percent=%.1f > threshold %.1f)",
-                    node_id, mem.percent, threshold_pct,
-                )
-                first_block = False
-            await asyncio.sleep(self._memory_poll_s)
+            kind, group = node.effective_worktree(s)
+            if kind == "off":
+                run_dir = workdir or self._base
+            else:
+                pool_key = f"group:{group}" if kind == "group" else node.id
+                run_dir = await self._acquire_worktree(node.id, pool_key, group)
+            if node.output_contract:
+                scaffold_output_directory(node.output_contract, run_dir)
+            result = await self._inner.execute(
+                node, context, workdir=run_dir,
+                settings_override=settings_override,
+            )
+            if kind != "off" and result.worktree is None:
+                result.worktree = run_dir
+            return result
 
     async def _acquire_worktree(
         self,
@@ -299,8 +253,3 @@ class ForemanExecutor:
     async def close(self) -> None:
         if hasattr(self._inner, "close"):
             await self._inner.close()
-
-
-def _null_async_cm():
-    """A no-op async context manager for when no per-model semaphore exists."""
-    return contextlib.nullcontext()

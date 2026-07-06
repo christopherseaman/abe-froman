@@ -113,15 +113,11 @@ class TestMultiFieldCarriage:
         assert merged.allowed_url_hosts == ["*.child.com"]  # child wins
         assert merged.url_headers == {"https://parent.com/": {"X": "p"}}  # inherited
 
-    def test_concurrency_fields_compose_correctly(self):
-        parent = Settings(max_parallel_jobs=8, per_model_limits={"opus": 2})
-        child = Settings(per_model_limits={"sonnet": 4})
+    def test_max_parallel_jobs_inherited_when_child_unset(self):
+        parent = Settings(max_parallel_jobs=8)
+        child = Settings()
         merged = merge_settings(parent, child)
         assert merged.max_parallel_jobs == 8
-        # Child REPLACES (not augments) since model_fields_set marks the
-        # whole dict as authored. Document this — authors who want both
-        # caps must restate the parent's keys in the subgraph YAML.
-        assert merged.per_model_limits == {"sonnet": 4}
 
 
 class TestRoundTripConstraint:

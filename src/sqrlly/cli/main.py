@@ -560,7 +560,6 @@ async def _execute_workflow(
                 inner=dispatch,
                 base_workdir=workdir,
                 max_parallel_jobs=config.settings.max_parallel_jobs,
-                per_model_limits=dict(config.settings.per_model_limits),
                 rehydrate=dict(state.get("node_worktrees", {})),
                 settings=config.settings,
             )

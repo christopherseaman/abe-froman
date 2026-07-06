@@ -166,10 +166,7 @@ class Route(BaseModel):
         return self
 
 
-ExecuteMode = Literal[
-    "prompt", "subgraph", "exec",
-    "python", "node", "tsx", "bash",
-]
+ExecuteMode = Literal["prompt", "subgraph", "exec"]
 
 
 class Execute(BaseModel):
@@ -415,13 +412,11 @@ class Settings(BaseModel):
     preamble_file: str | None = None
     retry_backoff: list[float] = []
     max_parallel_jobs: int = 4
-    per_model_limits: dict[str, int] = {}
     # Memory back-pressure: block new dispatches while host memory
     # percent is ABOVE this value (`psutil.virtual_memory().percent`).
     # Default ``None`` = disabled. Composes (AND) with
-    # ``max_parallel_jobs`` / ``per_model_limits`` — every gate must
-    # allow dispatch. In-flight jobs are never aborted; only new
-    # acquisitions wait.
+    # ``max_parallel_jobs`` — every gate must allow dispatch. In-flight
+    # jobs are never aborted; only new acquisitions wait.
     memory_threshold_pct: float | None = Field(default=None, ge=0.0, le=100.0)
 
     # Worktree isolation default for the graph; inherits graph→subgraph via

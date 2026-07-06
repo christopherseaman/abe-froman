@@ -23,6 +23,62 @@ below; revisited only when a concrete workflow proves it unavoidable,
 and even then likely a content-aware acceptance gate rather than blind
 `git merge`.
 
+## Footprint audit follow-ups (2026-07, batches A–D)
+
+Batches A–C landed (dead code, zero-consumer config fields, internal
+consolidation). Batch D was reviewed item-by-item with the operator;
+most were **kept** for stated reasons — recorded here so a future audit
+does not re-flag them.
+
+**Design task (own thread — a deliberate PoC → product deviation):**
+
+- [ ] 🎯 **Remote/cloud extension beyond local-only.** Today sqrlly is
+  effectively local-only: remote *prompt* fetch works (gated + now
+  warned), but remote *script/binary* **execution** halts at dispatch
+  (`dispatch.py`: "not yet wired"). The intended milestone is
+  **local-by-default, extensibly designed toward cloud dispatch,
+  execution, and storage** — with `base_url` able to point at a remote
+  bucket/repo/web root for gathering scripts/assets, and a clear
+  security model (warn-on-use is in; sandboxing/trust is not).
+  Brainstorm the design as its own stream: how cloud execution,
+  remote asset resolution, and the security boundary compose. Context:
+  the initial champion moved major workflow-based tasks off Temporal /
+  alongside Inngest onto cheap single-environment VMs (Railway) to
+  lower complexity, since their workflows center on building/revising
+  application code — a single build environment beat a distributed
+  workflow engine. Keep the remote-fetch branch **modular** so this
+  can grow without entangling the every-node local dispatch path.
+
+**Kept — do not re-flag (footprint audit "leave alone"):**
+
+- **`memory_threshold_pct` / host-memory back-pressure** — kept; the
+  global semaphore bounds job *count*, but this is the orthogonal guard
+  for individually memory-heavy jobs. Extracted to
+  `runtime/memory_gate.py` (default-off; isolates the sole `psutil`
+  dep). Do not remove.
+- **`include_eval` (route eval-context forwarding)** — kept; it is the
+  seed of a valued generalization: routing gate/failure context (as
+  workflow context, on a state channel *separate from* `node_outputs`)
+  to any target — retry an upstream node OR hand failure context to a
+  downstream fixer. Do not remove; extend toward first-class
+  route-with-failure-context.
+- **`worktree_group` (feature-team shared tree)** — kept; aligns with
+  the champion's documented #6 "cooperating agent teams" (their stated
+  strongest pattern) and `worktree: off` is not equivalent (off writes
+  live to base; a group is isolated + atomic-promote). Pending explicit
+  champion confirmation (see the write-up passed to them).
+- **Remote-URL fetch machinery** — kept (see the design task above),
+  not removed. Now surfaced by a security lint + runtime warning.
+
+**Deferred refactors (zero-LOC-reduction; readability/test-tidiness only):**
+
+- [ ] **T2-11 — split `cli/main.py::_execute_workflow`** (~250 lines)
+  into `_seed_state` + `_promote_and_gc` helpers. Pure readability;
+  promote-before-GC / checkpointer ordering is sensitive — do with
+  fresh attention.
+- [ ] **T2-10 — dedup ~8 divergent test git-init helpers** into
+  `tests/helpers.py::init_git_repo(path, *, branch, files)`. Test-only.
+
 ## Post-Stage-5d audit findings (2026-05-08, eval/decision-split branch)
 
 - [ ] 🤞 **(29) `_make_combined_eval_decide_node` is residual debt from the eval/decision split** (`compile/nodes.py`) — top-level gated nodes use the clean Eval + Decision pair, but **dynamic gated parents** stayed on the combined factory because their downstream `_make_dynamic_router` needs `completed_nodes`/`failed_nodes` already in state when it issues `Send(...)` for fan-out. Folding fan-out branch eval into the new pattern would let us delete the combined factory entirely, but requires either (a) graph-level loops over Send branches (LangGraph doesn't support) or (b) a parallel inline-Decision loop that duplicates the new node-factory logic. Defer until fan-out branch authoring patterns surface real pain.

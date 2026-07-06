@@ -141,8 +141,6 @@ settings:
   default_timeout: 180.0
   retry_backoff: [5.0, 15.0]
   max_parallel_jobs: 2
-  per_model_limits:
-    sonnet: 2
   presets:
     default:
       transport: cli

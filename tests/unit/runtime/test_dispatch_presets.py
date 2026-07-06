@@ -15,7 +15,6 @@ import pytest
 from sqrlly.runtime.executor.backends.acp import ACPBackend
 from sqrlly.runtime.executor.backends.cli import CLIBackend
 from sqrlly.runtime.executor.dispatch import DispatchExecutor
-from sqrlly.runtime.executor.prompt import resolve_model
 from sqrlly.schema.models import Execute, Node, LlmPreset, Settings
 
 
@@ -96,25 +95,6 @@ class TestResolvePromptBackend:
         )
         with pytest.raises(RuntimeError, match="no backend is registered"):
             dispatcher._resolve_prompt_backend(_node(), settings)
-
-class TestResolveModel:
-    def test_no_presets_returns_none(self):
-        """Pure-script workflow has no presets → resolve_model returns None
-        so foreman skips per-model semaphore selection."""
-        assert resolve_model(_node(), Settings()) is None
-
-    def test_default_preset_model(self):
-        """Presets declared, node references nothing → default preset's model."""
-        node = _node()
-        settings = _settings_with_presets()  # default=smart, model=opus
-        assert resolve_model(node, settings) == "opus"
-
-    def test_params_preset_selects_model(self):
-        """params.preset selects a non-default preset."""
-        node = _node(params={"preset": "cheap"})
-        settings = _settings_with_presets()
-        assert resolve_model(node, settings) == "haiku"
-
 
 class TestGetBackend:
     """get_backend() returns the right backend for LLM-gate dispatch."""

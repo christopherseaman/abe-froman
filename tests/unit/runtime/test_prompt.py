@@ -8,7 +8,7 @@ method. The module now exposes a narrow set of free functions used by
   - ``execute_with_downgrade(backend, rendered, model, workdir, timeout)
     -> ExecutionResult``
 
-Module-level helpers ``resolve_model``, ``downgrade_model``,
+Module-level helpers ``downgrade_model``,
 ``render_template`` are also covered here. End-to-end prompt-execution
 flow (node → prompt file fetch → render → backend) lives behind
 ``DispatchExecutor`` and is exercised here through that entry point.
@@ -24,7 +24,6 @@ from sqrlly.runtime.executor.prompt import (
     downgrade_model,
     prepend_eval_preamble,
     render_template,
-    resolve_model,
 )
 from sqrlly.runtime.result import (
     ExecutionResult,
@@ -122,32 +121,6 @@ class TestPrependEvalPreamble:
         )
         assert result.endswith(body)
 
-
-# ---------------------------------------------------------------------------
-# resolve_model
-# ---------------------------------------------------------------------------
-
-
-class TestResolveModel:
-    def _settings_with_default(self, model: str) -> Settings:
-        from sqrlly.schema.models import LlmPreset
-        return Settings(presets={
-            "default": LlmPreset(
-                transport="acp", provider="anthropic",
-                model=model, default=True,
-            ),
-        })
-
-    def test_default_preset_model(self):
-        """No params.preset → default preset's model wins."""
-        node = Node(id="p1", name="P1", execute=Execute(url="t.md"))
-        assert resolve_model(node, self._settings_with_default("sonnet")) == "sonnet"
-
-    def test_no_presets_returns_none(self):
-        """Pure-script workflows (no presets) → resolve_model returns None
-        so foreman skips per-model semaphore selection."""
-        node = Node(id="p1", name="P1", execute=Execute(url="t.md"))
-        assert resolve_model(node, Settings()) is None
 
 
 # ---------------------------------------------------------------------------

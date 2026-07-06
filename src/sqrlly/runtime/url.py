@@ -8,9 +8,9 @@ URLs. This module provides:
   explicit protocol passthrough, absolute path → file://, relative
   resolves against base_url (else workdir).
 - `fetch_url(resolved_url, settings, cache) -> bytes` — validates against
-  the four security gates (allow_remote_urls, allowed_url_hosts,
-  max_remote_fetch_bytes), consults the cache,
-  applies url_headers with ${VAR} env expansion.
+  the security gates (allow_remote_urls, allowed_url_hosts,
+  max_remote_fetch_bytes), consults the cache, applies url_headers with
+  ${VAR} env expansion, and logs a SECURITY warning on any remote fetch.
 - `canonical(url) -> str` — lowercase host + reassembly via urlsplit so
   trailing-slash variance and case-different hosts compare equal.
 - fetch caching: a plain per-compile ``dict[str, bytes]`` keyed by canonical resolved URL.
@@ -23,6 +23,7 @@ freely without dragging LangGraph imports across layer boundaries.
 from __future__ import annotations
 
 import fnmatch
+import logging
 import os
 import re
 import urllib.request
@@ -146,8 +147,8 @@ def fetch_url(
     max_remote_fetch_bytes size cap. Remote URLs go through:
       1. allow_remote_urls (master switch).
       2. allowed_url_hosts (glob host match if non-empty).
-      4. max_remote_fetch_bytes (size cap).
-      5. Cache lookup; on miss, urlopen with url_headers.
+      3. max_remote_fetch_bytes (size cap).
+      4. A SECURITY warning is logged, then urlopen with url_headers.
 
     Precondition: ``resolved_url`` is already in canonical form (from
     ``resolve_url``); callers don't need to re-canonicalize.
@@ -186,6 +187,13 @@ def fetch_url(
     # Remote script/binary EXECUTION is refused downstream at dispatch
     # (script and binary dispatch require file://); only prompt bodies
     # are ever fetched remotely, so no per-extension gate is needed here.
+    # SECURITY: fetching an execution input over the network is a trust
+    # boundary — log it (the compile-time lint also warns at validate/run).
+    logging.getLogger(__name__).warning(
+        "SECURITY: fetching remote execution input from %s — content runs "
+        "with the orchestrator's full privileges; ensure the source is "
+        "trusted.", canon,
+    )
     headers = _select_headers(canon, settings.url_headers)
     request = urllib.request.Request(canon, headers=headers)
 
