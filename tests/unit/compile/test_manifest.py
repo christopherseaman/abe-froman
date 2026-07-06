@@ -223,64 +223,165 @@ class TestNormalizeItems:
         assert not any("missing 'id'" in r.message for r in caplog.records)
 
 
-class TestEmptyManifestRouting:
-    def test_router_warns_and_routes_to_no_items(self, caplog):
-        """An empty (but valid) manifest is not silent: the dynamic
-        router logs a warning and routes to the no_items target(s)."""
+class TestFanDispatcher:
+    """The `_fan_<id>` dispatcher node replaces the conditional-edge router.
+
+    It returns ``Command(goto=...)``: a plain ``{}`` defer while the parent
+    is unsettled (step 2), ``Command(goto=no_items_targets)`` + WARN on an
+    empty manifest (step 3), a ``make_failure_update`` Command on duplicate
+    child ids (step 4, NOT a raise), and ``Command(goto=[Send(...)])`` per
+    item otherwise (step 5). Each test seeds ``completed_nodes={"p1"}`` so the
+    step-2 defer doesn't fire before the branch under test.
+    """
+
+    def test_defers_when_parent_unsettled(self, caplog):
+        """Step 2: parent not in completed ∪ failed → plain {} defer, no WARN."""
         import logging
 
-        from sqrlly.compile.graph import _make_dynamic_router
+        from sqrlly.compile.graph import _make_fan_dispatcher
+
+        node = _phase_with_dynamic()
+        fan = _make_fan_dispatcher(node, no_items_targets=["after"])
+        # completed_nodes empty → parent unsettled.
+        state = make_initial_state(
+            node_outputs={"p1": json.dumps([{"id": "a"}])}
+        )
+        with caplog.at_level(logging.WARNING):
+            result = fan(state)
+        assert result == {}
+        assert not any("zero items" in r.message for r in caplog.records)
+
+    def test_warns_and_routes_to_no_items(self, caplog):
+        """Step 3: an empty (but valid) manifest logs a WARN and routes to
+        the no_items target(s) via Command(goto=...)."""
+        import logging
+
+        from langgraph.graph import END
+        from langgraph.types import Command
+
+        from sqrlly.compile.graph import _make_fan_dispatcher
 
         node = _phase_with_dynamic()  # fan_out, no manifest_path
-        router = _make_dynamic_router(node, no_items_targets=["after"])
-        state = make_initial_state(node_outputs={"p1": ""})  # no manifest
+        fan = _make_fan_dispatcher(node, no_items_targets=["after"])
+        state = make_initial_state(
+            node_outputs={"p1": ""}, completed_nodes={"p1"},  # settled, no manifest
+        )
         with caplog.at_level(logging.WARNING):
-            result = router(state)
-        assert result == ["after"]
+            result = fan(state)
+        assert isinstance(result, Command)
+        # Concrete-id list (not an unwrapped scalar) so an empty manifest can
+        # fan to every dependent.
+        assert result.goto == ["after"]
         assert any("zero items" in r.message for r in caplog.records)
 
+    def test_parent_failed_routes_END(self):
+        """Step 1: parent in failed_nodes → Command(goto=END)."""
+        from langgraph.graph import END
+        from langgraph.types import Command
 
-class TestDuplicateChildIds:
-    def test_duplicate_literal_ids_raise(self):
-        """Two manifest items with the same 'id' would dispatch two Send
-        branches onto one child id — raise before dispatch."""
-        from sqrlly.compile.graph import _make_dynamic_router
-        from sqrlly.runtime.result import ManifestError
+        from sqrlly.compile.graph import _make_fan_dispatcher
+
+        node = _phase_with_dynamic()
+        fan = _make_fan_dispatcher(node, no_items_targets=["after"])
+        state = make_initial_state(
+            node_outputs={"p1": json.dumps([{"id": "a"}])},
+            failed_nodes={"p1"},
+        )
+        result = fan(state)
+        assert isinstance(result, Command)
+        assert result.goto == END
+
+    def test_duplicate_literal_ids_fail_the_node(self):
+        """Step 4: two items with the same 'id' → a make_failure_update
+        Command (parent in failed_nodes, fail-loud message), NOT a raise."""
+        from langgraph.graph import END
+        from langgraph.types import Command
+
+        from sqrlly.compile.graph import _make_fan_dispatcher
 
         node = _phase_with_dynamic()  # parent id 'p1'
-        router = _make_dynamic_router(node, no_items_targets=["after"])
+        fan = _make_fan_dispatcher(node, no_items_targets=["after"])
         state = make_initial_state(
-            node_outputs={"p1": json.dumps([{"id": "dup"}, {"id": "dup"}])}
+            node_outputs={"p1": json.dumps([{"id": "dup"}, {"id": "dup"}])},
+            completed_nodes={"p1"},
         )
-        with pytest.raises(ManifestError, match="duplicate"):
-            router(state)
+        result = fan(state)
+        assert isinstance(result, Command)
+        assert result.goto == END
+        assert result.update["failed_nodes"] == {"p1"}
+        assert any(
+            "duplicate" in e["error"] for e in result.update["errors"]
+        )
 
-    def test_unknown_collapse_raises(self):
-        """≥2 id-less dict items all map to p1::unknown — a duplicate."""
-        from sqrlly.compile.graph import _make_dynamic_router
-        from sqrlly.runtime.result import ManifestError
+    def test_unknown_collapse_fails_the_node(self):
+        """Step 4: ≥2 id-less dict items all map to p1::unknown — a duplicate,
+        surfaced as a failure Command whose error names 'unknown'."""
+        from langgraph.graph import END
+        from langgraph.types import Command
+
+        from sqrlly.compile.graph import _make_fan_dispatcher
 
         node = _phase_with_dynamic()
-        router = _make_dynamic_router(node, no_items_targets=["after"])
+        fan = _make_fan_dispatcher(node, no_items_targets=["after"])
         state = make_initial_state(
-            node_outputs={"p1": json.dumps([{"topic": "a"}, {"topic": "b"}])}
+            node_outputs={"p1": json.dumps([{"topic": "a"}, {"topic": "b"}])},
+            completed_nodes={"p1"},
         )
-        with pytest.raises(ManifestError, match="unknown"):
-            router(state)
+        result = fan(state)
+        assert isinstance(result, Command)
+        assert result.goto == END
+        assert result.update["failed_nodes"] == {"p1"}
+        assert any(
+            "unknown" in e["error"] for e in result.update["errors"]
+        )
 
     def test_unique_ids_dispatch_one_send_each(self):
-        """Distinct ids → no raise; one Send per item."""
-        from langgraph.types import Send
+        """Step 5: distinct ids → Command(goto=[Send...]), one Send per item,
+        each carrying {**state, _fan_out_item}."""
+        from langgraph.types import Command, Send
 
-        from sqrlly.compile.graph import _make_dynamic_router
+        from sqrlly.compile.graph import _make_fan_dispatcher
 
         node = _phase_with_dynamic()
-        router = _make_dynamic_router(node, no_items_targets=["after"])
+        fan = _make_fan_dispatcher(node, no_items_targets=["after"])
         state = make_initial_state(
-            node_outputs={"p1": json.dumps([{"id": "a"}, {"id": "b"}])}
+            node_outputs={"p1": json.dumps([{"id": "a"}, {"id": "b"}])},
+            completed_nodes={"p1"},
         )
-        result = router(state)
-        assert isinstance(result, list) and len(result) == 2
-        assert all(isinstance(s, Send) for s in result)
-        sent_ids = sorted(s.arg["_fan_out_item"]["id"] for s in result)
+        result = fan(state)
+        assert isinstance(result, Command)
+        sends = result.goto
+        assert isinstance(sends, list) and len(sends) == 2
+        assert all(isinstance(s, Send) for s in sends)
+        sent_ids = sorted(s.arg["_fan_out_item"]["id"] for s in sends)
         assert sent_ids == ["a", "b"]
+        # Each Send payload carries committed state (post-gate), so children
+        # see the parent's completed_nodes without payload baking.
+        assert all("p1" in s.arg["completed_nodes"] for s in sends)
+
+    def test_bad_manifest_path_fails_the_node(self, tmp_path):
+        """A `_read_manifest` ManifestError (here: a missing manifest_path
+        file) FAILS the parent via a make_failure_update Command(goto=END) —
+        it does NOT escape the dispatcher as a raise. A raise would leave a
+        gated parent completed-but-not-failed in the checkpoint and bare
+        --resume would freeze it and re-fail forever; failing the node makes
+        it dirty on --resume so it re-fans once the file is fixed."""
+        from langgraph.graph import END
+        from langgraph.types import Command
+
+        from sqrlly.compile.graph import _make_fan_dispatcher
+
+        node = _phase_with_dynamic(manifest_path="missing.json")
+        fan = _make_fan_dispatcher(node, no_items_targets=["after"])
+        state = make_initial_state(
+            workdir=str(tmp_path),
+            node_outputs={"p1": "not json"},  # forces the disk-path fallback
+            completed_nodes={"p1"},
+        )
+        result = fan(state)
+        assert isinstance(result, Command)
+        assert result.goto == END
+        assert result.update["failed_nodes"] == {"p1"}
+        assert any(
+            "could not be read" in e["error"] for e in result.update["errors"]
+        )

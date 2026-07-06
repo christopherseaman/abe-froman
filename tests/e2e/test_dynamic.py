@@ -318,6 +318,43 @@ class TestDynamicGates:
         assert "p::b" in result["completed_nodes"]
 
     @pytest.mark.asyncio
+    async def test_parent_gate_pass_children_see_committed_state(self, tmp_path):
+        """A gated fan-out parent that PASSES dispatches its Sends from the
+        _fan_<id> node one super-step AFTER the gate committed, so each child's
+        Send payload carries the parent's post-gate evaluations. Each child's
+        template echoes {{evals.p.score}} — a value present ONLY once the gate's
+        record is committed — so the rendered child output pins committed-state
+        visibility end-to-end: a stale (pre-gate) payload would render an empty
+        score. This is the timing the unit Send-payload pin can't prove (that
+        one seeds state directly)."""
+        script = tmp_path / "pass.py"
+        script.write_text("print(1.0)")
+        items = [{"id": "a"}, {"id": "b"}]
+        config = make_config([
+            dynamic_parent(
+                "p", items,
+                template_execute={
+                    "url": _ECHO,
+                    "params": {"args": ["-n", "score={{evals.p.score}}"]},
+                },
+                evaluation={"validator": str(script), "threshold": 0.8},
+            ),
+        ])
+        executor = DispatchExecutor(workdir=str(tmp_path))
+        graph = build_workflow_graph(config, executor)
+        result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
+
+        # Parent gate committed before dispatch: record present, parent done.
+        assert result["evaluations"]["p"][-1]["result"]["score"] == 1.0
+        assert "p" in result["completed_nodes"]
+        assert "p::a" in result["completed_nodes"]
+        assert "p::b" in result["completed_nodes"]
+        # Each child rendered the parent's committed eval score in its payload
+        # — proving the Send saw post-gate evaluations, not a stale snapshot.
+        assert result["node_outputs"]["p::a"] == "score=1.0"
+        assert result["node_outputs"]["p::b"] == "score=1.0"
+
+    @pytest.mark.asyncio
     async def test_parent_gate_fail_blocks_fanout(self, tmp_path):
         """Parent blocking gate fails -> no children run."""
         (tmp_path / "template.md").write_text("Sub {{id}}")

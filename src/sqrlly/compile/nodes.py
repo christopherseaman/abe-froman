@@ -344,11 +344,11 @@ def build_record_only_update(
     *,
     node_id: str | None = None,
 ) -> dict[str, Any]:
-    """The Evaluation node's payload: an EvaluationRecord, nothing else.
+    """An EvaluationRecord write, nothing else.
 
-    Returned by the new ``_make_evaluation_node`` body after the
-    Stage-5d Eval/Decision split. The Decision node reads
-    ``state.evaluations[key][-1]`` and decides routing separately.
+    Used by the gate node's already-completed branch (verdict not
+    enforced, but the record is still written) and composed into the
+    combined record+outcome update by ``build_evaluation_outcome_update``.
     """
     key = node_id or node.id
     record = EvaluationRecord.now(
@@ -367,12 +367,11 @@ def build_outcome_only_update(
     *,
     node_id: str | None = None,
 ) -> dict[str, Any]:
-    """The Decision node's payload: the outcome state writes (no record).
+    """The outcome-state writes only (no record).
 
-    The Eval node already wrote the record to ``evaluations``; this
-    function returns ONLY the routing-state writes
-    (``completed_nodes`` / ``failed_nodes`` / ``retries`` / ``errors``)
-    that the Decision node combines with a ``goto=`` in its Command.
+    Returns ONLY the routing-state writes (``completed_nodes`` /
+    ``failed_nodes`` / ``retries`` / ``errors``); composed with the
+    record write by ``build_evaluation_outcome_update``.
     """
     key = node_id or node.id
     update: dict[str, Any] = {}
@@ -414,12 +413,10 @@ def build_evaluation_outcome_update(
     *,
     node_id: str | None = None,
 ) -> dict[str, Any]:
-    """Combined record + outcome state — used by the fan-out branch
-    inline retry loop in ``compile/dynamic.py::_make_fan_out_node``.
-
-    Top-level gated nodes split this into separate Eval and Decision
-    steps; fan-out branches loop inline within a single Send-
-    dispatched body and want both writes from one helper call.
+    """Combined record + outcome state — the gate node's pass/retry/fail
+    update, and the fan-out branch inline retry loop's per-attempt update
+    (``compile/dynamic.py::_make_fan_out_node``). One helper call yields
+    both the EvaluationRecord and the routing-state writes.
     """
     update = build_record_only_update(node, result, retries, node_id=node_id)
     outcome_update = build_outcome_only_update(
@@ -487,8 +484,7 @@ async def _run_eval_core(
     """Run the gate validator and return ``(result, None)`` on success
     or ``(None, failure_update)`` on timeout.
 
-    Shared core between ``_make_evaluation_node``,
-    ``_make_combined_eval_decide_node``, and
+    Shared core between ``_make_gate_node`` and
     ``run_evaluation_and_outcome`` — everything between the eligibility
     checks and the per-caller outcome update.
     """
@@ -673,125 +669,61 @@ def _make_execution_node(
     return node_fn
 
 
-def _make_evaluation_node(
+def _make_gate_node(
     node: Node,
     config: Graph,
     executor: "NodeExecutor | None" = None,
     *,
+    exec_id: str,
+    pass_targets: list[str],
     effective_settings: Settings | None = None,
 ):
-    """Create the Evaluation node — first half of a gated node pair.
+    """Create a gated node's gate — ONE Command-returning body that runs
+    the validator, writes the ``EvaluationRecord``, classifies, and
+    routes in a single super-step.
 
-    Reads ``node_outputs[node_id]`` (produced by the upstream Execution
-    node), runs the validator, and writes ONLY an ``EvaluationRecord``
-    to ``state.evaluations[node_id]``. Outcome classification +
-    routing live in the Decision node (``_make_decision_node``)
-    downstream — this node's only job is to produce the record.
+    Registered under ``_eval_<exec_id>`` and reached by a single plain
+    edge ``exec_id → _eval_<exec_id>``. Returns
+    ``Command(update=record+outcome, goto=...)`` (or a plain ``{}`` on
+    defer). ``pass_goto`` is unwrapped to a single id when
+    ``pass_targets`` has one entry, else emitted as the list (which may
+    contain ``END``). ``exec_id`` is the retry goto target — parameterized
+    per call site so a gated fan-out final retries its ``_final_<...>``
+    synthetic id, not ``node.id``.
 
-    ``effective_settings`` (Phase 3 / scope-aware): drives the eval
-    timeout and feeds ``run_evaluation`` the scope's ``default_model``
-    for ``.md`` LLM gates.
+    ``executor`` (threaded from the registration site) is used for
+    ``executor.get_backend()`` when the validator is an LLM ``.md`` judge;
+    ``None`` yields the pinned no-PromptBackend ``ValueError`` if such a
+    validator runs.
+
+    History is read from state BEFORE this run's record (the pre-Stage-5d
+    combined-factory convention); for the stock Evaluation sugar this is
+    equivalent to including the current record, since the route criteria
+    only reference ``result.*`` and ``invocation``.
     """
     settings = effective_settings or config.settings
     timeout = node.effective_timeout(settings)
+    max_retries = node.effective_max_retries(settings)
 
-    async def node_fn(state: WorkflowState) -> dict[str, Any]:
+    def _pass_goto() -> Any:
+        return pass_targets[0] if len(pass_targets) == 1 else list(pass_targets)
+
+    async def node_fn(state: WorkflowState):
         node_id = node.id
 
+        # 1. Already failed (incl. the exec-infra-failure path) → END.
         if node_id in state.get("failed_nodes", set()):
-            return {}
+            return Command(goto=END)
 
+        # 2. Frozen on resume: do NOT re-run the validator (often an LLM
+        #    judge). Still emit the pass goto so downstream — which has no
+        #    static in-edge from a gated node — is reached with zero bill.
         if (skip := state.get("_resume_skip")) and node_id in skip:
-            # Frozen on resume: do NOT re-run the validator (often an LLM
-            # judge). The reseeded completed_nodes lets the Decision node
-            # route to pass_targets with zero eval bill.
-            return {}
+            return Command(goto=_pass_goto())
 
-        if state.get("dry_run", False):
-            # Synthesize a passing record; the Decision node's dry-run
-            # branch handles routing without re-reading this.
-            record = EvaluationRecord.now(
-                invocation=0,
-                result={
-                    "score": 1.0,
-                    "scores": {},
-                    "feedback": "[dry-run]",
-                    "pass_criteria_met": [],
-                    "pass_criteria_unmet": [],
-                },
-            )
-            return {"evaluations": {node_id: [record.to_dict()]}}
-
-        outputs = state.get("node_outputs", {})
-        # Defer until upstream wrote node_outputs[node_id]. Key-absence
-        # rather than empty-value because join nodes (Execute(type="join"))
-        # legitimately write "". See test_defers_when_upstream_output_absent.
-        if node_id not in outputs:
-            return {}
-        output = outputs[node_id]
-
-        retries = state.get("retries", {}).get(node_id, 0)
-        backend = (
-            executor.get_backend()
-            if (executor is not None and hasattr(executor, "get_backend"))
-            else None
-        )
-
-        eval_result, failure = await _run_eval_core(
-            node, config, state,
-            node_id=node_id, node_output=output, retries=retries,
-            backend=backend, timeout=timeout,
-            effective_settings=effective_settings,
-        )
-        if failure is not None:
-            # Timeout is an infrastructure failure, distinct from a
-            # content evaluation. Write failed_nodes directly so the
-            # Decision node short-circuits to END via its already-failed
-            # guard. Bypasses the eval/decision split for this one
-            # error class — clearer error reporting than synthesizing
-            # a score=0.0 record.
-            return failure
-
-        return build_record_only_update(
-            node, eval_result, retries, node_id=node_id,
-        )
-
-    node_fn.__name__ = f"eval_{node.id}"
-    return node_fn
-
-
-def _make_combined_eval_decide_node(
-    node: Node,
-    config: Graph,
-    executor: "NodeExecutor | None" = None,
-    *,
-    effective_settings: Settings | None = None,
-):
-    """Pre-Stage-5d eval-and-classify-in-one-body shape, retained for
-    the dynamic gated parent path.
-
-    Top-level gated nodes use the clean split (``_make_evaluation_node``
-    + ``_make_decision_node``). Dynamic gated parents can't, because
-    their downstream is a conditional-edge router (``_make_dynamic_
-    router``) that issues ``Send(...)`` arrays — that router needs
-    ``completed_nodes`` / ``failed_nodes`` / ``retries`` already
-    written by the time it reads state. Inserting a ``_decide_<id>``
-    node before the router would fragment the manifest-dispatch path
-    further; keeping the combined factory keeps the dynamic gated
-    parent's wiring identical to its pre-Stage-5d shape.
-    """
-    settings = effective_settings or config.settings
-    timeout = node.effective_timeout(settings)
-
-    async def node_fn(state: WorkflowState) -> dict[str, Any]:
-        node_id = node.id
-
-        if node_id in state.get("failed_nodes", set()):
-            return {}
-
-        if (skip := state.get("_resume_skip")) and node_id in skip:
-            return {}
-
+        # 3. Dry-run: synthesize a passing record AND complete. Keeping the
+        #    record is load-bearing — it drives the gate_evaluated event,
+        #    {{evals.<id>.score}} templates, and include_eval preambles.
         if state.get("dry_run", False):
             record = EvaluationRecord.now(
                 invocation=0,
@@ -800,126 +732,70 @@ def _make_combined_eval_decide_node(
                     "pass_criteria_met": [], "pass_criteria_unmet": [],
                 },
             )
-            return {
-                "evaluations": {node_id: [record.to_dict()]},
-                "completed_nodes": {node_id},
-            }
+            return Command(
+                update={
+                    "evaluations": {node_id: [record.to_dict()]},
+                    "completed_nodes": {node_id},
+                },
+                goto=_pass_goto(),
+            )
 
-        history = list(state.get("evaluations", {}).get(node_id, []))
+        # 4. Defer until upstream wrote node_outputs[node_id]. Key-absence
+        #    (not empty value) because join nodes legitimately write "".
+        #    A plain {} — LangGraph re-fires the gate when upstream writes.
         outputs = state.get("node_outputs", {})
         if node_id not in outputs:
             return {}
         output = outputs[node_id]
 
+        history = list(state.get("evaluations", {}).get(node_id, []))
+        retries = state.get("retries", {}).get(node_id, 0)
         backend = (
             executor.get_backend()
             if (executor is not None and hasattr(executor, "get_backend"))
             else None
         )
-        return await run_evaluation_and_outcome(
-            node, config, state, output, timeout,
-            backend=backend, node_id=node_id, history=history,
+
+        # 5. Run the validator. A timeout is an infrastructure failure,
+        #    distinct from a content evaluation: write failed_nodes with NO
+        #    evaluations record (clearer than a synthetic score=0.0) and
+        #    route END in one Command (no static out-edge remains).
+        eval_result, failure = await _run_eval_core(
+            node, config, state,
+            node_id=node_id, node_output=output, retries=retries,
+            backend=backend, timeout=timeout,
             effective_settings=effective_settings,
         )
+        if failure is not None:
+            return Command(update=failure, goto=END)
 
-    node_fn.__name__ = f"eval_combined_{node.id}"
-    return node_fn
-
-
-def _record_to_eval_result(payload: dict[str, Any]):
-    """Reconstitute an ``EvaluationResult`` from a stored record's
-    ``result`` dict — the inverse of ``_evaluation_result_payload``.
-
-    The Decision node reads the latest record from
-    ``state.evaluations[key][-1]["result"]`` and needs an
-    ``EvaluationResult`` to feed ``classify_evaluation_outcome``.
-    """
-    from sqrlly.runtime.gates import EvaluationResult as _ER
-    return _ER(
-        score=float(payload.get("score") or 0.0),
-        scores=dict(payload.get("scores") or {}),
-        reasons=dict(payload.get("reasons") or {}),
-        feedback=payload.get("feedback"),
-        pass_criteria_met=list(payload.get("pass_criteria_met") or []),
-        pass_criteria_unmet=list(payload.get("pass_criteria_unmet") or []),
-    )
-
-
-def _make_decision_node(
-    node: Node,
-    config: Graph,
-    *,
-    exec_id: str,
-    pass_targets: list[str],
-    effective_settings: Settings | None = None,
-):
-    """Create the Decision node — second half of a gated node pair.
-
-    Reads the latest ``EvaluationRecord`` written by the Eval node,
-    classifies the outcome (pass/retry/fail/warn-continue), and
-    returns a ``Command(update=..., goto=...)``:
-
-      - ``pass`` / ``warn_continue`` → ``goto=pass_targets``
-      - ``retry`` → ``goto=exec_id``  (re-fire the executor)
-      - ``fail_blocking`` → ``goto=END``
-
-    Replaces the old ``_make_evaluation_router`` + ``add_conditional_
-    edges`` pattern with a node-body Command return. Mirrors the
-    shape of ``_make_inline_route_node`` from ``compile/graph.py``.
-
-    Splitting record-production from routing-decision unlocks
-    refinement nodes / multi-eval consensus / human-in-the-loop /
-    cross-phase eval — non-routing consumers of the record now have
-    a clear insertion point between Eval and Decision.
-    """
-    settings = effective_settings or config.settings
-    max_retries = node.effective_max_retries(settings)
-
-    async def node_fn(state: WorkflowState):
-        node_id = node.id
-
-        if node_id in state.get("failed_nodes", set()):
-            return Command(goto=END)
-
+        # 6. Already completed (subgraph-reference wrappers pre-write
+        #    completed_nodes; a goto re-fire of an already-passed node): the
+        #    validator ran (record written above via step 5), but the verdict
+        #    is NOT enforced — route pass with the record only.
         if node_id in state.get("completed_nodes", set()):
-            target = pass_targets[0] if len(pass_targets) == 1 else pass_targets
-            return Command(goto=target)
-
-        if state.get("dry_run", False):
-            target = pass_targets[0] if len(pass_targets) == 1 else pass_targets
             return Command(
-                update={"completed_nodes": {node_id}},
-                goto=target,
+                update=build_record_only_update(
+                    node, eval_result, retries, node_id=node_id,
+                ),
+                goto=_pass_goto(),
             )
 
-        history = list(state.get("evaluations", {}).get(node_id, []))
-        if not history:
-            # Eval deferred (no upstream output yet, or otherwise
-            # didn't write a record). Take no action; LangGraph will
-            # re-fire decide when eval writes a record on the next
-            # super-step.
-            return {}
-
-        latest_payload = history[-1].get("result", {}) or {}
-        eval_result = _record_to_eval_result(latest_payload)
-        retries = state.get("retries", {}).get(node_id, 0)
-
+        # 7. Classify and route. build_evaluation_outcome_update merges the
+        #    record with the outcome-state writes in one dict.
         outcome = classify_evaluation_outcome(
             node, eval_result, retries, max_retries, history=history,
         )
-        update = build_outcome_only_update(
-            node, eval_result, outcome, retries, max_retries,
-            node_id=node_id,
+        update = build_evaluation_outcome_update(
+            node, eval_result, outcome, retries, max_retries, node_id=node_id,
         )
-
         if outcome == "retry":
             target = exec_id
         elif outcome == "fail_blocking":
             target = END
         else:  # pass or warn_continue
-            target = pass_targets[0] if len(pass_targets) == 1 else pass_targets
-
+            target = _pass_goto()
         return Command(update=update, goto=target)
 
-    node_fn.__name__ = f"decide_{node.id}"
+    node_fn.__name__ = f"eval_{node.id}"
     return node_fn

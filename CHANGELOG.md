@@ -5,6 +5,13 @@ All notable changes to sqrlly are documented here. Format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Collapsed the gated-node eval/decision node pair (and the separate combined eval+decide factory for dynamic parents) into ONE `Command`-returning gate node, and replaced the fan-out conditional-edge router with a `_fan_<id>` dispatcher node. The gate is still registered under the existing `_eval_<id>` name (JSONL/event node ids unchanged; `_decide_<id>` nodes are gone). Internal-only for any workflow — no schema or CLI surface change — but three observable effects:
+  - **JSONL event order**: the gate now emits its EvaluationRecord and its outcome in one super-step, so `gate_evaluated` precedes `node_completed`/`node_failed`. This matches the old cross-super-step order for top-level gated nodes but is a visible reordering for fan-out children and dynamic gated parents (previously `node_completed`-first). In-repo consumers (terminal renderer, HTML viewer) are order-insensitive.
+  - **Bad-manifest handling is now recoverable**: a fan-out with colliding child ids OR an unreadable/invalid-JSON/mis-shaped `manifest_path` fails the parent node (lands in `failed_nodes`) instead of raising, so a bare `sqrlly run --resume` dirties the parent and re-fans once the manifest is fixed. Previously the raise left the parent completed-but-not-failed and bare `--resume` re-failed deterministically.
+  - `sqrlly graph` under-draws fan-out topology: fork edges are runtime `Command(goto=[Send...])` now, and because a fan-out parent's downstream is only reachable through the Send-only `_sub_<id>`, the parent's dependents (and their plain `depends_on` edges) can render edge-less too — a whole fan-out subgraph may appear as disconnected nodes. The `_fan_<id> --> __end__` edge is a rendering artifact. Use `sqrlly view` (schema-reconstructed) for real topology.
+
 ## [0.8.0] - 2026-07-06
 
 A footprint-reduction pass (four batches). Net effect: ~13k lines removed

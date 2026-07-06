@@ -218,8 +218,8 @@ class TestLogUpdate:
 
     def test_emits_multiple_events_per_update(self):
         """A single update can carry both an evaluation record AND a
-        completion (the gated-pass case). Both events fire from the
-        one log_update call, in deterministic order."""
+        completion (the collapsed-gate pass case, one Command update). Both
+        events fire from the one log_update call, in deterministic order."""
         buf = StringIO()
         logger = JsonlLogger(buf)
         logger.log_update({
@@ -228,10 +228,26 @@ class TestLogUpdate:
         })
         events = [json.loads(l) for l in buf.getvalue().strip().split("\n")]
         types = [e["event"] for e in events]
-        # node_completed comes BEFORE gate_evaluated per the
-        # _emit_update_events ordering contract — preserved from the
-        # legacy state-diff order so test assertions remain stable.
-        assert types == ["node_completed", "gate_evaluated"]
+        # gate_evaluated comes BEFORE node_completed per the
+        # _emit_update_events ordering contract: the collapsed gate emits
+        # the record + the outcome in ONE update, and "gate ran, then the
+        # node settled" is the order log consumers expect.
+        assert types == ["gate_evaluated", "node_completed"]
+
+    def test_gate_evaluated_precedes_node_failed_in_one_update(self):
+        """The collapsed gate's fail_blocking Command carries evaluations +
+        failed_nodes + errors together; gate_evaluated must still emit
+        before node_failed."""
+        buf = StringIO()
+        logger = JsonlLogger(buf)
+        logger.log_update({
+            "evaluations": {"p": [{"invocation": 1, "result": {"score": 0.1}}]},
+            "failed_nodes": {"p"},
+            "errors": [{"node": "p", "error": "Evaluation failed after 1 retries"}],
+        })
+        events = [json.loads(l) for l in buf.getvalue().strip().split("\n")]
+        types = [e["event"] for e in events]
+        assert types == ["gate_evaluated", "node_failed"]
 
 
 # ---------------------------------------------------------------------------

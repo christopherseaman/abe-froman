@@ -316,6 +316,55 @@ class TestGateIntegration:
         assert "p1" in result["completed_nodes"]
         assert any("non-blocking" in e["error"].lower() for e in result["errors"])
 
+    @pytest.mark.asyncio
+    async def test_resume_skipped_gate_still_routes_downstream(self, tmp_path):
+        """A gated node frozen on --resume must STILL emit its pass goto so
+        its dependent runs — the collapsed gate's step-2 skip branch returns
+        Command(goto=pass_goto) with no update and no validator call. The
+        validator is a broken script (would raise if it ran), proving the
+        gate skipped it yet still routed to the dependent."""
+        broken = tmp_path / "broken.py"
+        broken.write_text("import sys; sys.exit(3)")  # nonzero => eval error if run
+        config = make_config([
+            cmd_phase("a", output="frozen-out",
+                      evaluation={"validator": str(broken), "threshold": 0.8}),
+            cmd_phase("b", output="b-ran", depends_on=["a"]),
+        ])
+        executor = DispatchExecutor(workdir=str(tmp_path))
+        graph = build_workflow_graph(config, executor)
+        # Reseed as --resume would: a is frozen (skip + completed), so its
+        # exec and gate both skip; the gate must still route to b.
+        state = make_initial_state(workdir=str(tmp_path))
+        state["completed_nodes"] = {"a"}
+        state["node_outputs"] = {"a": "frozen-out"}
+        state["_resume_skip"] = {"a"}
+        result = await graph.ainvoke(state)
+        assert "a" in result["completed_nodes"]
+        assert "b" in result["completed_nodes"]
+        assert result["node_outputs"]["b"] == "b-ran"
+        # The validator never ran → no eval record was produced this run.
+        assert result.get("evaluations", {}).get("a", []) == []
+
+    @pytest.mark.asyncio
+    async def test_gate_eval_timeout_routes_end_via_command(self, tmp_path):
+        """An eval-validator timeout is an infra failure: the collapsed gate
+        returns Command(update=failure, goto=END) so the run terminates
+        cleanly (no hang, no orphaned path). The node lands in failed_nodes
+        with a timeout error and no evaluation record."""
+        slow = tmp_path / "slow.py"
+        slow.write_text("import time, sys; sys.stdin.read(); time.sleep(5)")
+        config = make_config([
+            cmd_phase("p1", output="data",
+                      evaluation={"validator": str(slow), "threshold": 0.8},
+                      timeout=1),
+        ])
+        executor = DispatchExecutor(workdir=str(tmp_path))
+        graph = build_workflow_graph(config, executor)
+        result = await graph.ainvoke(make_initial_state(workdir=str(tmp_path)))
+        assert "p1" in result["failed_nodes"]
+        assert any("timed out" in e["error"].lower() for e in result["errors"])
+        assert result.get("evaluations", {}).get("p1", []) == []
+
 
 # ---------------------------------------------------------------------------
 # Dry run

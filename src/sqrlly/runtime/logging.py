@@ -25,9 +25,12 @@ def _emit_update_events(emitter: Any, update: dict[str, Any]) -> None:
     how their ``emit()`` formats the event (``SubgraphLogger`` prefixes
     the ``node`` field). The ``emitter`` argument duck-types ``emit()``.
 
-    Emission order is fixed: ``node_model`` → ``node_completed`` →
-    ``node_failed`` → ``gate_evaluated`` → ``node_retried``. Tests
-    asserting on event order depend on this.
+    Emission order is fixed: ``node_model`` → ``gate_evaluated`` →
+    ``node_completed`` → ``node_failed`` → ``node_retried``. Tests
+    asserting on event order depend on this. The collapsed gate emits
+    the record + the outcome (completed / failed) in ONE update, so
+    ``gate_evaluated`` precedes BOTH ``node_completed`` and
+    ``node_failed`` — "gate ran, then the node settled."
 
     Command-only nodes (route dispatchers that emit ``Command(goto=...)``
     without any state update) appear in the updates stream as
@@ -42,17 +45,6 @@ def _emit_update_events(emitter: Any, update: dict[str, Any]) -> None:
             "model": info.get("model"),
             "preset": info.get("preset"),
         })
-
-    for node in update.get("completed_nodes") or []:
-        emitter.emit({"event": "node_completed", "node": node})
-
-    for node in update.get("failed_nodes") or []:
-        error = ""
-        for err in update.get("errors") or []:
-            if err.get("node") == node:
-                error = err.get("error", "")
-                break
-        emitter.emit({"event": "node_failed", "node": node, "error": error})
 
     for node, records in (update.get("evaluations") or {}).items():
         for record in records:
@@ -78,6 +70,17 @@ def _emit_update_events(emitter: Any, update: dict[str, Any]) -> None:
                 if k in result:
                     event[k] = result[k]
             emitter.emit(event)
+
+    for node in update.get("completed_nodes") or []:
+        emitter.emit({"event": "node_completed", "node": node})
+
+    for node in update.get("failed_nodes") or []:
+        error = ""
+        for err in update.get("errors") or []:
+            if err.get("node") == node:
+                error = err.get("error", "")
+                break
+        emitter.emit({"event": "node_failed", "node": node, "error": error})
 
     for node, count in (update.get("retries") or {}).items():
         emitter.emit({"event": "node_retried", "node": node, "attempt": count})

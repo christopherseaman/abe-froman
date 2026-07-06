@@ -98,18 +98,17 @@ class TestGraphCommand:
         assert "graph TD" in result.output
 
     def test_graph_shows_gate_edges(self, runner, kitchen_sink_workflow_path):
-        """Gated nodes produce eval + decision node pairs (Stage 5d).
+        """A gated node compiles to a single collapsed gate node.
 
-        Pre-Stage-5d the eval node had conditional edges (dotted in
-        Mermaid). After the eval/decision split, gated nodes compile
-        to ``exec → _eval_<id> → _decide_<id>`` plain edges; routing
-        is via Command(goto=) at runtime, not static conditional
-        edges. Test now asserts the eval/decide pair is visible."""
+        The gate is registered under the existing ``_eval_<id>`` name and
+        reached by one plain edge ``exec → _eval_<id>``; routing is via
+        Command(goto=) at runtime, not static edges. There is no
+        ``_decide_<id>`` node anymore."""
         result = runner.invoke(cli, ["graph", str(kitchen_sink_workflow_path)])
         assert result.exit_code == 0
         assert "_eval_choose_topic" in result.output
-        assert "_decide_choose_topic" in result.output
-        assert "_eval_choose_topic --> _decide_choose_topic" in result.output
+        assert "_decide_choose_topic" not in result.output
+        assert "choose_topic --> _eval_choose_topic" in result.output
 
     def test_graph_shows_start_and_end(self, runner, kitchen_sink_workflow_path):
         """Mermaid output contains LangGraph's start/end terminal nodes."""

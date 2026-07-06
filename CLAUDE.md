@@ -34,11 +34,11 @@ YAML → Pydantic Graph → build_workflow_graph() → compiled LangGraph
                                     │                       ▼       ▼       ▼
                                     │                    Prompt  Script  Binary
                                     ▼                                Subgraph
-                              Evaluation (script or LLM)
-                                    │
+                              Gate node (script or LLM)
+                                    │        (one Command: record + outcome)
                                   ┌─┼─┐
                                   ▼ ▼ ▼
-                                pass retry fail   (router reads state; no reclassify)
+                                pass retry fail   (gate classifies + gotos in one node)
 ```
 
 The three-layer breakdown is in "Project Layout" below; layer rules are
@@ -110,14 +110,20 @@ Three-layer split (enforced by `tests/architecture/test_layers.py`):
   `SubprocessParams` + `coerce_params()` resolver.
 
 **`src/sqrlly/compile/`** — YAML → LangGraph (no cli imports).
-- `graph.py` — `build_workflow_graph()`, edge wiring, evaluation
-  router insertion. Carries `_make_inline_route_node` for Stage 5c
-  inline routes; synthetic `_route_<id>` dispatchers are registered
-  for execute+route nodes (post-eval pass target = `_route_<id>`,
-  which emits `Command(goto=...)`).
-- `nodes.py` — `_make_execution_node`, `_make_evaluation_node`, pure
-  helpers (`build_context`, `inject_retry_reason`,
-  `classify_evaluation_outcome`, `run_evaluation_and_outcome`).
+- `graph.py` — `build_workflow_graph()`, edge wiring, gate + fan-out
+  dispatcher insertion. `_wire_evaluation_pair` registers ONE collapsed
+  gate node under `_eval_<id>` (plain edge `exec → _eval_<id>`) that
+  returns `Command(update=record+outcome, goto=...)`. `_make_fan_dispatcher`
+  builds the `_fan_<id>` node (mirrors `_route_<id>`): a gated parent's
+  gate gotoes `_fan_<id>`, an ungated parent plain-edges to it, and it
+  emits the per-item `Send` array. Carries `_make_inline_route_node` for
+  Stage 5c inline routes; synthetic `_route_<id>` dispatchers are
+  registered for execute+route nodes (post-gate pass target =
+  `_route_<id>`, which emits `Command(goto=...)`).
+- `nodes.py` — `_make_execution_node`, `_make_gate_node` (the collapsed
+  gate: 7-step guard body → one `Command`), pure helpers (`build_context`,
+  `inject_retry_reason`, `classify_evaluation_outcome`,
+  `run_evaluation_and_outcome`, `build_evaluation_outcome_update`).
 - `dynamic.py` — fan-out via Send, inline retry loop.
 - `subgraph.py` — recursive composition, cycle detection, depth cap.
 - `route.py` — simpleeval namespace + predicate evaluation
@@ -257,13 +263,22 @@ resolver sees) — distinct from faking what an external system returns.
 - **Hyphenated node IDs in Jinja templates** — `{{research-phase}}`
   parses as subtraction; use underscores. `validate`/`run` emit an
   advisory warning (`compile/lint.py`).
-- **`graph` doesn't draw route edges** — `graph` renders the static
-  compiled LangGraph only; inline-route targets are runtime
-  `Command(goto=...)`, so a routed node's branch targets appear
-  edge-less there. `view` reconstructs declared `route:` edges and
-  fan-out (hexagon) structure from the schema
-  (`cli/view.py::_route_targets`), so it *does* draw them — only
-  realized per-manifest fan-out children (created at run time) are absent.
+- **`graph` under-draws fan-out topology (use `view` instead)** —
+  `graph` renders the static compiled LangGraph only; inline-route
+  targets AND fan-out `Send` dispatch are both runtime `Command(goto=...)`
+  (routes via `_route_<id>`, fan-out via the `_fan_<id>` dispatcher node).
+  For fan-out the degradation is worse than losing the fork edges: the
+  only static in-path to a fan-out parent's downstream (`_sub_<id>`) is
+  Send-only and thus unreachable in `get_graph()`, so pruning cascades
+  transitively — the parent's dependents render edge-less too (their plain
+  `depends_on` edges included), and a whole fan-out subgraph can appear as
+  disconnected nodes. The `_fan_<id> --> __end__` edge that `graph` draws
+  is a LangGraph implicit-finish rendering artifact, not a real exit
+  (runtime exits are Command-driven Sends). `view` reconstructs declared
+  `route:` edges and fan-out (hexagon) structure from the schema
+  (`cli/view.py::_route_targets`), so it *does* draw them — only realized
+  per-manifest fan-out children (created at run time) are absent. Use
+  `view` for real topology.
 - **Remote script/binary execution not wired** — `http(s)://` urls
   fetch-and-run for *prompt* nodes only; `_dispatch_script` /
   `_dispatch_binary` require `file://` and halt on a remote scheme.
@@ -301,7 +316,8 @@ resolver sees) — distinct from faking what an external system returns.
 - **Worktree dep sharing** — gitignored base deps reach branch worktrees two ways: `settings.worktree_share` (read-only whole-dir symlink — for read-only gates) and `settings.worktree_setup` (per-worktree rehydrate commands; sentinel-gated, fatal-per-branch). Both write the shared paths to the repo's shared `.git/info/exclude` so they stay out of the promote footprint; `settings.promote_exclude` is the promote-layer backstop. Wired in `runtime/foreman.py::_ensure_worktree_ready` via `runtime/worktree_share.py`. Consumer note: a `prisma generate` in `worktree_setup` needs its output path in `worktree_setup_exclude` (a `validate` lint warns otherwise).
   - **Shared `info/exclude`, not per-worktree** — git has no per-worktree exclude file: `git rev-parse --git-path info/exclude` resolves to the common git dir, the same `.git/info/exclude` for the base repo and every linked worktree, so `write_worktree_excludes` mutates that one shared file. Consequence: those entries persist in the base repo after the run and are NOT reclaimed by `worktree_gc`; however `info/exclude` only affects UNTRACKED paths, so it can never mask modifications to tracked files.
 - **Per-fan-out worktree override** — `fan_out.template.worktree` (`auto`/`isolated`/`off`, default inherit) overrides `settings.worktree` for one fan-out's branches, so a single workflow can mix an isolated build fan-out with a shared-base planner fan-out. Threaded two ways to match the two fan-out execution paths: subgraph templates gate isolation in `compile/subgraph.py::make_fan_out_subgraph_invoker` (new `template_worktree` arg overrides the `_isolate` computation); non-subgraph (`.md`/`.py`/script) templates set the synthetic child node's `worktree` in `compile/dynamic.py::_make_fan_out_node` so `effective_worktree` resolves it at the foreman gate. `off` runs branches in the base workdir (writes visible to a join node).
-- **Fan-out child-id collisions fail loud** — a dict manifest item missing `id` WARNs in `compile/_manifest.py::_normalize_items` (every id-less item collapses onto `<parent>::unknown`), and the Send router (`compile/graph.py::_make_dynamic_router`) raises `ManifestError` on any DUPLICATE child id before dispatch — catching both literal duplicate `id`s and the `::unknown` collapse before it becomes a silent N→1 fan-out.
+- **Bad-manifest fan-out fails the run (recoverable)** — the `_fan_<id>` dispatcher (`compile/graph.py::_make_fan_dispatcher`) FAILS the parent node with a `make_failure_update` `Command(goto=END)` — NOT a raise — on either (a) a `_read_manifest` `ManifestError` (unreadable / invalid-JSON / mis-shaped `manifest_path`, raised at `compile/_manifest.py:111/118/126`) or (b) a DUPLICATE child id (literal duplicate, or the `::unknown` collapse of ≥2 id-less items; a dict item missing `id` also WARNs in `_normalize_items`). Failing the node (not raising) puts the parent in `failed_nodes` so bare `--resume` dirties it via `prior_failed` and re-fans once the manifest is fixed; a raise would leave the parent completed-but-not-failed (the gate committed one super-step earlier) and bare `--resume` would freeze it and re-fail deterministically. The parent can land in BOTH `completed_nodes` (gate committed) and `failed_nodes` (`_fan_` failed) in that checkpoint — `compile/resume.py::compute_skip_set`'s dirty subtraction handles it. (Note: `_read_manifest` still RAISES `ManifestError` when called directly, e.g. via `cli/main.py`; only the dispatcher converts it.)
+- **JSONL `gate_evaluated` precedes `node_completed`/`node_failed`** — the collapsed gate emits its EvaluationRecord and its outcome (completed / failed) in ONE super-step update, so `runtime/logging.py::_emit_update_events` orders `gate_evaluated` BEFORE both `node_completed` and `node_failed` ("gate ran, then the node settled"). For the pre-collapse split top-level pair the record already landed a super-step earlier, so this preserves that order; it is a VISIBLE JSONL order change for fan-out children and dynamic gated parents (whose single merged update previously emitted `node_completed` first). In-repo consumers (`terminal.py`, `view.py`) are order-insensitive.
 - **Backend transient-error retry is opt-in** — `settings.backend_max_retries`
   (default `0`) retries the SAME backend dispatch on a non-`OverloadError`
   exception (a `claude exited 1` blip) up to N times with `retry_backoff`

@@ -84,7 +84,7 @@ does not re-flag them.
 
 ## Post-Stage-5d audit findings (2026-05-08, eval/decision-split branch)
 
-- [ ] 🤞 **(29) `_make_combined_eval_decide_node` is residual debt from the eval/decision split** (`compile/nodes.py`) — top-level gated nodes use the clean Eval + Decision pair, but **dynamic gated parents** stayed on the combined factory because their downstream `_make_dynamic_router` needs `completed_nodes`/`failed_nodes` already in state when it issues `Send(...)` for fan-out. Folding fan-out branch eval into the new pattern would let us delete the combined factory entirely, but requires either (a) graph-level loops over Send branches (LangGraph doesn't support) or (b) a parallel inline-Decision loop that duplicates the new node-factory logic. Defer until fan-out branch authoring patterns surface real pain.
+- [x] **(29) Collapse the eval/decision pair (and the combined factory) into one gate node** (`compile/nodes.py`, `compile/graph.py`) — DONE. The Eval + Decision pair AND `_make_combined_eval_decide_node` are replaced by a single `Command`-returning `_make_gate_node` (registered under the existing `_eval_<id>` name), and the fan-out conditional-edge router (`_make_dynamic_router`) by a `_fan_<id>` dispatcher node. The dynamic-parent obstacle dissolved: the gate gotoes `_fan_<id>` (reached one super-step later, so it reads committed post-gate state — no baking, no combined factory). Duplicate-manifest ids now fail the parent node (recoverable via bare `--resume`) instead of raising. See CHANGELOG [Unreleased].
 
 ## Post-Phase-B audit findings (2026-05-08, framework alignment + test doctrine sweep)
 
@@ -586,7 +586,7 @@ unless flagged otherwise.
 
 ## Reimplementation debt (drop in favor of native LangGraph)
 
-- [~] **Stop hand-writing router closures** — partial. `_make_evaluation_router` deleted (Stage 5d Eval/Decision split — Decision nodes emit `Command(goto=...)` directly). `_subphase_id_resolver` deleted (2026-05-15, was dead code). Still open: the dynamic-router closure and conditional-edge scaffolding it feeds in `compile/graph.py` for dynamic gated parents (blocked on item #29).
+- [x] **Stop hand-writing router closures** — DONE. `_make_evaluation_router` deleted (Stage 5d Eval/Decision split). `_subphase_id_resolver` deleted (2026-05-15, was dead code). `_make_dynamic_router` + its `add_conditional_edges` scaffolding deleted in the Batch E gate collapse (item #29) — fan-out dispatch is now the `_fan_<id>` node emitting `Command(goto=[Send...])`. No conditional-edge routers remain in `compile/graph.py`.
 
 > **Not reimplementation — don't "fix" these:** eval-score retries vs `RetryPolicy` (complementary, exception- vs content-driven); `_merge_dicts`/`_merge_evaluations` reducers (no native dict-merge / per-key list-append); timeouts / concurrency caps / worktree pool (outside LangGraph's scope); thread-id derivation from `(workflow_name, workdir)` (policy, not a shadowed feature).
 
@@ -706,8 +706,9 @@ subgraph templates gate isolation in `compile/subgraph.py::make_fan_out_subgraph
 so `effective_worktree` resolves it at the foreman gate. For the stable-id
 work: a dict manifest item missing `id` now WARNs in
 `compile/_manifest.py::_normalize_items` (every id-less item was silently
-collapsing onto `<parent>::unknown`), and the Send router
-(`compile/graph.py::_make_dynamic_router`) raises `ManifestError` on any
+collapsing onto `<parent>::unknown`), and the fan-out dispatcher
+(`compile/graph.py::_make_fan_dispatcher`, formerly the `_make_dynamic_router`
+conditional edge; collapsed in item #29) fails the parent node on any
 duplicate child id before dispatch.
 
 ### ✅ B9 — Transient-backend-error resilience for fan-out builds — SHIPPED 0.7.6

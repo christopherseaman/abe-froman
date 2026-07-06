@@ -498,3 +498,85 @@ class TestResumeFailedChild:
         # 'up' completed cleanly and is upstream of the dirty parent (not
         # downstream), so it is frozen — runs once total.
         assert _read_runs(tmp_path, "up") == 1
+
+
+# A parent that emits a DUPLICATE-id manifest until dedup.txt exists, then a
+# unique one. Phase 1 → duplicate → _fan_ fails the parent. Phase 2 (after
+# writing dedup.txt) → unique manifest → re-fans cleanly.
+_DUP_PARENT_SRC = """
+import json, sys
+from pathlib import Path
+if Path("dedup.txt").exists():
+    items = [{"id": "a"}, {"id": "b"}]
+else:
+    items = [{"id": "dup"}, {"id": "dup"}]
+print(json.dumps({"items": items}))
+"""
+
+
+def _build_dup_manifest_fanout(workdir: Path) -> Graph:
+    parent = workdir / "dup_parent.py"
+    parent.write_text(_DUP_PARENT_SRC)
+    return Graph(
+        name="resume-dup-manifest",
+        version="0.1.0",
+        nodes=[
+            {
+                "id": "dp", "name": "dp",
+                "execute": {
+                    "url": _PYTHON,
+                    "params": {"args": [str(parent)]},
+                },
+                "fan_out": {
+                    "template": {
+                        "execute": {
+                            "url": _ECHO,
+                            "params": {"args": ["-n", "child-{{id}}"]},
+                        },
+                    },
+                },
+            },
+        ],
+    )
+
+
+class TestResumeAfterDuplicateManifest:
+    @pytest.mark.asyncio
+    async def test_duplicate_manifest_fails_run_then_bare_resume_recovers(
+        self, tmp_path,
+    ):
+        """A duplicate-id manifest FAILS the run (the _fan_ dispatcher writes
+        a failure-update rather than raising), landing the parent in
+        failed_nodes. Bare --resume then dirties the parent via prior_failed,
+        it re-fans with a fresh (now-unique) manifest, and the run completes.
+
+        This is the recovery path the design demands: had _fan_ raised, the
+        parent would be completed-but-not-failed in the checkpoint and bare
+        --resume would freeze it and re-fail deterministically forever.
+        """
+        config = _build_dup_manifest_fanout(tmp_path)
+        db_path = str(tmp_path / ".checkpoint.db")
+        thread_id = "dup-manifest-resume"
+
+        # Phase 1: duplicate manifest → parent fails via _fan_ failure-update.
+        result_1 = await _run_phase(
+            tmp_path, config, db_path, thread_id, resume=False,
+        )
+        assert "dp" in result_1["failed_nodes"]
+        assert not any(
+            k.startswith("dp::") for k in result_1["completed_nodes"]
+        )
+        assert any(
+            "duplicate" in e.get("error", "") for e in result_1["errors"]
+        )
+
+        # Phase 2: unique manifest now; bare --resume dirties dp (prior_failed)
+        # → it re-fans and the children run.
+        (tmp_path / "dedup.txt").write_text("go")
+        result_2 = await _run_phase(
+            tmp_path, config, db_path, thread_id, resume=True,
+        )
+        assert "dp" in result_2["completed_nodes"]
+        assert "dp::a" in result_2["completed_nodes"]
+        assert "dp::b" in result_2["completed_nodes"]
+        assert result_2["failed_nodes"] == set()

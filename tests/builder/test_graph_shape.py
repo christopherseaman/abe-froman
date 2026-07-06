@@ -43,9 +43,9 @@ class TestSingleNodeGraph:
         assert _edges(graph) == {(START, "c1"), ("c1", END)}
 
     def test_single_gate_only_node(self):
-        """Gated node compiles to exec → _eval_<id> → _decide_<id>
-        (plain edges). Decision node returns Command(goto=...) at
-        runtime; no static conditional edges remain."""
+        """Gated node compiles to exec → _eval_<id> (one plain edge). The
+        gate node returns Command(goto=...) at runtime; no _decide_<id>
+        node, no static conditional edges remain."""
         config = make_config(
             [
                 {
@@ -60,12 +60,11 @@ class TestSingleNodeGraph:
         nodes = graph.get_graph().nodes
         assert "g1" in nodes
         assert "_eval_g1" in nodes
-        assert "_decide_g1" in nodes
+        assert "_decide_g1" not in nodes
         edges = _edges(graph)
         assert (START, "g1") in edges
         assert ("g1", "_eval_g1") in edges
-        assert ("_eval_g1", "_decide_g1") in edges
-        # No conditional edges from the eval pair — Command(goto=) replaces them.
+        # No conditional edges from the gate — Command(goto=) replaces them.
         assert _conditional_edges(graph) == set()
 
 
@@ -127,11 +126,11 @@ class TestParallelNodes:
 
 
 class TestGateRouting:
-    """Post-Stage-5d wiring: gated nodes compile to
-    ``exec → _eval_<id> → _decide_<id>`` with plain edges. The
-    Decision node's ``Command(goto=...)`` replaces the static
-    conditional-edge router; routing destinations are not visible
-    in ``graph.get_graph().edges`` because they're chosen at runtime.
+    """Collapsed-gate wiring: a gated node compiles to
+    ``exec → _eval_<id>`` with ONE plain edge. The gate node's
+    ``Command(goto=...)`` replaces the static conditional-edge router;
+    routing destinations are not visible in ``graph.get_graph().edges``
+    because they're chosen at runtime. No ``_decide_<id>`` node exists.
     """
 
     def test_terminal_gate_wiring(self):
@@ -148,11 +147,10 @@ class TestGateRouting:
         graph = build_workflow_graph(config)
         nodes = graph.get_graph().nodes
         assert "_eval_p1" in nodes
-        assert "_decide_p1" in nodes
+        assert "_decide_p1" not in nodes
         edges = _edges(graph)
         assert (START, "p1") in edges
         assert ("p1", "_eval_p1") in edges
-        assert ("_eval_p1", "_decide_p1") in edges
         # No conditional edges — Command(goto=) replaces them.
         assert _conditional_edges(graph) == set()
 
@@ -175,18 +173,18 @@ class TestGateRouting:
         )
         graph = build_workflow_graph(config)
         nodes = graph.get_graph().nodes
-        assert "_decide_a" in nodes
+        assert "_eval_a" in nodes
+        assert "_decide_a" not in nodes
         assert "b" in nodes  # b is reached via Command(goto=b) at runtime
         edges = _edges(graph)
         assert (START, "a") in edges
         assert ("a", "_eval_a") in edges
-        assert ("_eval_a", "_decide_a") in edges
-        # No conditional edges from the eval pair.
+        # No conditional edges from the gate.
         assert _conditional_edges(graph) == set()
         # b's static `b → END` edge is added by the terminal-end wiring;
         # LangGraph may filter it from get_graph().edges when b has no
         # static incoming edges (its only path in is the runtime Command
-        # from _decide_a). Not asserting on `(b, END) in edges` —
+        # from the _eval_a gate). Not asserting on `(b, END) in edges` —
         # downstream connectivity is verified end-to-end by e2e tests.
 
     def test_gate_with_multiple_dependents_fans_out(self):
@@ -206,14 +204,13 @@ class TestGateRouting:
         nodes = graph.get_graph().nodes
         assert "_after_a" not in nodes
         assert "_eval_a" in nodes
-        assert "_decide_a" in nodes
+        assert "_decide_a" not in nodes
         assert "b" in nodes
         assert "c" in nodes
 
         edges = _edges(graph)
         assert ("a", "_eval_a") in edges
-        assert ("_eval_a", "_decide_a") in edges
-        # decide → [b, c] is a runtime Command(goto=[b, c]); no static
+        # gate → [b, c] is a runtime Command(goto=[b, c]); no static
         # conditional edges. b/c terminal-END edges are added but
         # LangGraph may filter them from get_graph().edges (see
         # test_non_terminal_gate_wiring); end-to-end connectivity is
@@ -259,10 +256,9 @@ class TestInlineRouteShape:
         assert ("classify", "_route_classify") in edges
 
     def test_execute_plus_eval_plus_route_chains_through_eval(self):
-        """execute + eval + route: pass target of the Decision node is
-        _route_<id>. After Stage-5d the chain is execute → _eval_<id>
-        → _decide_<id> (plain edges); _decide_<id> emits
-        Command(goto=_route_<id>) on pass."""
+        """execute + eval + route: the gate's pass target is _route_<id>.
+        The chain is execute → _eval_<id> (one plain edge); the gate node
+        emits Command(goto=_route_<id>) on pass. No _decide_<id> node."""
         config = make_config([
             {"id": "classify", "name": "C",
              "execute": {"url": "c.md"},
@@ -273,15 +269,14 @@ class TestInlineRouteShape:
         graph = build_workflow_graph(config)
         nodes = graph.get_graph().nodes
         assert {
-            "classify", "_eval_classify", "_decide_classify",
-            "_route_classify", "ship",
+            "classify", "_eval_classify", "_route_classify", "ship",
         } <= set(nodes)
+        assert "_decide_classify" not in nodes
         edges = _edges(graph)
-        # execute → eval → decide (all plain). The Command(goto=_route_<id>)
-        # path is runtime; no static edge from _decide_classify.
+        # execute → gate (plain). The Command(goto=_route_<id>) path is
+        # runtime; no static edge from _eval_classify.
         assert ("classify", "_eval_classify") in edges
-        assert ("_eval_classify", "_decide_classify") in edges
-        # No conditional edges from the eval pair.
+        # No conditional edges from the gate.
         assert _conditional_edges(graph) == set()
 
     def test_list_valued_goto_no_terminal_end_edge(self):
@@ -356,16 +351,61 @@ class TestDynamicGraphShape:
         graph = build_workflow_graph(config)
         nodes = graph.get_graph().nodes
         assert "_sub_p" in nodes and "_final_p_f0" in nodes
+        # Fan-out dispatch is a _fan_<id> node, not conditional edges.
+        assert "_fan_p" in nodes
+        edges = _edges(graph)
+        # Ungated parent: plain edge parent → _fan_<id>.
+        assert ("p", "_fan_p") in edges
+        # No conditional edges for fan-out dispatch (Command(goto=[Send...])).
+        assert _conditional_edges(graph) == set()
 
     def test_gated_template_registers_nodes_and_parent_fanout(self):
+        # The evaluation is on the TEMPLATE (children), so the PARENT `p`
+        # is ungated: exec → _fan_<id> plain edge, no _eval_p gate on the
+        # parent. Child gates live inside the _sub_ inline retry loop.
         config = make_config([self._dynamic_phase(
             template_evaluation={"validator": "v.md", "threshold": 0.8},
         )])
         graph = build_workflow_graph(config)
         nodes = graph.get_graph().nodes
         assert "_sub_p" in nodes
-        conditional = _conditional_edges(graph)
-        assert ("p", "_final_p_f0") in conditional
+        assert "_fan_p" in nodes
+        assert "_eval_p" not in nodes  # parent ungated
+        edges = _edges(graph)
+        assert ("p", "_fan_p") in edges
+        # No conditional edges anywhere — _fan_ is Command-driven.
+        assert _conditional_edges(graph) == set()
+
+    def _gated_parent_phase(self):
+        """A fan-out whose PARENT carries the evaluation (parent-gate)."""
+        return {
+            "id": "p",
+            "name": "P",
+            "execute": {
+                "url": "/usr/bin/echo",
+                "params": {"args": ["manifest"]},
+            },
+            "evaluation": {"validator": "v.md", "threshold": 0.8},
+            "fan_out": {
+                "template": {"execute": {"url": "template.md"}},
+                "final_nodes": [
+                    {"id": "f0", "name": "F0", "execute": {"url": "f0.md"}},
+                ],
+            },
+        }
+
+    def test_parent_gated_fanout_wires_gate_to_fan(self):
+        """A parent-gated fan-out: exec → _eval_<id> gate, gate gotoes
+        _fan_<id> on pass. No _decide_<id>, no conditional edges."""
+        config = make_config([self._gated_parent_phase()])
+        graph = build_workflow_graph(config)
+        nodes = graph.get_graph().nodes
+        assert "_eval_p" in nodes
+        assert "_decide_p" not in nodes
+        assert "_fan_p" in nodes
+        edges = _edges(graph)
+        assert ("p", "_eval_p") in edges
+        assert _conditional_edges(graph) == set()
 
 
 class TestCycleDetection:

@@ -42,8 +42,11 @@ def compute_skip_set(
     ``prior_failed | rerun_targets`` and is closed over: transitive
     ``depends_on`` dependents, route-target reachability, and
     ``worktree_group`` siblings (a shared mutable tree means any dirty member
-    dirties the whole group). Failed nodes are never in ``prior_completed``,
-    so the difference can't accidentally skip a failure."""
+    dirties the whole group). A node in ``prior_failed`` is subtracted out of
+    the skip set even if it is ALSO in ``prior_completed`` — the only case
+    where that overlap arises is a fan-out parent that committed its gate
+    (completed) and then had its ``_fan_`` dispatcher fail on a duplicate-id
+    manifest (failed); the dirty subtraction re-runs it, so it re-fans."""
     ids = {n.id for n in config.nodes}
     dependents: dict[str, list[str]] = {nid: [] for nid in ids}
     for n in config.nodes:

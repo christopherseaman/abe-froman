@@ -14,9 +14,9 @@ from langgraph.types import Command, Send
 from sqrlly.compile._manifest import _read_manifest, find_terminal_nodes
 from sqrlly.compile.dynamic import _make_final_fan_out_node, _make_fan_out_node
 from sqrlly.compile.nodes import (
-    _make_combined_eval_decide_node,
-    _make_evaluation_node,
     _make_execution_node,
+    _make_gate_node,
+    make_failure_update,
 )
 from sqrlly.compile.route import build_route_namespace, evaluate_case
 from sqrlly.compile.subgraph import node_subgraph_path
@@ -183,74 +183,96 @@ def _wire_evaluation_pair(
     pass_targets: list[str],
     config: Graph,
     *,
+    executor: NodeExecutor | None = None,
     effective_settings: Settings | None = None,
 ) -> None:
-    """Wire a gated execution node's evaluation + decision pair.
+    """Register a gated execution node's collapsed gate.
 
-    Plain edges only — ``exec → _eval_<id> → _decide_<id>``. The
-    Decision node returns ``Command(update=..., goto=...)`` instead
-    of a downstream conditional-edge router reading written state.
-    Replaces the pre-Stage-5d ``add_conditional_edges`` + ``_make_
-    evaluation_router`` pattern; topology is equivalent at the goto
-    level (retry → exec_id, fail → END, pass → pass_targets).
+    One plain edge ``exec → _eval_<id>`` and one gate node (kept under the
+    existing ``_eval_<id>`` name for event-stream / log stability). The
+    gate returns ``Command(update=record+outcome, goto=...)`` — retry →
+    ``exec_id``, fail → END, pass → ``pass_targets`` — with no downstream
+    ``_decide_<id>`` node and no conditional edges.
     """
-    from sqrlly.compile.nodes import _make_decision_node
-
-    eval_id = f"_eval_{exec_id}"
-    decide_id = f"_decide_{exec_id}"
-
-    builder.add_edge(exec_id, eval_id)
+    gate_id = f"_eval_{exec_id}"
+    builder.add_edge(exec_id, gate_id)
     builder.add_node(
-        decide_id,
-        _make_decision_node(
-            node, config,
+        gate_id,
+        _make_gate_node(
+            node, config, executor,
             exec_id=exec_id,
             pass_targets=pass_targets,
             effective_settings=effective_settings,
         ),
     )
-    builder.add_edge(eval_id, decide_id)
 
 
-def _make_dynamic_router(node: Node, no_items_targets: list[str]):
-    """Conditional-edge router from the dynamic source.
+def _make_fan_dispatcher(node: Node, no_items_targets: list[str]):
+    """Build the ``_fan_<id>`` dispatcher node body for a fan-out parent.
 
-    Returns *concrete* target node-ids (or a list of them) rather than
-    abstract keys: ``END`` on fail, the parent id on retry,
-    ``no_items_targets`` when the manifest is empty, and the per-item
-    ``Send`` array otherwise. Returning the dependent list directly is
-    what lets the empty-manifest case fan to *every* dependent — a
-    ``route_map`` value could only ever be a single node.
-
-    Reads ``state.failed_nodes`` / ``state.completed_nodes`` (written
-    by the combined eval+decide factory upstream — see
-    ``_make_combined_eval_decide_node``). Dynamic gated parents
-    intentionally use the pre-Stage-5d combined eval body so this
-    router can decide off pre-written state without an intervening
-    Decision node fragmenting the manifest-dispatch path.
+    Reached only by ``Command(goto=_fan_<id>)`` from the gate (gated
+    parent) or a plain edge (ungated parent). Returns ``Command(goto=...)``:
+    ``END`` on parent failure, a plain ``{}`` defer while the parent is
+    unsettled, ``Command(goto=no_items_targets)`` + WARN on an empty
+    manifest, a ``make_failure_update`` Command on a `_read_manifest`
+    ``ManifestError`` (unreadable / invalid-JSON / mis-shaped
+    ``manifest_path``) or colliding child ids (NOT a raise — failing the
+    node lets bare ``--resume`` dirty the parent and re-fan with a fresh
+    manifest, rather than leaving the parent completed-but-not-failed and
+    re-failing deterministically), and the per-item ``Send`` array
+    otherwise. ``state`` here is committed post-gate state, so Send payloads
+    need no update baking.
     """
     template_node_id = f"_sub_{node.id}"
 
-    def router(state: WorkflowState):
+    def dispatcher(state: WorkflowState):
+        # 1. Parent failed (blocking gate, or dep-failure) → END, no fan-out.
         if node.id in state.get("failed_nodes", set()):
-            return END
-        if node.evaluation and node.id not in state.get("completed_nodes", set()):
-            return node.id
+            return Command(goto=END)
 
-        items = _read_manifest(state, node)
+        # 2. Parent not settled yet: defer. Safer than a pre-emptive fire —
+        #    LangGraph re-fires _fan_ when the parent settles. The final-node
+        #    barrier's case-3 guard stays as belt-and-braces.
+        settled = state.get("completed_nodes", set()) | state.get(
+            "failed_nodes", set()
+        )
+        if node.id not in settled:
+            return {}
+
+        # A ManifestError (unreadable / invalid-JSON / mis-shaped
+        # manifest_path) FAILS the parent node rather than escaping as a
+        # raise: the gate committed completed_nodes a super-step earlier, so a
+        # raise would leave the parent completed-but-not-failed in the
+        # checkpoint and bare --resume would freeze it and re-fail forever.
+        # Failing the node puts it in failed_nodes → dirty on --resume → re-fan.
+        try:
+            items = _read_manifest(state, node)
+        except ManifestError as e:
+            return Command(
+                update=make_failure_update(node.id, str(e)),
+                goto=END,
+            )
+
+        # 3. Empty manifest → route to the no-items target(s). Concrete ids
+        #    (not a route_map key) so an empty manifest can fan to EVERY
+        #    dependent; the list may contain END.
         if not items:
             logging.getLogger(__name__).warning(
                 "fan-out %r: manifest resolved to zero items — routing to "
                 "no-items target(s) %s instead of fanning out.",
                 node.id, no_items_targets,
             )
-            return no_items_targets
+            # Emit the concrete-id list as-is (may contain END). Returning a
+            # list — not an unwrapped scalar — is what lets an empty manifest
+            # fan to EVERY dependent.
+            return Command(goto=list(no_items_targets))
 
-        # Fail loud on colliding child ids before dispatch. Each branch's
-        # child id is `<parent>::<item_id>` (matching dynamic._make_fan_out_node).
-        # Two items mapping to the same id (literal duplicate, or ≥2 id-less
-        # dict items collapsing onto `::unknown`) would silently merge into one
-        # branch — historically a multi-minute timeout, not an error.
+        # 4. Fail loud on colliding child ids. Each branch's child id is
+        #    `<parent>::<item_id>` (matching dynamic._make_fan_out_node). Two
+        #    items mapping to one id (literal duplicate, or ≥2 id-less dict
+        #    items collapsing onto `::unknown`) would silently merge into one
+        #    branch. Fail the node (not raise) so the run ends failed and bare
+        #    --resume dirties the parent → re-fan with a fresh manifest.
         seen: set[str] = set()
         duplicates: set[str] = set()
         for item in items:
@@ -259,18 +281,25 @@ def _make_dynamic_router(node: Node, no_items_targets: list[str]):
                 duplicates.add(child_id)
             seen.add(child_id)
         if duplicates:
-            raise ManifestError(
-                f"fan-out {node.id!r}: manifest produces duplicate child id(s) "
-                f"{sorted(duplicates)!r} — each item needs a unique 'id' "
-                f"(id-less items collapse onto '{node.id}::unknown')."
+            return Command(
+                update=make_failure_update(
+                    node.id,
+                    f"fan-out {node.id!r}: manifest produces duplicate child "
+                    f"id(s) {sorted(duplicates)!r} — each item needs a unique "
+                    f"'id' (id-less items collapse onto '{node.id}::unknown').",
+                ),
+                goto=END,
             )
 
-        return [
+        # 5. Dispatch one Send per item. state is committed post-gate state,
+        #    so children see merged completed_nodes / evaluations directly.
+        return Command(goto=[
             Send(template_node_id, {**state, "_fan_out_item": item})
             for item in items
-        ]
+        ])
 
-    return router
+    dispatcher.__name__ = f"fan_{node.id}"
+    return dispatcher
 
 
 def build_workflow_graph(
@@ -419,30 +448,18 @@ def build_workflow_graph(
         builder.add_node(f"_route_{node_id}", _make_inline_route_node(node))
 
     # Evaluation nodes for every gated node. Top-level non-dynamic
-    # gated nodes use the Stage-5d eval/decision split (eval writes
-    # the record only; a separate _decide_<id> node returns Command
-    # for routing). Dynamic gated parents use the pre-Stage-5d
-    # combined factory (eval node writes record + outcome state) so
-    # the dynamic_router conditional edge downstream can read the
-    # outcome from state.
-    for node in config.nodes:
-        if node.evaluation:
-            factory = (
-                _make_combined_eval_decide_node
-                if node.id in dynamic_fan_out_ids
-                else _make_evaluation_node
-            )
-            builder.add_node(
-                f"_eval_{node.id}",
-                factory(node, config, executor, effective_settings=settings),
-            )
+    # gated nodes get ONE collapsed gate node registered under
+    # ``_eval_<id>`` by ``_wire_evaluation_pair`` at the wiring sites
+    # below (it needs the per-site exec_id + pass_targets). No separate
+    # registration loop — a gate registered here without those would have
+    # no routing.
 
     # Dynamic node child template + final nodes.
     final_node_ids: dict[tuple[str, str], str] = {}
     gated_final_ids: set[str] = set()
-    # Lookup the per-id Node object used for eval/decision construction.
-    # Populated for gated finals (synthetic Node mirrors the FanOutFinalNode
-    # config); top-level gated nodes look up directly via node_map.
+    # Lookup the per-id Node object used for gate construction. Populated
+    # for gated finals (synthetic Node mirrors the FanOutFinalNode config);
+    # top-level gated nodes look up directly via node_map.
     final_synthetic_nodes: dict[str, Node] = {}
     for node_id in dynamic_fan_out_ids:
         node = node_map[node_id]
@@ -467,17 +484,12 @@ def build_workflow_graph(
             )
             if final_node.evaluation:
                 gated_final_ids.add(fid)
-                synthetic = Node(
+                # Synthetic Node mirrors the FanOutFinalNode; its gate is
+                # registered as ``_eval_<fid>`` by _wire_evaluation_pair
+                # when the final chain is wired below.
+                final_synthetic_nodes[fid] = Node(
                     id=fid, name=final_node.name,
                     evaluation=final_node.evaluation,
-                )
-                final_synthetic_nodes[fid] = synthetic
-                builder.add_node(
-                    f"_eval_{fid}",
-                    _make_evaluation_node(
-                        synthetic, config, executor,
-                        effective_settings=settings,
-                    ),
                 )
 
     # ----- exit_node: what downstream deps plain-edge from -----
@@ -547,13 +559,13 @@ def build_workflow_graph(
             # so deps_of is guaranteed empty.
             _wire_evaluation_pair(
                 builder, node, node.id, [f"_route_{node.id}"], config,
-                effective_settings=settings,
+                executor=executor, effective_settings=settings,
             )
         else:
             deps_of = dependents[node.id]
             _wire_evaluation_pair(
                 builder, node, node.id, deps_of or [END], config,
-                effective_settings=settings,
+                executor=executor, effective_settings=settings,
             )
 
     # ----- Inline-route synthetic node wiring (ungated execute+route) -----
@@ -572,14 +584,7 @@ def build_workflow_graph(
         node = node_map[node_id]
         dsc = node.fan_out
         template_id = f"_sub_{node.id}"
-
-        # Gated parent: plain edge node → _eval_node so the dynamic router
-        # attaches to the eval node (and sees completed/retries/failed).
-        if node.id in gated_node_ids:
-            builder.add_edge(node.id, f"_eval_{node.id}")
-            dynamic_source = f"_eval_{node.id}"
-        else:
-            dynamic_source = node.id
+        fan_id = f"_fan_{node.id}"
 
         # _sub_ → first_final (child evaluates inline per branch).
         # Final chain: each gated final is followed by its eval with retry
@@ -592,7 +597,7 @@ def build_workflow_graph(
                 if cur in gated_final_ids:
                     _wire_evaluation_pair(
                         builder, final_synthetic_nodes[cur], cur, [nxt],
-                        config, effective_settings=settings,
+                        config, executor=executor, effective_settings=settings,
                     )
                 else:
                     builder.add_edge(cur, nxt)
@@ -606,22 +611,38 @@ def build_workflow_graph(
         if last_final and last_final in gated_final_ids:
             _wire_evaluation_pair(
                 builder, final_synthetic_nodes[last_final], last_final,
-                deps_of or [END], config, effective_settings=settings,
+                deps_of or [END], config,
+                executor=executor, effective_settings=settings,
             )
         else:
             for tgt in (deps_of or [END]):
                 builder.add_edge(exit_node[node.id], tgt)
 
-        # Fan-out router at the dynamic source. An empty manifest
-        # ("no_items") routes to the first final node when the fan-out
-        # declares final_nodes, otherwise to *every* dependent.
+        # Fan-out dispatch is a `_fan_<id>` node (mirrors `_route_<id>`),
+        # reached via Command(goto=_fan_<id>) from a gated parent's gate or
+        # a plain edge from an ungated parent. It emits the per-item Send
+        # array. An empty manifest ("no_items") routes to the first final
+        # node when the fan-out declares final_nodes, otherwise to *every*
+        # dependent.
         if dsc.final_nodes:
             no_items_targets = [f"_final_{node.id}_{dsc.final_nodes[0].id}"]
         else:
             no_items_targets = deps_of or [END]
-        router = _make_dynamic_router(node, no_items_targets)
-        path_map = list(dict.fromkeys([END, node.id, *no_items_targets]))
-        builder.add_conditional_edges(dynamic_source, router, path_map)
+        builder.add_node(fan_id, _make_fan_dispatcher(node, no_items_targets))
+
+        if node.id in gated_node_ids:
+            # Gated parent: exec → gate, gate gotoes _fan_<id> on pass.
+            # fan_out WINS over an inline route on the same node (the route
+            # block is dead) — matching the pre-collapse skip at the
+            # top-level gated wiring loop.
+            _wire_evaluation_pair(
+                builder, node, node.id, [fan_id], config,
+                executor=executor, effective_settings=settings,
+            )
+        else:
+            # Ungated parent: plain edge parent → _fan_<id> (the dispatcher
+            # defers until the parent settles).
+            builder.add_edge(node.id, fan_id)
 
     # ----- Terminal plain-end edges for ungated, non-dynamic nodes -----
     # Inline-route nodes (standalone or execute+route) drive their exit
