@@ -114,6 +114,99 @@ class TestMermaidEmitter:
         out = render_mermaid(config)
         assert 'parent{{"Parent"}}' in out
 
+    def test_fan_out_emits_children_standin_with_multiplicity(self):
+        """A fan-out parent gets a dashed stand-in node for its runtime
+        children, entered via a 1→N labeled edge."""
+        config = make_config([
+            {
+                "id": "parent",
+                "name": "Parent",
+                "execute": {"url": "/usr/bin/echo"},
+                "fan_out": {
+                    "template": {"execute": {"url": "prompts/worker.md"}},
+                },
+            },
+        ])
+        out = render_mermaid(config)
+        assert ":::fanout" in out
+        assert 'parent -->|"1→N"| parent__items' in out
+        assert "worker.md" in out  # stand-in labeled from the template url
+        assert "classDef fanout" in out
+
+    def test_fan_out_fan_in_rewires_dependent_edge(self):
+        """A dependent of the fan-out parent consumes the branch aggregate,
+        so its edge comes from the stand-in with an N→1 label — not a plain
+        parent --> dependent edge."""
+        config = make_config([
+            {
+                "id": "parent",
+                "name": "Parent",
+                "execute": {"url": "/usr/bin/echo"},
+                "fan_out": {
+                    "template": {"execute": {"url": "prompts/worker.md"}},
+                },
+            },
+            {
+                "id": "synthesize",
+                "name": "Synthesize",
+                "depends_on": ["parent"],
+                "execute": {"url": "prompts/synth.md"},
+            },
+        ])
+        out = render_mermaid(config)
+        assert 'parent__items -->|"N→1"| synthesize' in out
+        assert "parent --> synthesize" not in out
+
+    def test_fan_out_final_nodes_drawn_and_chained(self):
+        """Declared final_nodes render as real steps: stand-in fans in to
+        the first final (N→1), finals chain, and the parent's dependent
+        hangs off the LAST final — matching compiled pass_targets."""
+        config = make_config([
+            {
+                "id": "parent",
+                "name": "Parent",
+                "execute": {"url": "/usr/bin/echo"},
+                "fan_out": {
+                    "template": {"execute": {"url": "prompts/worker.md"}},
+                    "final_nodes": [
+                        {"id": "merge", "name": "Merge",
+                         "execute": {"url": "prompts/merge.md"}},
+                        {"id": "polish", "name": "Polish",
+                         "execute": {"url": "prompts/polish.md"}},
+                    ],
+                },
+            },
+            {
+                "id": "publish",
+                "name": "Publish",
+                "depends_on": ["parent"],
+                "execute": {"url": "prompts/pub.md"},
+            },
+        ])
+        out = render_mermaid(config)
+        assert 'parent__items -->|"N→1"| parent__merge' in out
+        assert 'parent__merge["Merge"]' in out
+        assert "parent__merge --> parent__polish" in out
+        assert "parent__polish --> publish" in out
+        assert "parent --> publish" not in out
+
+    def test_terminal_fan_out_chain_exit_routes_to_END(self):
+        """A fan-out parent with no dependents terminates through its
+        stand-in (or last final), not via a parent --> END edge."""
+        config = make_config([
+            {
+                "id": "parent",
+                "name": "Parent",
+                "execute": {"url": "/usr/bin/echo"},
+                "fan_out": {
+                    "template": {"execute": {"url": "prompts/worker.md"}},
+                },
+            },
+        ])
+        out = render_mermaid(config)
+        assert "parent__items --> END" in out
+        assert "parent --> END" not in out
+
     def test_subgraph_reference_uses_subroutine_shape(self):
         config = make_config([
             {
@@ -213,9 +306,10 @@ class TestMermaidEmitter:
             },
         ])
         out = render_mermaid(config)
-        # Dep chain
+        # Dep chain — reconcile consumes the branch aggregate, so its
+        # edge fans in from the children stand-in (N→1), not the parent.
         assert "planner --> dispatcher" in out
-        assert "dispatcher --> reconcile" in out
+        assert 'dispatcher__items -->|"N→1"| reconcile' in out
         assert "reconcile --> gate" in out
         # Loop-back
         assert "gate -.->" in out and "dispatcher" in out

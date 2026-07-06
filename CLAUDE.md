@@ -270,8 +270,11 @@ resolver sees) — distinct from faking what an external system returns.
   nodes stroke-styled. Compiled synthetics (`_eval_`/`_route_`/`_fan_`/
   `_sub_`) are never drawn — their routing is runtime `Command(goto=...)`,
   invisible to a static render (a compiled-graph render would show
-  gated/fan-out topology edge-less). Only realized per-manifest fan-out
-  children (created at run time) are absent from both.
+  gated/fan-out topology edge-less). Fan-out multiplicity IS drawn: a
+  dashed ×N stand-in node represents the runtime children (entered
+  `1→N`), declared `final_nodes` render as chained real steps, and the
+  parent's dependents fan in `N→1` from the chain exit — only the
+  realized per-manifest child NODES (created at run time) are absent.
 - **Remote script/binary execution not wired** — `http(s)://` urls
   fetch-and-run for *prompt* nodes only; `_dispatch_script` /
   `_dispatch_binary` require `file://` and halt on a remote scheme.

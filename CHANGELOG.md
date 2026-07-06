@@ -5,6 +5,10 @@ All notable changes to sqrlly are documented here. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- `graph` and `view` now draw fan-out multiplicity: each fan-out parent gets a dashed "×N per item" stand-in node for its runtime children (entered via a `1→N` labeled edge), declared `final_nodes` render as real chained steps, and the parent's dependents fan in `N→1` from the chain exit (the stand-in, or the last final) — matching the compiled graph, where the last final's pass targets are the parent's dependents. Previously the fan-out parent rendered as a bare hexagon with a direct edge to its dependents, hiding both the one-to-many dispatch and the many-to-one synthesis.
+
 ## [0.8.1] - 2026-07-07
 
 ### Changed

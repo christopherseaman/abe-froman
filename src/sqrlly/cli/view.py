@@ -170,6 +170,48 @@ def render_mermaid(graph: Graph, direction: str = "TB") -> str:
     routes = _route_targets(graph)
     entry_ids, terminal_ids = _classify_endpoints(graph, routes)
 
+    # Fan-out multiplicity: children only exist at run time, so each
+    # fan-out parent gets a dashed STAND-IN node for its N children
+    # (entered 1→N) plus its declared final_nodes as real chained steps.
+    # Dependents of the parent consume the branch aggregate, so their
+    # edges re-source from the chain exit: the stand-in (N→1) when there
+    # are no finals, else the LAST final — matching the compiled graph,
+    # where the last final's pass targets are the parent's dependents.
+    all_ids = {n.id for n in graph.nodes}
+
+    def _fresh(render_id: str) -> str:
+        while render_id in all_ids:
+            render_id += "_"
+        all_ids.add(render_id)
+        return render_id
+
+    fan_standin: dict[str, str] = {}
+    fan_exit: dict[str, str] = {}
+    fan_decls: list[str] = []
+    fan_edges: list[str] = []
+    for node in sorted(graph.nodes, key=lambda n: n.id):
+        if node.fan_out is None:
+            continue
+        standin = _fresh(f"{node.id}__items")
+        fan_standin[node.id] = standin
+        template = node.fan_out.template
+        turl = (template.execute.url or "") if template else ""
+        tname = turl.rsplit("/", 1)[-1] if turl else "template"
+        safe_t = tname.replace('"', "'")
+        fan_decls.append(
+            f'        {standin}[/"×N per item: {safe_t}"/]:::fanout'
+        )
+        fan_edges.append(f'        {node.id} -->|"1→N"| {standin}')
+        prev, prev_label = standin, '|"N→1"|'
+        for final in node.fan_out.final_nodes:
+            rid = _fresh(f"{node.id}__{final.id}")
+            marker = ":::gated" if final.evaluation else ""
+            safe_f = (final.name or final.id).replace('"', "&quot;")
+            fan_decls.append(f'        {rid}["{safe_f}"]{marker}')
+            fan_edges.append(f"        {prev} -->{prev_label} {rid}")
+            prev, prev_label = rid, ""
+        fan_exit[node.id] = prev
+
     lines: list[str] = []
     lines.append(f"flowchart {direction}")
     lines.append("    START([START])")
@@ -189,12 +231,19 @@ def render_mermaid(graph: Graph, direction: str = "TB") -> str:
         label = _node_label(node)
         suffix = ":::gated" if node.evaluation else ""
         lines.append(f'        {node.id}{open_b}"{label}"{close_b}{suffix}')
+    lines.extend(fan_decls)
 
     # Internal edges: depends_on + routes between in-graph nodes.
-    all_ids = {n.id for n in graph.nodes}
+    # A dep on a fan-out parent re-sources from the parent's chain exit
+    # (N→1 labeled when the exit is the children stand-in itself).
     for node in nodes_sorted:
         for dep in node.depends_on:
-            lines.append(f"        {dep} --> {node.id}")
+            src = fan_exit.get(dep, dep)
+            if src == fan_standin.get(dep):
+                lines.append(f'        {src} -->|"N→1"| {node.id}')
+            else:
+                lines.append(f"        {src} --> {node.id}")
+    lines.extend(fan_edges)
     for src in sorted(routes.keys()):
         for tgt, label in routes[src]:
             if tgt == _END_TARGET or tgt not in all_ids:
@@ -214,7 +263,7 @@ def render_mermaid(graph: Graph, direction: str = "TB") -> str:
     for term in sorted(terminal_ids):
         if _routes_to_end(routes, term):
             continue  # already routes to __end__ explicitly
-        lines.append(f"    {term} --> END")
+        lines.append(f"    {fan_exit.get(term, term)} --> END")
 
     # Routes that go directly to __end__: emit as edge to the END
     # node so it's visible in the diagram.
@@ -232,6 +281,9 @@ def render_mermaid(graph: Graph, direction: str = "TB") -> str:
     # evaluation gate." Subtle so it doesn't clash with status overlay.
     lines.append("")
     lines.append("    classDef gated stroke:#9333ea,stroke-width:2px")
+    lines.append(
+        "    classDef fanout stroke-dasharray: 5 4,stroke:#0891b2"
+    )
 
     return "\n".join(lines)
 
