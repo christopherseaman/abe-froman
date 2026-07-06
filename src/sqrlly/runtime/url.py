@@ -9,7 +9,7 @@ URLs. This module provides:
   resolves against base_url (else workdir).
 - `fetch_url(resolved_url, settings, cache) -> bytes` — validates against
   the four security gates (allow_remote_urls, allowed_url_hosts,
-  allow_remote_scripts, max_remote_fetch_bytes), consults the cache,
+  max_remote_fetch_bytes), consults the cache,
   applies url_headers with ${VAR} env expansion.
 - `canonical(url) -> str` — lowercase host + reassembly via urlsplit so
   trailing-slash variance and case-different hosts compare equal.
@@ -30,7 +30,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
-from sqrlly.schema.params import SCRIPT_EXTS as _SCRIPT_EXTS
 
 if TYPE_CHECKING:
     from sqrlly.schema.models import Settings
@@ -147,7 +146,6 @@ def fetch_url(
     max_remote_fetch_bytes size cap. Remote URLs go through:
       1. allow_remote_urls (master switch).
       2. allowed_url_hosts (glob host match if non-empty).
-      3. allow_remote_scripts (extra opt-in for .py/.js/.sh/etc).
       4. max_remote_fetch_bytes (size cap).
       5. Cache lookup; on miss, urlopen with url_headers.
 
@@ -185,13 +183,9 @@ def fetch_url(
             f"settings.allowed_url_hosts={settings.allowed_url_hosts!r}"
         )
 
-    ext = Path(parts.path).suffix.lower()
-    if ext in _SCRIPT_EXTS and not settings.allow_remote_scripts:
-        raise RemoteURLBlockedError(
-            f"Remote script {canon!r} blocked: settings.allow_remote_scripts "
-            f"is False (extension {ext!r} requires extra opt-in)"
-        )
-
+    # Remote script/binary EXECUTION is refused downstream at dispatch
+    # (script and binary dispatch require file://); only prompt bodies
+    # are ever fetched remotely, so no per-extension gate is needed here.
     headers = _select_headers(canon, settings.url_headers)
     request = urllib.request.Request(canon, headers=headers)
 

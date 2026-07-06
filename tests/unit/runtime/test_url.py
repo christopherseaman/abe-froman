@@ -162,21 +162,14 @@ class TestRemoteURLGates:
         with pytest.raises(RemoteURLFetchError):
             fetch_url("https://api.example.com/x.md", settings, cache)
 
-    def test_blocks_remote_script_without_extra_opt_in(self):
+    def test_remote_script_fetch_reaches_network_layer(self):
+        """Script URLs get no per-extension fetch gate — remote EXECUTION
+        is refused at dispatch (file:// required), so the fetch layer
+        treats .py like any other remote body."""
         cache = {}
         settings = Settings(allow_remote_urls=True)
-        with pytest.raises(RemoteURLBlockedError) as ei:
-            fetch_url("https://x.com/run.py", settings, cache)
-        assert "allow_remote_scripts" in str(ei.value)
-
-    def test_allows_remote_script_with_extra_opt_in(self):
-        cache = {}
-        settings = Settings(
-            allow_remote_urls=True,
-            allow_remote_scripts=True,
-        )
-        # .invalid is RFC-reserved as never-resolving; fetch fails downstream
-        # of the gate, proving the gate passed.
+        # .invalid is RFC-reserved as never-resolving; failing at the
+        # network layer proves no gate rejected the extension first.
         with pytest.raises(RemoteURLFetchError):
             fetch_url("https://nope.invalid/run.py", settings, cache)
 

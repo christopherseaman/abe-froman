@@ -36,9 +36,8 @@ Unknown keys in `settings:` are rejected with a `ValidationError` — no silent 
 
 | Field | Type | Default | Effect |
 |---|---|---|---|
-| `output_directory` | `str` | `"output"` | Default base directory for output contracts. |
 | `max_retries` | `int` | `3` | Default retry budget when an evaluation fails. |
-| `backend_max_retries` | `int` | `0` | Retries of the SAME backend dispatch on a non-overload backend error (e.g. `claude exited 1` — a transient blip), with `retry_backoff` between attempts. Distinct from `max_retries` (the gate/evaluation budget). `0` = one attempt, terminal. Overload stays on the `model_downgrade_chain` path and is not counted here. |
+| `backend_max_retries` | `int` | `0` | Retries of the SAME backend dispatch on a non-overload backend error (e.g. `claude exited 1` — a transient blip), with `retry_backoff` between attempts. Distinct from `max_retries` (the gate/evaluation budget). `0` = one attempt, terminal. Overload stays on the fixed opus→sonnet→haiku downgrade path and is not counted here. |
 | `safe_mode` | `bool` | `false` | Run Claude with `--safe-mode` (cli transport only): operator customizations — output styles, CLAUDE.md, skills, MCP, hooks — are disabled, so generation stays reproducible and free of e.g. an "explanatory" output style prepending commentary into node output. Default off — sqrlly never overrides operator settings unless asked. The `--safe-mode` / `--no-safe-mode` CLI flag overrides this per run. |
 | `default_timeout` | `float \| None` | `None` | Per-node timeout (seconds); `None` = no timeout. |
 | `preamble_file` | `str \| None` | `None` | Prepended to every prompt before Jinja rendering. A missing file is a hard error. |
@@ -49,7 +48,6 @@ Unknown keys in `settings:` are rejected with a `ValidationError` — no silent 
 | Field | Type | Default | Effect |
 |---|---|---|---|
 | `presets` | `dict[str, Preset]` | `{}` | Named execution bundles. See [Presets](#presets). |
-| `model_downgrade_chain` | `list[str]` | `["opus", "sonnet", "haiku"]` | Tier list for `OverloadError` auto-downgrade. |
 
 > The pre-rework `default_model` and `executor` settings no longer
 > exist. Backend selection is entirely through `presets`; there is no
@@ -63,8 +61,6 @@ Unknown keys in `settings:` are rejected with a `ValidationError` — no silent 
 | `max_parallel_jobs` | `int` | `4` | Foreman global semaphore. |
 | `per_model_limits` | `dict[str, int]` | `{}` | Per-model caps layered inside the global semaphore. |
 | `memory_threshold_pct` | `float \| None` | `None` | Foreman blocks new dispatches while host memory percent is above this (0–100). `None` disables. |
-| `memory_min_available_bytes` | `int \| str \| None` | `None` | Foreman blocks new dispatches while available memory is below this. Accepts raw bytes or a binary-suffixed string (`"4GB"`, `"500MiB"`, `"2T"`; `KB = 1024`). `None` disables. |
-| `max_subgraph_depth` | `int` | `10` | Cap on recursive subgraph nesting. |
 
 ### Worktree isolation
 
@@ -79,11 +75,10 @@ Unknown keys in `settings:` are rejected with a `ValidationError` — no silent 
 | `worktree_share` | `list[str]` | `[]` | Read-only whole-dir symlinks of these base paths into each worktree (no install). For read-only in-branch gates (`tsc --noEmit`, scoped tests). Each is also written to the repo's shared `.git/info/exclude` (git has no per-worktree exclude) so it stays out of the promote footprint. |
 | `worktree_setup` | `list[str]` | `[]` | Ordered shell commands run in each fresh worktree (e.g. `pnpm install --prefer-offline`, `pnpm exec prisma generate`). Sentinel-gated (runs once per base state); fatal-per-branch on failure. PM-agnostic. |
 | `worktree_setup_exclude` | `list[str]` | `[]` | Paths written to the repo's shared `.git/info/exclude` (git has no per-worktree exclude) before promote, so rehydrate artifacts (node_modules, in-tree generated clients) stay out of the footprint. Explicit (sqrlly does not infer them). |
-| `worktree_setup_store_dir` | `str \| None` | `None` | Package store dir exported into the setup commands' env as both `npm_config_store_dir` (relocates pnpm's content-addressable store — the EXDEV/hardlink fix) and `PNPM_HOME` (pnpm's global bin/state dir), so the store sits on the worktree device. |
 
-Both memory gates compose (AND) with each other and with the
-semaphores — every gate must allow dispatch. In-flight jobs are never
-aborted by the gates; only new acquisitions wait.
+The memory gate composes (AND) with the semaphores — every gate must
+allow dispatch. In-flight jobs are never aborted by the gate; only new
+acquisitions wait.
 
 ### URL fetch / remote
 
@@ -91,7 +86,6 @@ aborted by the gates; only new acquisitions wait.
 |---|---|---|---|
 | `base_url` | `str \| None` | `None` | Default base for relative `execute.url`. |
 | `allow_remote_urls` | `bool` | `false` | Master switch for non-`file://` fetches. |
-| `allow_remote_scripts` | `bool` | `false` | Extra opt-in for remote `.py` / `.js` / `.sh`. |
 | `allowed_url_hosts` | `list[str]` | `[]` | fnmatch host allow-list. `[]` = no filter. |
 | `url_headers` | `dict[str, dict[str, str]]` | `{}` | URL-prefix → headers; `${VAR}` expands from env at fetch time. |
 | `max_remote_fetch_bytes` | `int` | `5_000_000` | Body size cap (5 MB). Also applies to `file://` reads. |
@@ -187,12 +181,12 @@ Both transports inherit credentials from the local `claude` CLI
 session — no API keys are required for `transport: acp` or
 `transport: cli`. **Auth is per LLM CLI, not sqrlly's job**: log in
 to each tool with its own command (`claude /login`, future
-`codex auth`, etc.). The generic secret resolver
-(`runtime/secrets.py::resolve_secret`) is still available for
-workflow-defined values (e.g., a script node calling out to a
-third-party service); resolution order is process env →
+`codex auth`, etc.). Workflow-defined values reach sqrlly through
+`settings.url_headers` `${VAR}` expansion: process env first, then a
 project-local `.env` file (discovered by walking up from CWD).
-sqrlly never reads machine-global keystores.
+sqrlly never reads machine-global keystores. Script nodes needing
+third-party credentials read their own env (`params.env` /
+inherited environment).
 
 ---
 
@@ -296,7 +290,6 @@ reproduce a "local files only" policy.
 |---|---|---|
 | Master switch | `allow_remote_urls` | Must be `true` for any non-`file://` fetch. |
 | Host allow-list | `allowed_url_hosts` | fnmatch; empty = no filter. |
-| Script opt-in | `allow_remote_scripts` | Required for remote `.py` / `.js` / `.sh` / `.ts` / `.mjs`. |
 | Size cap | `max_remote_fetch_bytes` | Default 5 MB; also applied to `file://` reads. |
 | Headers | `url_headers` | Per-URL-prefix; `${VAR}` expands from env. |
 
@@ -307,18 +300,15 @@ per `build_workflow_graph` call.
 > input.** The "local files only" default is about *remote-vs-local*,
 > not a sandbox. A `file://` path — absolute (`/etc/passwd`) or
 > `../`-relative — resolves to that exact location and reads/executes
-> with the orchestrator process's full filesystem access;
-> `allow_remote_scripts` and the gates above apply only to *remote*
-> schemes. There is no workdir confinement on local paths. Don't run
-> workflow files from untrusted sources.
+> with the orchestrator process's full filesystem access; the gates
+> above apply only to *remote* schemes. There is no workdir confinement
+> on local paths. Don't run workflow files from untrusted sources.
 
 > **Remote execution scope.** Only remote **prompt** templates
 > (`.md` / `.txt` / `.prompt`) are fetched-and-run today. Remote
-> **script** and **binary** execution is not yet wired — a non-`file://`
+> **script** and **binary** execution is not wired — a non-`file://`
 > URL on a script/binary node halts with a clear error ("Remote script
-> execution not yet wired … use `file://`"). `allow_remote_scripts`
-> gates the *fetch* path in preparation for that, but execution still
-> requires a local path.
+> execution not yet wired … use `file://`").
 
 ---
 
@@ -533,8 +523,8 @@ A node whose `execute.url` is a `.yaml` references another graph, loaded
 with the same `Graph` schema and recursively compiled.
 `params.inputs` projects parent context into the subgraph;
 `params.outputs` maps named subgraph node outputs back. Compile-time
-guards: cycle detection over the URL-reference DAG, and
-`settings.max_subgraph_depth`.
+guards: cycle detection over the URL-reference DAG, and a fixed
+nesting-depth cap (`MAX_SUBGRAPH_DEPTH = 10`).
 
 ### Join
 

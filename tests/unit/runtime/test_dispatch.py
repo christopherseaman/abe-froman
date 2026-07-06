@@ -126,9 +126,7 @@ class TestScriptDispatch:
         )
         # Settings allows remote so fetch_url passes — but dispatch returns
         # 'not yet wired' since temp-file handoff is a later commit.
-        settings = Settings(
-            allow_remote_urls=True, allow_remote_scripts=True,
-        )
+        settings = Settings(allow_remote_urls=True)
         executor = DispatchExecutor(workdir=str(tmp_path), settings=settings)
         result = await executor.execute(node, {}, workdir=str(tmp_path))
         assert result.success is False

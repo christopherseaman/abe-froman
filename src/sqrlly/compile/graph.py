@@ -301,12 +301,13 @@ def build_workflow_graph(
     LLM-gate ``default_model``, and the executor's ``settings_override``.
 
     `_depth` and `_base_dir` are internal: subgraph wrappers pass
-    `_depth+1` to enforce `settings.max_subgraph_depth` and propagate
+    `_depth+1` to enforce MAX_SUBGRAPH_DEPTH and propagate
     the base directory so nested config: paths resolve correctly.
     """
     # Deferred import to break the compile/subgraph ↔ compile/graph
     # circularity (subgraph imports build_workflow_graph via compile_fn).
     from sqrlly.compile.subgraph import (
+        MAX_SUBGRAPH_DEPTH,
         SubgraphDepthError,
         detect_config_cycle,
         load_graph,
@@ -317,10 +318,9 @@ def build_workflow_graph(
 
     _detect_cycles(config)
 
-    if _depth > settings.max_subgraph_depth:
+    if _depth > MAX_SUBGRAPH_DEPTH:
         raise SubgraphDepthError(
-            f"Subgraph nesting exceeded max_subgraph_depth="
-            f"{settings.max_subgraph_depth}"
+            f"Subgraph nesting exceeded MAX_SUBGRAPH_DEPTH={MAX_SUBGRAPH_DEPTH}"
         )
 
     base_dir = Path(_base_dir) if _base_dir is not None else Path(".")

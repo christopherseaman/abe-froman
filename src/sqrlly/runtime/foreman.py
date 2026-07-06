@@ -96,12 +96,9 @@ class ForemanExecutor:
 
         # Memory back-pressure runs OUTSIDE the semaphores so that gated
         # acquisitions don't sit holding a slot while waiting for memory
-        # to drop. Both gates default to ``None`` (disabled) and AND-
-        # compose when both set.
+        # to drop. Defaults to ``None`` (disabled).
         await self._wait_for_memory(
-            threshold_pct=s.memory_threshold_pct,
-            min_available_bytes=s.memory_min_available_bytes,
-            node_id=node.id,
+            threshold_pct=s.memory_threshold_pct, node_id=node.id,
         )
 
         async with self._global_sem:
@@ -126,37 +123,25 @@ class ForemanExecutor:
         self,
         *,
         threshold_pct: float | None,
-        min_available_bytes: int | None,
         node_id: str,
     ) -> None:
-        """Block until BOTH memory gates allow dispatch.
+        """Block while host memory percent is above ``threshold_pct``.
 
-        ``None`` for either argument disables that gate; ``None`` for
-        both is a fast no-op. Gates AND-compose: dispatch only proceeds
-        when every set gate is satisfied. In-flight jobs are never
-        affected — only new acquisitions wait.
+        ``None`` disables the gate (fast no-op). In-flight jobs are
+        never affected — only new acquisitions wait.
         """
-        if threshold_pct is None and min_available_bytes is None:
+        if threshold_pct is None:
             return
         first_block = True
         while True:
             mem = psutil.virtual_memory()
-            pct_blocked = (
-                threshold_pct is not None and mem.percent > threshold_pct
-            )
-            avail_blocked = (
-                min_available_bytes is not None
-                and mem.available < min_available_bytes
-            )
-            if not (pct_blocked or avail_blocked):
+            if mem.percent <= threshold_pct:
                 return
             if first_block:
                 logger.info(
                     "foreman: memory back-pressure gating dispatch of %r "
-                    "(percent=%.1f, available=%.0f MB; "
-                    "pct_blocked=%s, avail_blocked=%s)",
-                    node_id, mem.percent, mem.available / 1e6,
-                    pct_blocked, avail_blocked,
+                    "(percent=%.1f > threshold %.1f)",
+                    node_id, mem.percent, threshold_pct,
                 )
                 first_block = False
             await asyncio.sleep(self._memory_poll_s)
@@ -266,7 +251,6 @@ class ForemanExecutor:
             base=self._base, dest=dest,
             commands=self._settings.worktree_setup,
             excludes=self._settings.worktree_setup_exclude,
-            store_dir=self._settings.worktree_setup_store_dir,
         )
 
     async def reclaim(self) -> list[str]:

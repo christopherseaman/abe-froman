@@ -39,5 +39,4 @@ nodes:
       args: ["-n", "shipped"]
 
 settings:
-  output_directory: "/tmp/abe-route-flow-a"
   max_retries: 0

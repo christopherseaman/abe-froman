@@ -15,7 +15,7 @@ graph. State projection is explicit:
       `node_outputs[parent_node.id]`.
 
 Cycle detection is performed at compile time over the config-reference
-DAG; depth is capped by `settings.max_subgraph_depth` (default 10).
+DAG; depth is capped at MAX_SUBGRAPH_DEPTH (10).
 """
 
 from __future__ import annotations
@@ -45,8 +45,14 @@ class SubgraphCycleError(ValueError):
     """Raised when the config-reference DAG contains a cycle."""
 
 
+# Cap on recursive subgraph nesting (Stage 4c). A fixed guard against
+# accidental infinite recursion, not a tunable — real workflows nest
+# two or three levels deep.
+MAX_SUBGRAPH_DEPTH = 10
+
+
 class SubgraphDepthError(ValueError):
-    """Raised when subgraph nesting exceeds settings.max_subgraph_depth."""
+    """Raised when subgraph nesting exceeds MAX_SUBGRAPH_DEPTH."""
 
 
 def _strip_worktree(node: Node) -> Node:
@@ -134,7 +140,7 @@ def make_subgraph_node(
     """Create the wrapper async function added as the parent graph's node.
 
     The wrapper compiles the subgraph (passing depth+1 so cycles bottom
-    out at max_subgraph_depth), then on each invocation:
+    out at MAX_SUBGRAPH_DEPTH), then on each invocation:
       1. Renders `inputs:` templates against parent context.
       2. Builds a fresh subgraph initial state with rendered inputs.
       3. Invokes the compiled subgraph.

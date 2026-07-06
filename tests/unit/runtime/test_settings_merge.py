@@ -87,15 +87,15 @@ class TestComposesNested:
     set wins per-field."""
 
     def test_three_level_inheritance(self):
-        top = Settings(max_retries=2, default_timeout=60.0, output_directory="top")
-        mid = Settings(output_directory="mid")
+        top = Settings(max_retries=2, default_timeout=60.0, preamble_file="top")
+        mid = Settings(preamble_file="mid")
         bot = Settings(max_retries=10)
 
         # Each layer merges with the result of the previous merge.
         l1 = merge_settings(top, mid)
         l2 = merge_settings(l1, bot)
 
-        assert l2.output_directory == "mid"  # mid's win held through l2
+        assert l2.preamble_file == "mid"  # mid's win held through l2
         assert l2.max_retries == 10          # bot wins
         assert l2.default_timeout == 60.0    # top's flowed through
 

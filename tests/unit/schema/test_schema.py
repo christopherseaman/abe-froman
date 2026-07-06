@@ -367,56 +367,16 @@ class TestLlmPresetTransport:
 
 
 class TestSettingsMemoryGates:
-    """Memory back-pressure: percent + absolute-bytes forms with
-    suffix parsing for the bytes form."""
+    """Memory back-pressure: percent-based gate."""
 
     def test_defaults_disabled(self):
         s = Settings()
         assert s.memory_threshold_pct is None
-        assert s.memory_min_available_bytes is None
 
     def test_pct_passthrough(self):
         s = Settings(memory_threshold_pct=80.0)
         assert s.memory_threshold_pct == 80.0
 
-    def test_bytes_int_passthrough(self):
-        s = Settings(memory_min_available_bytes=4_294_967_296)
-        assert s.memory_min_available_bytes == 4_294_967_296
-
-    @pytest.mark.parametrize(
-        "value, expected",
-        [
-            ("8192", 8192),
-            ("8192B", 8192),
-            ("4K", 4 * 1024),
-            ("4KB", 4 * 1024),
-            ("4KiB", 4 * 1024),
-            ("500M", 500 * 1024**2),
-            ("500MB", 500 * 1024**2),
-            ("500MiB", 500 * 1024**2),
-            ("4G", 4 * 1024**3),
-            ("4GB", 4 * 1024**3),
-            ("4GiB", 4 * 1024**3),
-            ("2T", 2 * 1024**4),
-            ("2TB", 2 * 1024**4),
-            ("0.5GB", 512 * 1024**2),  # fractional
-            ("  4GB  ", 4 * 1024**3),  # whitespace
-            ("4gb", 4 * 1024**3),  # lowercase
-        ],
-    )
-    def test_bytes_string_suffixes(self, value, expected):
-        s = Settings(memory_min_available_bytes=value)
-        assert s.memory_min_available_bytes == expected
-
-    def test_bytes_unknown_suffix_rejected(self):
-        from pydantic import ValidationError
-        with pytest.raises(ValidationError, match="suffix"):
-            Settings(memory_min_available_bytes="4XYZ")
-
-    def test_bytes_malformed_rejected(self):
-        from pydantic import ValidationError
-        with pytest.raises(ValidationError, match="parse byte size"):
-            Settings(memory_min_available_bytes="four-gigabytes")
 
 
 class TestSettingsSafeMode:
@@ -438,7 +398,6 @@ class TestSettingsRemoteUrlGates:
         s = Settings()
         assert s.base_url is None
         assert s.allow_remote_urls is False
-        assert s.allow_remote_scripts is False
         assert s.allowed_url_hosts == []
         assert s.url_headers == {}
         assert s.max_remote_fetch_bytes == 5_000_000
@@ -447,14 +406,12 @@ class TestSettingsRemoteUrlGates:
         s = Settings(
             base_url="https://example.com/",
             allow_remote_urls=True,
-            allow_remote_scripts=True,
             allowed_url_hosts=["*.example.com"],
             url_headers={"https://api.example.com/": {"X-Auth": "${TOKEN}"}},
             max_remote_fetch_bytes=10_000_000,
         )
         assert s.base_url == "https://example.com/"
         assert s.allow_remote_urls is True
-        assert s.allow_remote_scripts is True
         assert s.allowed_url_hosts == ["*.example.com"]
         assert s.url_headers["https://api.example.com/"]["X-Auth"] == "${TOKEN}"
         assert s.max_remote_fetch_bytes == 10_000_000
@@ -920,15 +877,12 @@ class TestWorktreeSetupFields:
         s = Settings()
         assert s.worktree_setup == []
         assert s.worktree_setup_exclude == []
-        assert s.worktree_setup_store_dir is None
 
     def test_accepts_values(self):
         from sqrlly.schema.models import Settings
         s = Settings(
             worktree_setup=["pnpm install --prefer-offline"],
             worktree_setup_exclude=["node_modules", "src/generated/prisma"],
-            worktree_setup_store_dir=".sqrlly/.pnpm-store",
         )
         assert s.worktree_setup == ["pnpm install --prefer-offline"]
         assert s.worktree_setup_exclude == ["node_modules", "src/generated/prisma"]
-        assert s.worktree_setup_store_dir == ".sqrlly/.pnpm-store"

@@ -448,9 +448,7 @@ class TestOverloadDowngrade:
         backend = OverloadThenSucceedBackend(fail_count=1, response="recovered")
         executor = PromptExecutor(
             backend=backend,
-            settings=Settings(
-                model_downgrade_chain=["opus", "sonnet", "haiku"],
-            ),
+            settings=Settings(),
             workdir=str(tmp_path),
         )
         result = await executor.execute_rendered(
@@ -467,9 +465,7 @@ class TestOverloadDowngrade:
         backend = OverloadThenSucceedBackend(fail_count=2, response="haiku-ok")
         executor = PromptExecutor(
             backend=backend,
-            settings=Settings(
-                model_downgrade_chain=["opus", "sonnet", "haiku"],
-            ),
+            settings=Settings(),
             workdir=str(tmp_path),
         )
         result = await executor.execute_rendered(
@@ -486,9 +482,7 @@ class TestOverloadDowngrade:
         backend = AlwaysOverloadBackend()
         executor = PromptExecutor(
             backend=backend,
-            settings=Settings(
-                model_downgrade_chain=["opus", "sonnet", "haiku"],
-            ),
+            settings=Settings(),
             workdir=str(tmp_path),
         )
         result = await executor.execute_rendered(
@@ -506,9 +500,7 @@ class TestOverloadDowngrade:
         backend = AlwaysOverloadBackend()
         executor = PromptExecutor(
             backend=backend,
-            settings=Settings(
-                model_downgrade_chain=["opus", "sonnet", "haiku"],
-            ),
+            settings=Settings(),
             workdir=str(tmp_path),
         )
         result = await executor.execute_rendered(
@@ -905,10 +897,7 @@ class TestBackendTransientRetry:
         backend = OverloadThenSucceedBackend(fail_count=1, response="recovered")
         executor = PromptExecutor(
             backend=backend,
-            settings=Settings(
-                backend_max_retries=5,
-                model_downgrade_chain=["opus", "sonnet", "haiku"],
-            ),
+            settings=Settings(backend_max_retries=5),
             workdir=str(tmp_path),
         )
         result = await executor.execute_rendered(
@@ -928,10 +917,7 @@ class TestBackendTransientRetry:
         backend = AlwaysOverloadBackend()
         executor = PromptExecutor(
             backend=backend,
-            settings=Settings(
-                backend_max_retries=4,
-                model_downgrade_chain=["opus", "sonnet", "haiku"],
-            ),
+            settings=Settings(backend_max_retries=4),
             workdir=str(tmp_path),
         )
         result = await executor.execute_rendered(

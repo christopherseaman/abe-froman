@@ -124,7 +124,6 @@ nodes:
           - "output/paper.pdf"
 settings:
   preamble_file: "examples/absurd-paper/preamble.md"
-  output_directory: "paper"
   # Generate with a clean, reproducible Claude: safe_mode runs every cli
   # call as `claude --safe-mode`, disabling operator customizations (output
   # styles, CLAUDE.md, skills, MCP, hooks). Without it, e.g. an

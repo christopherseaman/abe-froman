@@ -33,6 +33,11 @@ def resolve_model(node: Node, settings: Settings) -> str | None:
     return preset.model if isinstance(preset, LlmPreset) else None
 
 
+# Tier list for OverloadError auto-downgrade. Fixed — the chain mirrors
+# Anthropic's model tiers, not a per-workflow knob.
+MODEL_DOWNGRADE_CHAIN = ["opus", "sonnet", "haiku"]
+
+
 def downgrade_model(current: str, chain: list[str]) -> str | None:
     try:
         idx = chain.index(current)
@@ -127,9 +132,9 @@ class PromptExecutor:
     ) -> ExecutionResult:
         """Send a pre-rendered prompt with overload→downgrade fallback.
 
-        ``settings`` (Phase 3 / scope-aware): provides the
-        ``model_downgrade_chain`` for this scope. Subgraph wrappers pass
-        the merged settings so a subgraph-specific chain is honored.
+        ``settings`` (Phase 3 / scope-aware): provides
+        ``backend_max_retries`` / ``retry_backoff`` for this scope.
+        Subgraph wrappers pass the merged settings.
         """
         s = settings or self._settings
         # Bounded transient-retry layer wrapping the overload-downgrade loop.
@@ -151,7 +156,7 @@ class PromptExecutor:
                         break
                     except OverloadError:
                         next_model = downgrade_model(
-                            current_model, s.model_downgrade_chain
+                            current_model, MODEL_DOWNGRADE_CHAIN
                         )
                         if next_model is None:
                             return ExecutionResult(

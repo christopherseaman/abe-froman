@@ -359,12 +359,16 @@ def _collect_subgraph_presets(
     Subgraph YAML that fails to load is skipped silently here — the
     real load error surfaces during ``build_workflow_graph``.
     """
-    from sqrlly.compile.subgraph import load_graph, node_subgraph_path
+    from sqrlly.compile.subgraph import (
+        MAX_SUBGRAPH_DEPTH,
+        load_graph,
+        node_subgraph_path,
+    )
 
     if _seen is None:
         _seen = set()
     collected: dict = {}
-    if _depth >= config.settings.max_subgraph_depth:
+    if _depth >= MAX_SUBGRAPH_DEPTH:
         return collected
     for node in config.nodes:
         sub_path = node_subgraph_path(node)

@@ -146,10 +146,11 @@ langgraph-free).
   reconciliation under `settings.on_promote_conflict` (discover→plan→apply).
 - `settings_merge.py` — `merge_settings(parent, child)` for
   scope-aware inheritance.
-- `url.py` — `resolve_url`, `fetch_url`, `_RemoteFetchCache`,
+- `url.py` — `resolve_url`, `fetch_url` (plain dict fetch cache),
   remote URL gates.
-- `secrets.py` — `resolve_secret(name, *, settings, settings_attr)`
-  (env → workflow YAML → project-local `.env`, walking up from CWD).
+- `secrets.py` — project-local `.env` discovery + parsing
+  (`_find_dotenv` / `_load_dotenv_once`), consumed by `url.py`'s
+  header `${VAR}` expansion.
 - `worktree_share.py` — `write_worktree_excludes` / `materialize_shares` / `ensure_setup` (worktree dep sharing: info/exclude write, read-only symlinks, sentinel-gated rehydrate).
 - `executor/dispatch.py` — `DispatchExecutor` (10-row URL dispatch).
 - `executor/prompt.py` — `PromptExecutor` (template render, model
@@ -264,7 +265,6 @@ resolver sees) — distinct from faking what an external system returns.
 - **Remote script/binary execution not wired** — `http(s)://` urls
   fetch-and-run for *prompt* nodes only; `_dispatch_script` /
   `_dispatch_binary` require `file://` and halt on a remote scheme.
-  `allow_remote_scripts` gates the fetch in preparation only.
 - **Per-model backpressure under downgrade** — Foreman holds the
   semaphore for the node's *original* model; an `OverloadError`
   opus→sonnet downgrade mid-call does not acquire the sonnet semaphore.
@@ -342,12 +342,10 @@ resolver sees) — distinct from faking what an external system returns.
 - **`tests/__init__.py` must NOT exist** — its presence breaks
   `from helpers import ...` and `from mock_executor import ...` in
   tests. Removing it is the supported state.
-- **Secret resolution** — `runtime/secrets.py::resolve_secret` layers
-  workflow YAML setting → `os.environ[name]` → project-local `.env`
-  (walking up from CWD); never machine-global keystores. In-tree the
-  `.env` layer is used by `url.py::_expand_vars` (header `${VAR}`
-  expansion); `resolve_secret` itself remains for workflow-defined keys
-  (e.g. a script node hitting a third-party service).
+- **Secret resolution** — `runtime/secrets.py` provides project-local
+  `.env` discovery/parsing only (never machine-global keystores),
+  consumed by `url.py::_expand_vars` (header `${VAR}` expansion:
+  process env first, then `.env` walking up from CWD).
 - **`pyproject.toml`** marker for ACP tests: `acp` (used in
   `pytest -m`).
 

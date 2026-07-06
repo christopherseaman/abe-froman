@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import Annotated, Any, Literal, Self, Union
 
@@ -13,47 +12,6 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-
-
-# Binary multipliers (matches `free -h`, `dd`, `psutil` reporting
-# semantics — memory is power-of-2 in practice).
-_BYTE_SUFFIXES: dict[str, int] = {
-    "B": 1,
-    "K": 1024, "KB": 1024, "KIB": 1024,
-    "M": 1024**2, "MB": 1024**2, "MIB": 1024**2,
-    "G": 1024**3, "GB": 1024**3, "GIB": 1024**3,
-    "T": 1024**4, "TB": 1024**4, "TIB": 1024**4,
-}
-_BYTE_RE = re.compile(r"^\s*([0-9]+(?:\.[0-9]+)?)\s*([A-Za-z]*)\s*$")
-
-
-def _parse_byte_size(value: Any) -> Any:
-    """Parse a byte-size value: plain int passes through; string with
-    optional suffix (``"4GB"``, ``"500MiB"``, ``"2T"``) resolves via
-    :data:`_BYTE_SUFFIXES`. Suffixes are case-insensitive. Returns
-    ``None`` for ``None`` (the disable sentinel)."""
-    if value is None or (isinstance(value, int) and not isinstance(value, bool)):
-        return value
-    if not isinstance(value, str):
-        raise ValueError(
-            f"byte size must be int or str, got {type(value).__name__}"
-        )
-    m = _BYTE_RE.match(value)
-    if m is None:
-        raise ValueError(
-            f"could not parse byte size {value!r}; "
-            f"expected forms like '4GB', '500MiB', '2T', or '8192'"
-        )
-    n_str, suffix = m.groups()
-    if not suffix:
-        return int(float(n_str))
-    mult = _BYTE_SUFFIXES.get(suffix.upper())
-    if mult is None:
-        raise ValueError(
-            f"unknown byte-size suffix {suffix!r}; "
-            f"supported: {sorted(_BYTE_SUFFIXES)}"
-        )
-    return int(float(n_str) * mult)
 
 
 # Worktree isolation modes. `none` is an accepted alias for `off`.
@@ -437,7 +395,6 @@ Preset = Annotated[
 class Settings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    output_directory: str = "output"
     max_retries: int = 3
     # Transient-backend-error retry budget. DISTINCT from `max_retries`
     # (the evaluation/gate budget, which retries on a low gate score).
@@ -457,34 +414,15 @@ class Settings(BaseModel):
     default_timeout: float | None = None
     preamble_file: str | None = None
     retry_backoff: list[float] = []
-    model_downgrade_chain: list[str] = ["opus", "sonnet", "haiku"]
     max_parallel_jobs: int = 4
     per_model_limits: dict[str, int] = {}
-    # Memory back-pressure (two complementary forms; both default
-    # ``None`` = disabled, AND-composed when both are set):
-    #
-    # - ``memory_threshold_pct`` — block new dispatches while host
-    #   memory percent is ABOVE this value (`psutil.virtual_memory()
-    #   .percent`). Useful for "don't run when we're close to OOM"
-    #   regardless of total RAM size.
-    # - ``memory_min_available_bytes`` — block new dispatches while
-    #   available bytes are BELOW this value
-    #   (`psutil.virtual_memory().available`). Useful for "always
-    #   keep ≥X GB free" on heterogeneous hosts. Accepts either a
-    #   raw int (bytes) OR a string with a binary-multiplier suffix
-    #   (``"4GB"``, ``"500MiB"``, ``"2T"``, etc.) — case-insensitive,
-    #   binary semantics (KB = 1024) matching ``free -h`` / ``psutil``.
-    #
-    # Both compose (AND) with ``max_parallel_jobs`` /
-    # ``per_model_limits`` — every gate must allow dispatch. In-flight
-    # jobs are never aborted by these gates; only new acquisitions wait.
+    # Memory back-pressure: block new dispatches while host memory
+    # percent is ABOVE this value (`psutil.virtual_memory().percent`).
+    # Default ``None`` = disabled. Composes (AND) with
+    # ``max_parallel_jobs`` / ``per_model_limits`` — every gate must
+    # allow dispatch. In-flight jobs are never aborted; only new
+    # acquisitions wait.
     memory_threshold_pct: float | None = Field(default=None, ge=0.0, le=100.0)
-    memory_min_available_bytes: int | None = None
-
-    @field_validator("memory_min_available_bytes", mode="before")
-    @classmethod
-    def _normalize_memory_bytes(cls, v: Any) -> Any:
-        return _parse_byte_size(v)
 
     # Worktree isolation default for the graph; inherits graph→subgraph via
     # `merge_settings`. `auto` = isolate per-node iff in a git repo (today's
@@ -524,10 +462,6 @@ class Settings(BaseModel):
     # generated artifacts (node_modules, in-tree prisma output=) stay out of the
     # footprint. Explicit — sqrlly does not infer generator output paths.
     worktree_setup_exclude: list[str] = []
-    # When set, exported into the setup commands' environment as the package
-    # store dir (e.g. PNPM_HOME) so the store sits on the worktree device
-    # (hardlinks work instead of EXDEV full-copy). Resolved relative to base.
-    worktree_setup_store_dir: str | None = None
 
     @field_validator("worktree", mode="before")
     @classmethod
@@ -539,11 +473,9 @@ class Settings(BaseModel):
         _check_worktree_group_exclusive(self.worktree, self.worktree_group)
         return self
 
-    max_subgraph_depth: int = 10  # cap on recursive subgraph nesting (Stage 4c)
     # Stage 5b — execute.url remote URL gates
     base_url: str | None = None  # default base for relative urls in execute.url
     allow_remote_urls: bool = False  # master switch for non-file:// fetches
-    allow_remote_scripts: bool = False  # extra opt-in for remote .py/.js/.sh
     allowed_url_hosts: list[str] = []  # fnmatch host patterns; [] = no filter
     url_headers: dict[str, dict[str, str]] = {}  # prefix → headers; ${VAR} expands
     max_remote_fetch_bytes: int = 5_000_000  # 5 MB cap

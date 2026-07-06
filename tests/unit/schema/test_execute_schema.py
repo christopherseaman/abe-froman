@@ -127,7 +127,6 @@ class TestSettingsExtension:
         s = Settings()
         assert s.base_url is None
         assert s.allow_remote_urls is False
-        assert s.allow_remote_scripts is False
         assert s.allowed_url_hosts == []
         assert s.url_headers == {}
         assert s.max_remote_fetch_bytes == 5_000_000
@@ -136,14 +135,12 @@ class TestSettingsExtension:
         s = Settings(
             base_url="https://prompts.example.com/v1/",
             allow_remote_urls=True,
-            allow_remote_scripts=True,
             allowed_url_hosts=["*.internal.example.com"],
             url_headers={"https://prompts.example.com/": {"Authorization": "Bearer x"}},
             max_remote_fetch_bytes=1_000_000,
         )
         assert s.base_url == "https://prompts.example.com/v1/"
         assert s.allow_remote_urls is True
-        assert s.allow_remote_scripts is True
         assert s.allowed_url_hosts == ["*.internal.example.com"]
         assert s.url_headers["https://prompts.example.com/"] == {
             "Authorization": "Bearer x"

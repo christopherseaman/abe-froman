@@ -117,7 +117,7 @@ def setup_fingerprint(base: str, commands: list[str]) -> str:
 
 async def ensure_setup(
     *, base: str, dest: str, commands: list[str], excludes: list[str],
-    store_dir: str | None, retries: int = 1,
+    retries: int = 1,
 ) -> None:
     """Idempotently run the worktree setup commands in ``dest``.
 
@@ -140,10 +140,6 @@ async def ensure_setup(
     if marker.exists() and marker.read_text().strip() == fp:
         return
     env = dict(os.environ)
-    if store_dir is not None:
-        store_abs = str((Path(base) / store_dir).resolve())
-        env["PNPM_HOME"] = store_abs
-        env["npm_config_store_dir"] = store_abs
     for cmd in commands:
         argv = shlex.split(cmd)
         attempt = 0

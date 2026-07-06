@@ -7,6 +7,9 @@ All notable changes to sqrlly are documented here. Format follows
 
 ### Removed
 
+- Zero-consumer settings fields (unknown keys fail loud at `validate` via `extra=forbid`; none were set by any known workflow): `output_directory` (never read by any code), `max_subgraph_depth` (now a fixed internal cap of 10), `worktree_setup_store_dir` (pass the store through the tool's own flag, e.g. `pnpm install --store-dir=/abs/path`), `allow_remote_scripts` (gated a feature that does not exist — remote script/binary execution is refused at dispatch), `memory_min_available_bytes` and its byte-size suffix parser (`memory_threshold_pct` remains the memory gate), and `model_downgrade_chain` (the opus→sonnet→haiku overload downgrade is now a fixed internal constant).
+- `runtime/secrets.py::resolve_secret` — retracted; nothing in-tree called it. The module keeps the project-local `.env` discovery/parsing that powers `settings.url_headers` `${VAR}` expansion (process env first, then `.env`).
+
 - The pre-Stage-4 legacy-YAML migrator (`cli/migrate.py`, the standalone `scripts/migrate_legacy_executor_to_presets.py`, and their tests, ~1,500 LOC). No published release ever accepted the legacy YAML shapes, so there is nothing on PyPI to migrate from; recover via git history if ever needed. Drops the `ruamel.yaml` runtime dependency (9 → 8).
 - Dead code: the unused `BrailleSpinner` class; `run_workflow`'s `log_file` convenience parameter (the caller-owned `logger=` injection is the single logging path — the CLI already used it); the per-backend `_await_with_timeout` wrappers (plain `asyncio.wait_for`, which accepts `timeout=None`); the `_RemoteFetchCache` dataclass (a plain dict).
 

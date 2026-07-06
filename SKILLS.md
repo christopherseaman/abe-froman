@@ -256,9 +256,10 @@ that branch** on a non-zero exit (other branches proceed). Keep
 `worktree_setup` to pure base hydration — a branch that mutates
 `schema.prisma` should re-run `prisma generate` in its gate/build body,
 not in setup. If a setup command needs the package store on the same
-device as the worktree (pnpm's EXDEV/hardlink fix), set
-`settings.worktree_setup_store_dir: <path>` — it is exported into the
-setup env as both `npm_config_store_dir` and `PNPM_HOME`.
+device as the worktree (pnpm's EXDEV/hardlink fix), pass the store
+location through the tool's own flag with an ABSOLUTE path (setup
+commands are exec'd without a shell), e.g.
+`pnpm install --store-dir=/abs/path/.pnpm-store`.
 
 **Keeping rehydrated deps out of promote.** Both mechanisms write the
 shared paths to the repo's shared `info/exclude` so they stay out of

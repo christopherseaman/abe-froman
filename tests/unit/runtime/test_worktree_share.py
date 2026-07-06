@@ -95,7 +95,7 @@ async def test_ensure_setup_runs_commands_writes_excludes_and_sentinel(tmp_path)
     await ensure_setup(
         base=str(tmp_path), dest=str(wt),
         commands=["sh -c 'echo hi > marker.txt'"],
-        excludes=["node_modules"], store_dir=None,
+        excludes=["node_modules"],
     )
     assert (wt / "marker.txt").read_text().strip() == "hi"
     assert (wt / ".sqrlly" / "setup-ok").exists()
@@ -108,8 +108,8 @@ async def test_ensure_setup_runs_commands_writes_excludes_and_sentinel(tmp_path)
 async def test_ensure_setup_is_idempotent(tmp_path):
     _repo(tmp_path); wt = _wt(tmp_path, "ws2")
     cmds = ["sh -c 'echo x >> count.txt'"]
-    await ensure_setup(base=str(tmp_path), dest=str(wt), commands=cmds, excludes=[], store_dir=None)
-    await ensure_setup(base=str(tmp_path), dest=str(wt), commands=cmds, excludes=[], store_dir=None)
+    await ensure_setup(base=str(tmp_path), dest=str(wt), commands=cmds, excludes=[])
+    await ensure_setup(base=str(tmp_path), dest=str(wt), commands=cmds, excludes=[])
     assert (wt / "count.txt").read_text().count("x") == 1  # ran once (sentinel)
 
 
@@ -119,28 +119,9 @@ async def test_ensure_setup_failure_raises_branch_fatal(tmp_path):
     with _pytest.raises(RuntimeError, match="setup failed"):
         await ensure_setup(
             base=str(tmp_path), dest=str(wt),
-            commands=["sh -c 'exit 3'"], excludes=[], store_dir=None, retries=0,
+            commands=["sh -c 'exit 3'"], excludes=[], retries=0,
         )
     assert not (wt / ".sqrlly" / "setup-ok").exists()  # no sentinel on failure
-
-
-@_pytest.mark.asyncio
-async def test_ensure_setup_store_dir_env(tmp_path):
-    _repo(tmp_path); wt = _wt(tmp_path, "ws4")
-    await ensure_setup(
-        base=str(tmp_path), dest=str(wt),
-        commands=[
-            "sh -c 'echo $PNPM_HOME > store.txt'",
-            "sh -c 'echo $npm_config_store_dir > store2.txt'",
-        ],
-        excludes=[], store_dir=".sqrlly/.pnpm-store",
-    )
-    got = (wt / "store.txt").read_text().strip()
-    assert got.endswith(".sqrlly/.pnpm-store")  # absolute, under base
-    # npm_config_store_dir is the load-bearing var pnpm reads; same store path
-    got2 = (wt / "store2.txt").read_text().strip()
-    assert got2.endswith(".sqrlly/.pnpm-store")
-    assert got2 == got
 
 
 @_pytest.mark.asyncio
@@ -148,7 +129,7 @@ async def test_ensure_setup_reconciles_new_exclude_when_command_sentinel_matches
     _repo(tmp_path); wt = _wt(tmp_path, "ws5")
     await ensure_setup(
         base=str(tmp_path), dest=str(wt),
-        commands=["true"], excludes=["node_modules"], store_dir=None,
+        commands=["true"], excludes=["node_modules"],
     )
     assert (wt / ".sqrlly" / "setup-ok").exists()
     assert len(_exclude_lines(wt, "node_modules")) == 1
@@ -156,7 +137,7 @@ async def test_ensure_setup_reconciles_new_exclude_when_command_sentinel_matches
     # but a newly-added exclude must still be reconciled.
     await ensure_setup(
         base=str(tmp_path), dest=str(wt),
-        commands=["true"], excludes=["node_modules", "dist"], store_dir=None,
+        commands=["true"], excludes=["node_modules", "dist"],
     )
     assert len(_exclude_lines(wt, "dist")) == 1
     assert len(_exclude_lines(wt, "node_modules")) == 1
