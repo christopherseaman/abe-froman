@@ -5,6 +5,8 @@ All notable changes to sqrlly are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-07-07
+
 ### Changed
 
 - Collapsed the gated-node eval/decision node pair (and the separate combined eval+decide factory for dynamic parents) into ONE `Command`-returning gate node, and replaced the fan-out conditional-edge router with a `_fan_<id>` dispatcher node. The gate is still registered under the existing `_eval_<id>` name (JSONL/event node ids unchanged; `_decide_<id>` nodes are gone). Internal-only for any workflow — no schema or CLI surface change — but three observable effects:
