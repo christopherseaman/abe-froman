@@ -19,7 +19,6 @@ import pytest
 from sqrlly.runtime.url import (
     RemoteURLBlockedError,
     RemoteURLFetchError,
-    _RemoteFetchCache,
     canonical,
     fetch_url,
     resolve_url,
@@ -102,14 +101,14 @@ class TestFetchFileURL:
     def test_reads_local_file(self, tmp_path):
         path = tmp_path / "local.md"
         path.write_text("hello world")
-        cache = _RemoteFetchCache()
+        cache = {}
         body = fetch_url(f"file://{path}", Settings(), cache)
         assert body == b"hello world"
 
     def test_caches_local_reads(self, tmp_path):
         path = tmp_path / "local.md"
         path.write_text("first")
-        cache = _RemoteFetchCache()
+        cache = {}
         fetch_url(f"file://{path}", Settings(), cache)
         # Mutate file under a hot cache; cache should still return original.
         path.write_text("second")
@@ -119,7 +118,7 @@ class TestFetchFileURL:
     def test_size_cap_rejects_oversize_file(self, tmp_path):
         path = tmp_path / "big.md"
         path.write_bytes(b"x" * 200)
-        cache = _RemoteFetchCache()
+        cache = {}
         settings = Settings(max_remote_fetch_bytes=100)
         with pytest.raises(RemoteURLFetchError) as ei:
             fetch_url(f"file://{path}", settings, cache)
@@ -128,7 +127,7 @@ class TestFetchFileURL:
     def test_size_cap_allows_file_at_or_below(self, tmp_path):
         path = tmp_path / "ok.md"
         path.write_bytes(b"x" * 100)
-        cache = _RemoteFetchCache()
+        cache = {}
         settings = Settings(max_remote_fetch_bytes=100)
         body = fetch_url(f"file://{path}", settings, cache)
         assert body == b"x" * 100
@@ -138,13 +137,13 @@ class TestFetchFileURL:
 
 class TestRemoteURLGates:
     def test_blocks_when_allow_remote_urls_false(self):
-        cache = _RemoteFetchCache()
+        cache = {}
         with pytest.raises(RemoteURLBlockedError) as ei:
             fetch_url("https://x.com/a.md", Settings(), cache)
         assert "allow_remote_urls" in str(ei.value)
 
     def test_blocks_when_host_not_in_allowlist(self):
-        cache = _RemoteFetchCache()
+        cache = {}
         settings = Settings(
             allow_remote_urls=True,
             allowed_url_hosts=["*.internal.example.com"],
@@ -155,7 +154,7 @@ class TestRemoteURLGates:
 
     def test_allows_when_host_matches_glob(self):
         # Host matches but no server is running — should reach fetch attempt.
-        cache = _RemoteFetchCache()
+        cache = {}
         settings = Settings(
             allow_remote_urls=True,
             allowed_url_hosts=["*.example.com"],
@@ -164,14 +163,14 @@ class TestRemoteURLGates:
             fetch_url("https://api.example.com/x.md", settings, cache)
 
     def test_blocks_remote_script_without_extra_opt_in(self):
-        cache = _RemoteFetchCache()
+        cache = {}
         settings = Settings(allow_remote_urls=True)
         with pytest.raises(RemoteURLBlockedError) as ei:
             fetch_url("https://x.com/run.py", settings, cache)
         assert "allow_remote_scripts" in str(ei.value)
 
     def test_allows_remote_script_with_extra_opt_in(self):
-        cache = _RemoteFetchCache()
+        cache = {}
         settings = Settings(
             allow_remote_urls=True,
             allow_remote_scripts=True,
@@ -188,7 +187,7 @@ class TestVarExpansion:
     def test_missing_var_raises_clear_error(self, monkeypatch):
         """Missing env var is a configuration error (ValueError), not I/O."""
         monkeypatch.delenv("ABSENT_TOKEN", raising=False)
-        cache = _RemoteFetchCache()
+        cache = {}
         settings = Settings(
             allow_remote_urls=True,
             url_headers={
@@ -272,7 +271,7 @@ class TestCacheAndSizeCap:
         local_server["handler"].body_for_path[path] = b"once"
         url = f"http://{local_server['host']}:{local_server['port']}{path}"
         settings = Settings(allow_remote_urls=True)
-        cache = _RemoteFetchCache()
+        cache = {}
 
         body1 = fetch_url(url, settings, cache)
         body2 = fetch_url(url, settings, cache)
@@ -286,7 +285,7 @@ class TestCacheAndSizeCap:
         local_server["handler"].body_for_path[path] = b"x" * 1000
         url = f"http://{local_server['host']}:{local_server['port']}{path}"
         settings = Settings(allow_remote_urls=True, max_remote_fetch_bytes=100)
-        cache = _RemoteFetchCache()
+        cache = {}
 
         with pytest.raises(RemoteURLFetchError) as ei:
             fetch_url(url, settings, cache)
@@ -297,7 +296,7 @@ class TestCacheAndSizeCap:
         local_server["handler"].body_for_path[path] = b"x" * 100
         url = f"http://{local_server['host']}:{local_server['port']}{path}"
         settings = Settings(allow_remote_urls=True, max_remote_fetch_bytes=100)
-        cache = _RemoteFetchCache()
+        cache = {}
 
         body = fetch_url(url, settings, cache)
         assert len(body) == 100
@@ -313,7 +312,7 @@ class TestCacheAndSizeCap:
             allow_remote_urls=True,
             url_headers={base: {"Authorization": "Bearer ${PROMPTS_API_TOKEN}"}},
         )
-        cache = _RemoteFetchCache()
+        cache = {}
 
         fetch_url(url, settings, cache)
 

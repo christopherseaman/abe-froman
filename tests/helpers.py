@@ -4,8 +4,7 @@ import shutil
 
 from sqrlly.schema.models import Graph, LlmPreset, Settings
 
-# Resolve binaries once at import time; the migrate tool uses
-# shutil.which the same way, so test helpers stay consistent.
+# Resolve binaries once at import time.
 _ECHO = shutil.which("echo") or "/bin/echo"
 _FALSE = shutil.which("false") or "/bin/false"
 

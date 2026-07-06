@@ -74,17 +74,6 @@ _SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 _TICK_SECONDS = 0.1
 
 
-class BrailleSpinner:
-    """A simple rotating braille spinner. Aliveness only; no state."""
-
-    def __init__(self) -> None:
-        self._idx = 0
-
-    def frame(self, *, pile_count: int, stash_count: int) -> str:
-        self._idx = (self._idx + 1) % len(_SPINNER_FRAMES)
-        return _SPINNER_FRAMES[self._idx]
-
-
 class MascotScene:
     """A foraging squirrel (block-art) under a tree, gathering falling nuts.
 

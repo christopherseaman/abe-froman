@@ -13,7 +13,7 @@ URLs. This module provides:
   applies url_headers with ${VAR} env expansion.
 - `canonical(url) -> str` — lowercase host + reassembly via urlsplit so
   trailing-slash variance and case-different hosts compare equal.
-- `_RemoteFetchCache` — per-compile dict keyed by canonical resolved URL.
+- fetch caching: a plain per-compile ``dict[str, bytes]`` keyed by canonical resolved URL.
 
 Layer rule: this module is langgraph-free (enforced by
 tests/architecture/test_layers.py) so schema and compile can import it
@@ -26,7 +26,6 @@ import fnmatch
 import os
 import re
 import urllib.request
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urljoin, urlsplit, urlunsplit
@@ -43,16 +42,6 @@ class RemoteURLBlockedError(ValueError):
 
 class RemoteURLFetchError(IOError):
     """A remote URL fetch failed (network error, status code, body too large)."""
-
-
-@dataclass
-class _RemoteFetchCache:
-    """Per-compile cache of fetched remote URL bodies.
-
-    Keyed by canonical resolved URL. Lifetime is one compile invocation;
-    persistent caching is deferred (would need ETag / cache-control).
-    """
-    bodies: dict[str, bytes] = field(default_factory=dict)
 
 
 def canonical(url: str) -> str:
@@ -150,7 +139,7 @@ def _select_headers(
 
 
 def fetch_url(
-    resolved_url: str, settings: Settings, cache: _RemoteFetchCache
+    resolved_url: str, settings: Settings, cache: dict[str, bytes]
 ) -> bytes:
     """Fetch a remote URL body, gated by Settings + cached per compile.
 
@@ -166,8 +155,8 @@ def fetch_url(
     ``resolve_url``); callers don't need to re-canonicalize.
     """
     canon = resolved_url
-    if canon in cache.bodies:
-        return cache.bodies[canon]
+    if canon in cache:
+        return cache[canon]
 
     parts = urlsplit(canon)
     if parts.scheme == "file":
@@ -179,7 +168,7 @@ def fetch_url(
                 f"File URL {canon!r} body exceeds "
                 f"settings.max_remote_fetch_bytes={max_bytes}"
             )
-        cache.bodies[canon] = body
+        cache[canon] = body
         return body
 
     if not settings.allow_remote_urls:
@@ -220,5 +209,5 @@ def fetch_url(
     except Exception as e:
         raise RemoteURLFetchError(f"Remote URL {canon!r} fetch failed: {e}") from e
 
-    cache.bodies[canon] = body
+    cache[canon] = body
     return body

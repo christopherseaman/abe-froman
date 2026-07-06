@@ -3,6 +3,17 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Removed
+
+- The pre-Stage-4 legacy-YAML migrator (`cli/migrate.py`, the standalone `scripts/migrate_legacy_executor_to_presets.py`, and their tests, ~1,500 LOC). No published release ever accepted the legacy YAML shapes, so there is nothing on PyPI to migrate from; recover via git history if ever needed. Drops the `ruamel.yaml` runtime dependency (9 → 8).
+- Dead code: the unused `BrailleSpinner` class; `run_workflow`'s `log_file` convenience parameter (the caller-owned `logger=` injection is the single logging path — the CLI already used it); the per-backend `_await_with_timeout` wrappers (plain `asyncio.wait_for`, which accepts `timeout=None`); the `_RemoteFetchCache` dataclass (a plain dict).
+
+### Changed
+
+- Repo hygiene: regenerable example artifacts (`view.html` / `view-debug.html` / `reference-run.jsonl` / absurd-paper `reference-output/`, ~230 KB) are untracked and gitignored — rebuild locally with `sqrlly view` or `examples/regenerate_views.sh`. Shipped-feature design docs (`docs/superpowers/`, 12 files) removed; git history preserves them. Sdist excludes hardened so in-flight plan docs and `.superpowers/` scratch can never ship to PyPI.
+
 ## [0.7.13] — opt-in `safe_mode` for clean, reproducible runs
 
 ### Added

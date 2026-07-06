@@ -14,7 +14,7 @@ from sqrlly.runtime.executor.prompt import (
     render_template,
 )
 from sqrlly.runtime.result import ExecutionResult, PromptBackend
-from sqrlly.runtime.url import _RemoteFetchCache, fetch_url, resolve_url
+from sqrlly.runtime.url import fetch_url, resolve_url
 from sqrlly.schema.models import CommandPreset, Execute, Node, Settings
 from sqrlly.schema.params import coerce_params
 
@@ -118,7 +118,7 @@ class DispatchExecutor:
         """
         self._workdir = workdir
         self._settings = settings or Settings()
-        self._fetch_cache = _RemoteFetchCache()
+        self._fetch_cache: dict[str, bytes] = {}
         # Builder registry: every known preset name → a zero-arg builder.
         # Pre-built backends are wrapped as constant builders so both
         # inputs share one lazy code path (identity preserved).

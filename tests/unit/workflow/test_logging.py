@@ -240,8 +240,12 @@ class TestLogUpdate:
 
 
 class TestRunWorkflowLogging:
+    """run_workflow takes a caller-owned logger (injection only); the
+    caller emits workflow_start / workflow_end and closes — the same
+    lifecycle cli/main.py::_run_async owns."""
+
     @pytest.mark.asyncio
-    async def test_log_file_captures_workflow_events(self, tmp_path):
+    async def test_logger_captures_workflow_events(self, tmp_path):
         """Two-node workflow should produce start, 2x completed, end."""
         log_path = str(tmp_path / "events.jsonl")
         config = make_config([
@@ -249,12 +253,24 @@ class TestRunWorkflowLogging:
             cmd_phase("b", output="world", depends_on=["a"]),
         ])
         executor = DispatchExecutor(workdir=str(tmp_path))
-        await run_workflow(
+        logger = JsonlLogger(log_path)
+        logger.emit({
+            "event": "workflow_start",
+            "workflow": config.name,
+            "version": config.version,
+        })
+        result = await run_workflow(
             build_workflow_graph(config, executor),
             make_initial_state(workdir=str(tmp_path)),
             config,
-            log_file=log_path,
+            logger=logger,
         )
+        logger.emit({
+            "event": "workflow_end",
+            "completed": len(result.get("completed_nodes", set())),
+            "failed": len(result.get("failed_nodes", set())),
+        })
+        logger.close()
 
         events = [json.loads(l) for l in (tmp_path / "events.jsonl").read_text().strip().split("\n")]
         event_types = [e["event"] for e in events]
@@ -270,12 +286,19 @@ class TestRunWorkflowLogging:
         log_path = str(tmp_path / "events.jsonl")
         config = make_config([fail_phase("broken")])
         executor = DispatchExecutor(workdir=str(tmp_path))
-        await run_workflow(
+        logger = JsonlLogger(log_path)
+        result = await run_workflow(
             build_workflow_graph(config, executor),
             make_initial_state(workdir=str(tmp_path)),
             config,
-            log_file=log_path,
+            logger=logger,
         )
+        logger.emit({
+            "event": "workflow_end",
+            "completed": len(result.get("completed_nodes", set())),
+            "failed": len(result.get("failed_nodes", set())),
+        })
+        logger.close()
 
         events = [json.loads(l) for l in (tmp_path / "events.jsonl").read_text().strip().split("\n")]
         event_types = [e["event"] for e in events]
@@ -304,12 +327,14 @@ class TestRunWorkflowLogging:
         ])
         log_path = str(tmp_path / "events.jsonl")
         executor = DispatchExecutor(workdir=str(tmp_path))
+        logger = JsonlLogger(log_path)
         await run_workflow(
             build_workflow_graph(config, executor),
             make_initial_state(workdir=str(tmp_path)),
             config,
-            log_file=log_path,
+            logger=logger,
         )
+        logger.close()
 
         events = [json.loads(l) for l in (tmp_path / "events.jsonl").read_text().strip().split("\n")]
         event_types = [e["event"] for e in events]
@@ -317,15 +342,14 @@ class TestRunWorkflowLogging:
         assert "node_retried" in event_types
 
     @pytest.mark.asyncio
-    async def test_no_log_file_no_side_effects(self, tmp_path):
-        """log_file=None should not create any file."""
+    async def test_no_logger_no_side_effects(self, tmp_path):
+        """logger=None (the default) should not create any file."""
         config = make_config([cmd_phase("a", output="ok")])
         executor = DispatchExecutor(workdir=str(tmp_path))
         await run_workflow(
             build_workflow_graph(config, executor),
             make_initial_state(workdir=str(tmp_path)),
             config,
-            log_file=None,
         )
         # No .jsonl file should exist
         assert list(tmp_path.glob("*.jsonl")) == []

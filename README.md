@@ -169,11 +169,11 @@ Full reference (including `CommandPreset` for custom script interpreters): [SCHE
 
 `run` shows a live per-node status grid + a clock-driven aliveness spinner when stdout is a TTY. Non-TTY runs (piped, redirected, CI) fall through to the plain summary output automatically. Workflow events only — no LLM-token streaming. On completion `run` prints a `where to find things` summary — the produced output files, the log path (or how to capture one with `--log`), and run artifacts (checkpoint DB + worktree pool); `--quiet` suppresses it.
 
-`init --example <name>` scaffolds a runnable bundled example (`jokes`, `route_classify`, `explicit_join`, `pipeline_style`) — handy after `uv tool install sqrlly` when you have no repo checkout. `init --list-examples` lists them.
+`init --example <name>` scaffolds a runnable bundled example (`jokes`, `route_classify`, `explicit_join`, `pipeline_style`, `absurd-paper`) — handy after `uv tool install sqrlly` when you have no repo checkout. `init --list-examples` lists them.
 
 ## Examples
 
-Each example directory ships a checked-in `view.html` (authoring view) and, where the run is deterministic, a `view-debug.html` from a captured log.
+Render any example's interactive view with `sqrlly view <workflow.yaml>`; `examples/regenerate_views.sh` rebuilds views (and, for the deterministic script-only examples, debug views from a captured log) locally.
 
 | Workflow | What it shows |
 |---|---|

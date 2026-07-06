@@ -14,7 +14,7 @@ EXPECTED = [
     "sqrlly/_examples/route_classify/scripts/triage.py",
     "sqrlly/_examples/explicit_join.yaml",
     "sqrlly/_examples/pipeline_style/workflow.yaml",
-    # absurd-paper: run-essential subset (reference-output/ + view.html excluded).
+    # absurd-paper: run-essential subset.
     "sqrlly/_examples/absurd-paper/workflow.yaml",
     "sqrlly/_examples/absurd-paper/preamble.md",
     "sqrlly/_examples/absurd-paper/subgraphs/compose_and_validate.yaml",

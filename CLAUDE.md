@@ -69,9 +69,9 @@ uv run sqrlly view config.yaml            # self-contained HTML viewer
 ```
 
 CLI commands: `init`, `validate`, `run`, `graph`, `view`. There is no
-`migrate` subcommand — legacy-YAML migration is the standalone
-`scripts/migrate_legacy_executor_to_presets.py` (PEP-723; run with
-`uv run`).
+`migrate` subcommand — the pre-Stage-4 legacy-YAML migrator was removed
+entirely (no published release ever accepted the legacy shapes; recover
+via `git show <pre-cutover-sha>:src/sqrlly/cli/migrate.py` if ever needed).
 
 ## Versioning
 
@@ -179,11 +179,6 @@ langgraph-free).
   skill doc (repo-root `SKILLS.md`, `force-include`d into the wheel as
   `sqrlly/_skill.md`) into a working repo at
   `.agents/skills/sqrlly/SKILL.md` (repo-aware via git toplevel).
-- `migrate.py` — internal module (NOT a CLI command): pre-Stage-4 →
-  4 → 5b YAML transforms (idempotent; preserves comments + anchors).
-  The `sqrlly migrate` subcommand was removed in the preset-rework
-  cutover; `migrate_yaml` / `migrate_file` survive as a tested
-  library utility.
 
 ## Testing principles
 

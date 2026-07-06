@@ -20,26 +20,13 @@ from __future__ import annotations
 import asyncio
 import os
 import signal
-from typing import Any, Awaitable
+from typing import Any
 
 from sqrlly.runtime.executor.backends._overload import (
     ACP_OVERLOAD_SUBSTRINGS,
     maybe_raise_overload,
 )
 from sqrlly.runtime.result import ExecutionResult
-
-
-async def _await_with_timeout(coro: Awaitable[Any], timeout: float | None) -> Any:
-    """Await ``coro`` with optional timeout. ``timeout=None`` awaits
-    without bound; otherwise delegates to ``asyncio.wait_for``.
-
-    Duplicated from ``backends/acp.py`` rather than extracted — the
-    function is one ``if`` over ``asyncio.wait_for`` and the two
-    backends have no other shared seams worth a helper module.
-    """
-    if timeout is None:
-        return await coro
-    return await asyncio.wait_for(coro, timeout=timeout)
 
 
 async def _kill_process_group(proc: Any) -> None:
@@ -149,9 +136,9 @@ class CLIBackend:
                 f"for transport: cli."
             ) from e
         try:
-            stdout_b, stderr_b = await _await_with_timeout(
-                proc.communicate(input=prompt.encode()),
-                timeout,
+            # timeout=None is stdlib-documented unbounded wait (>=3.11).
+            stdout_b, stderr_b = await asyncio.wait_for(
+                proc.communicate(input=prompt.encode()), timeout,
             )
         except asyncio.TimeoutError:
             # Caller asked for a bounded wait; kill the runaway child AND its

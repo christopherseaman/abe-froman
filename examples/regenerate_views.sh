@@ -1,6 +1,6 @@
 #!/bin/bash
-# Regenerate the checked-in HTML views + reference JSONL logs for the
-# shipped examples. Run from the repo root.
+# Regenerate local HTML views + reference JSONL logs for the shipped
+# examples (all gitignored — regenerate on demand). Run from the repo root.
 #
 # Authoring views are generated for all example workflows that have a
 # directory (jokes, route_classify, pipeline_style, wave_planner,
@@ -16,9 +16,8 @@
 # debug views require the appropriate API key + live API call and
 # would produce a different output every time.
 #
-# These files are point-in-time snapshots — the JSONL has timestamps
-# that change per run, so re-running this script will always produce
-# a diff. Refresh intentionally, not automatically.
+# These files are point-in-time local snapshots (untracked): the JSONL
+# has timestamps that change per run, so output differs every time.
 
 set -euo pipefail
 
@@ -83,6 +82,4 @@ uv run sqrlly view \
 rm -rf "$WAVE_DIR"
 
 echo
-echo "Done. Refresh these views intentionally — the captured JSONL"
-echo "logs have wall-clock timestamps that change per run, so every"
-echo "regeneration produces a diff."
+echo "Done. Views + logs are local (gitignored) artifacts."

@@ -218,10 +218,8 @@ class TestExecuteModeOverride:
         # Make `python3` resolve to the test interpreter for portability.
         executor = DispatchExecutor(workdir=str(tmp_path))
         result = await executor.execute(node, {}, workdir=str(tmp_path))
-        # Subprocess will fail unless python3 is on PATH; if it is,
-        # output should contain the script's stdout.
-        if result.success:
-            assert "forced-py" in result.output
+        assert result.success is True, result.error
+        assert "forced-py" in result.output
 
     @pytest.mark.asyncio
     async def test_prompt_mode_routes_unknown_extension_through_prompt(self, tmp_path):

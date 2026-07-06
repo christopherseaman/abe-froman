@@ -18,3 +18,12 @@ output/
 .env
 .env.*
 !.env.example
+
+# Regenerable example artifacts (examples/regenerate_views.sh / sqrlly view)
+examples/*/view.html
+examples/*/view-debug.html
+examples/*/reference-run.jsonl
+examples/absurd-paper/reference-output/
+
+# superpowers SDD scratch (progress ledgers etc.)
+.superpowers/

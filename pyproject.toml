@@ -29,7 +29,6 @@ dependencies = [
     "langgraph>=1.0",
     "jinja2>=3.0",
     "langgraph-checkpoint-sqlite>=3.0.3",
-    "ruamel.yaml>=0.17",
     "simpleeval>=0.9.13",
     "psutil>=5.9",
 ]
@@ -70,8 +69,7 @@ packages = ["src/sqrlly"]
 "examples/explicit_join.yaml" = "sqrlly/_examples/explicit_join.yaml"
 "examples/pipeline_style/workflow.yaml" = "sqrlly/_examples/pipeline_style/workflow.yaml"
 # absurd-paper: the showcase (prompts + multi-dim gates + subgraph →
-# rendered PDF). Only the run-essential files ride along — reference-output/
-# and view.html (sample artifacts) are excluded.
+# rendered PDF). Run-essential files only.
 "examples/absurd-paper/workflow.yaml" = "sqrlly/_examples/absurd-paper/workflow.yaml"
 "examples/absurd-paper/preamble.md" = "sqrlly/_examples/absurd-paper/preamble.md"
 "examples/absurd-paper/subgraphs/compose_and_validate.yaml" = "sqrlly/_examples/absurd-paper/subgraphs/compose_and_validate.yaml"
@@ -110,6 +108,12 @@ exclude = [
     "/.env",
     "/CLAUDE.md",
     "/TODO.md",
+    # In-flight superpowers plan/spec docs and SDD scratch must never
+    # ship to PyPI (the tracked set is deleted after each feature lands).
+    "/docs/superpowers",
+    "/docs/superpowers/**",
+    "/.superpowers",
+    "/.superpowers/**",
 ]
 
 [tool.pytest.ini_options]
