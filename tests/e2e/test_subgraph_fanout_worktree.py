@@ -18,8 +18,6 @@ deterministic.
 from __future__ import annotations
 
 import json
-import os
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -30,20 +28,13 @@ from sqrlly.runtime.executor.dispatch import DispatchExecutor
 from sqrlly.runtime.foreman import ForemanExecutor
 from sqrlly.runtime.state import make_initial_state
 from sqrlly.schema.models import Graph, Settings
+from helpers import init_git_repo
 
 _PARENT_ID = "writer_pool"
 
 
-def _init_git_repo(path: Path) -> None:
-    subprocess.run(["git", "init", str(path)], check=True, capture_output=True)
-    subprocess.run(
-        ["git", "-C", str(path), "commit", "--allow-empty", "-m", "init"],
-        check=True, capture_output=True,
-        env={**os.environ,
-             "GIT_AUTHOR_NAME": "test", "GIT_AUTHOR_EMAIL": "test@test.com",
-             "GIT_COMMITTER_NAME": "test", "GIT_COMMITTER_EMAIL": "test@test.com"},
-    )
-
+def _init_git_repo(path):
+    init_git_repo(path)
 
 def _write_sub_yaml(tmp_path: Path) -> str:
     """Two-node subgraph: gen writes a file, polish reads and extends it.

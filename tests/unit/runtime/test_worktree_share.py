@@ -4,16 +4,11 @@ from pathlib import Path
 
 from sqrlly.runtime.promote import discover_changes
 from sqrlly.runtime.worktree_share import write_worktree_excludes
+from helpers import init_git_repo
 
 
 def _repo(tmp):
-    subprocess.run(["git", "init", "-q", "-b", "main", str(tmp)], check=True)
-    subprocess.run(["git", "-C", str(tmp), "config", "user.email", "t@t"], check=True)
-    subprocess.run(["git", "-C", str(tmp), "config", "user.name", "t"], check=True)
-    (tmp / "a.txt").write_text("orig")
-    subprocess.run(["git", "-C", str(tmp), "add", "."], check=True)
-    subprocess.run(["git", "-C", str(tmp), "commit", "-qm", "init"], check=True)
-
+    init_git_repo(tmp, files={"a.txt": "orig"})
 
 def _wt(tmp, name):
     dest = tmp / ".sqrlly" / name

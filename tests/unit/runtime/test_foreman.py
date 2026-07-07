@@ -17,26 +17,14 @@ import pytest
 from sqrlly.runtime.executor.dispatch import DispatchExecutor
 from sqrlly.runtime.foreman import ForemanExecutor
 from sqrlly.schema.models import Execute, Node, Settings
+from helpers import init_git_repo
 
 _PWD = shutil.which("pwd") or "/bin/pwd"
 _SLEEP = shutil.which("sleep") or "/bin/sleep"
 
 
-def _init_git_repo(path: Path) -> None:
-    """Initialize a minimal git repo with one commit so worktrees can branch."""
-    subprocess.run(["git", "init", "-q", "-b", "main", str(path)], check=True)
-    subprocess.run(
-        ["git", "-C", str(path), "config", "user.email", "t@t"], check=True
-    )
-    subprocess.run(
-        ["git", "-C", str(path), "config", "user.name", "t"], check=True
-    )
-    (path / "README").write_text("init")
-    subprocess.run(["git", "-C", str(path), "add", "README"], check=True)
-    subprocess.run(
-        ["git", "-C", str(path), "commit", "-q", "-m", "init"], check=True
-    )
-
+def _init_git_repo(path):
+    init_git_repo(path, files={"README": "init"})
 
 def _cmd_phase(node_id: str, command: str = "pwd", args=None) -> Node:
     """Build a Stage-5b execute-URL node from a bare command name.

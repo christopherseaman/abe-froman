@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 import shutil
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -23,23 +22,13 @@ from sqrlly.runtime.executor.dispatch import DispatchExecutor
 from sqrlly.runtime.foreman import ForemanExecutor
 from sqrlly.runtime.state import make_initial_state
 from sqrlly.schema.models import Graph, Settings
+from helpers import init_git_repo
 
 _ECHO = shutil.which("echo") or "/bin/echo"
 
 
-def _init_git_repo(path: Path) -> None:
-    """Initialise a minimal git repo so ForemanExecutor can create worktrees."""
-    subprocess.run(["git", "init", str(path)], check=True, capture_output=True)
-    subprocess.run(
-        ["git", "-C", str(path), "commit", "--allow-empty", "-m", "init"],
-        check=True,
-        capture_output=True,
-        env={**__import__("os").environ, "GIT_AUTHOR_NAME": "test",
-             "GIT_AUTHOR_EMAIL": "test@test.com",
-             "GIT_COMMITTER_NAME": "test",
-             "GIT_COMMITTER_EMAIL": "test@test.com"},
-    )
-
+def _init_git_repo(path):
+    init_git_repo(path)
 
 def _build_fan_out_config(workdir: Path) -> Graph:
     """2-leaf fan-out: parent echoes a 2-item manifest; children echo their id.

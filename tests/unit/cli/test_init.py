@@ -1,7 +1,6 @@
 """Tests for `sqrlly init` — workflow scaffolding + skill install."""
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -9,6 +8,7 @@ from click.testing import CliRunner
 
 from sqrlly.cli.init import _load_skill_doc
 from sqrlly.cli.main import cli
+from helpers import init_git_repo
 
 
 @pytest.fixture
@@ -16,9 +16,8 @@ def runner() -> CliRunner:
     return CliRunner()
 
 
-def _git_init(path: Path) -> None:
-    subprocess.run(["git", "init", "-q", str(path)], check=True)
-
+def _git_init(path):
+    init_git_repo(path, commit=False)
 
 class TestVersion:
     def test_version_flag_prints_version(self, runner):

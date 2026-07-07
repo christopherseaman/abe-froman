@@ -73,14 +73,14 @@ does not re-flag them.
 - **Remote-URL fetch machinery** — kept (see the design task above),
   not removed. Now surfaced by a security lint + runtime warning.
 
-**Deferred refactors (zero-LOC-reduction; readability/test-tidiness only):**
+**Deferred refactors — DONE 2026-07:**
 
-- [ ] **T2-11 — split `cli/main.py::_execute_workflow`** (~250 lines)
-  into `_seed_state` + `_promote_and_gc` helpers. Pure readability;
-  promote-before-GC / checkpointer ordering is sensitive — do with
-  fresh attention.
-- [ ] **T2-10 — dedup ~8 divergent test git-init helpers** into
-  `tests/helpers.py::init_git_repo(path, *, branch, files)`. Test-only.
+- [x] **T2-11 — split `cli/main.py::_execute_workflow`** into `_seed_state`
+  (resume / --entry / fresh seeding) + `_promote_and_gc` (clean-run
+  worktree promotion before GC). Pure extraction; 250→140 lines.
+- [x] **T2-10 — dedup the 8 divergent test git-init helpers** into
+  `tests/helpers.py::init_git_repo(path, *, branch, files, commit)`; each
+  call site keeps a one-line wrapper expressing its specifics.
 
 ## Post-Phase-B audit findings (2026-05-08, framework alignment + test doctrine sweep)
 
