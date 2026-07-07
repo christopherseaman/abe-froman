@@ -110,6 +110,11 @@ class DispatchExecutor:
         self._workdir = workdir
         self._settings = settings or Settings()
         self._fetch_cache: dict[str, bytes] = {}
+        # Concurrency cap on dispatch — bounds how many nodes spawn a backend
+        # at once. Owned HERE (not the foreman) so it applies even off-git,
+        # where the foreman is disabled; otherwise a non-git fan-out would
+        # dispatch every child simultaneously and saturate the upstream API.
+        self._dispatch_sem = asyncio.Semaphore(self._settings.max_parallel_jobs)
         # Builder registry: every known preset name → a zero-arg builder.
         # Pre-built backends are wrapped as constant builders so both
         # inputs share one lazy code path (identity preserved).
@@ -157,6 +162,18 @@ class DispatchExecutor:
         return preset_name, self._backend_for_preset(preset_name)
 
     async def execute(
+        self, node: Node, context: dict[str, Any],
+        workdir: str | None = None,
+        settings_override: Settings | None = None,
+    ) -> ExecutionResult:
+        # The dispatch concurrency cap is the ONLY throttle when the foreman
+        # is absent (off-git). Under the foreman it is the sole dispatch cap —
+        # the foreman gates worktree CREATION only, so a git child never holds
+        # two semaphores (no double-count / halving).
+        async with self._dispatch_sem:
+            return await self._dispatch(node, context, workdir, settings_override)
+
+    async def _dispatch(
         self, node: Node, context: dict[str, Any],
         workdir: str | None = None,
         settings_override: Settings | None = None,

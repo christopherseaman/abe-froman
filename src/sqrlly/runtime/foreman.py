@@ -1,14 +1,16 @@
-"""ForemanExecutor: queue + memory gate + worktree pool.
+"""ForemanExecutor: worktree pool + creation throttle + memory gate.
 
 Wraps an inner `NodeExecutor` (typically `DispatchExecutor`) and adds:
-  - A **global** `asyncio.Semaphore` bounding parallel jobs.
-  - **Memory back-pressure** — when ``settings.memory_threshold_pct`` is
-    set, blocks new dispatches while host memory percent is above it
-    (see ``runtime/memory_gate.py``; default off). Composes (AND) with
-    the semaphore; in-flight jobs are never aborted by this gate.
   - A **worktree pool** — per-node trees for ``auto``/``isolated`` nodes;
     group nodes share one tree keyed by group name; ``off`` nodes run in
     the base workdir.
+  - A **worktree-creation throttle** (`asyncio.Semaphore`) bounding how many
+    `git worktree add` run at once. The DISPATCH concurrency cap lives in
+    `DispatchExecutor` (so it applies off-git too); the foreman gates only
+    worktree creation, so a git child never holds two semaphores.
+  - **Memory back-pressure** — when ``settings.memory_threshold_pct`` is
+    set, blocks new dispatches while host memory percent is above it
+    (see ``runtime/memory_gate.py``; default off).
 
 Foreman is LangGraph-agnostic: it imports nothing from `compile/` or `langgraph`.
 The retry decision lives at the compile layer; foreman just runs what's handed
@@ -54,7 +56,10 @@ class ForemanExecutor:
         # branch_map.worktree, promote/GC targets) are unambiguous regardless
         # of the `--workdir` form — a fan-in consumer needn't re-resolve them.
         self._base = str(Path(base_workdir).resolve())
-        self._global_sem = asyncio.Semaphore(max_parallel_jobs)
+        # Throttles worktree CREATION only (not dispatch — that cap lives in
+        # DispatchExecutor). Prevents a wide fan-out from firing N `git
+        # worktree add` at once.
+        self._worktree_create_sem = asyncio.Semaphore(max_parallel_jobs)
         self._worktrees: dict[str, str] = dict(rehydrate or {})
         self._created_paths: set[str] = set()
         self._worktree_lock = asyncio.Lock()
@@ -75,30 +80,33 @@ class ForemanExecutor:
     ) -> ExecutionResult:
         s = settings_override or self._settings
 
-        # Memory back-pressure runs OUTSIDE the semaphore so that gated
-        # acquisitions don't sit holding a slot while waiting for memory
-        # to drop. Defaults to ``None`` (disabled — a fast no-op).
+        # Memory back-pressure runs before any acquisition so a gated
+        # dispatch doesn't sit holding resources. Defaults to ``None``
+        # (disabled — a fast no-op).
         await wait_for_memory(
             s.memory_threshold_pct, node_id=node.id,
             poll_interval=self._memory_poll_s,
         )
 
-        async with self._global_sem:
-            kind, group = node.effective_worktree(s)
-            if kind == "off":
-                run_dir = workdir or self._base
-            else:
-                pool_key = f"group:{group}" if kind == "group" else node.id
+        kind, group = node.effective_worktree(s)
+        if kind == "off":
+            run_dir = workdir or self._base
+        else:
+            pool_key = f"group:{group}" if kind == "group" else node.id
+            # Throttle worktree CREATION only; released before dispatch, so
+            # the inner DispatchExecutor's own cap is the sole dispatch gate
+            # (no nested-semaphore double-count).
+            async with self._worktree_create_sem:
                 run_dir = await self._acquire_worktree(node.id, pool_key, group)
-            if node.output_contract:
-                scaffold_output_directory(node.output_contract, run_dir)
-            result = await self._inner.execute(
-                node, context, workdir=run_dir,
-                settings_override=settings_override,
-            )
-            if kind != "off" and result.worktree is None:
-                result.worktree = run_dir
-            return result
+        if node.output_contract:
+            scaffold_output_directory(node.output_contract, run_dir)
+        result = await self._inner.execute(
+            node, context, workdir=run_dir,
+            settings_override=settings_override,
+        )
+        if kind != "off" and result.worktree is None:
+            result.worktree = run_dir
+        return result
 
     async def _acquire_worktree(
         self,

@@ -492,9 +492,17 @@ class TestConcurrencyCap:
     @pytest.mark.asyncio
     async def test_global_semaphore_bounds_parallelism(self, tmp_path):
         """With max_parallel_jobs=2 and 6 sleeping nodes, wall time is bounded
-        from below by (N/K) * per_phase_duration."""
+        from below by (N/K) * per_phase_duration.
+
+        The dispatch cap lives in DispatchExecutor now; the foreman gates
+        worktree creation only. Setting BOTH to 2 also verifies there is no
+        double-count on the git path (a child holding two semaphores would
+        halve the effective concurrency or deadlock — this would then read
+        ~1.5s serial, not ~0.75s)."""
         _init_git_repo(tmp_path)
-        inner = DispatchExecutor(workdir=str(tmp_path))
+        inner = DispatchExecutor(
+            workdir=str(tmp_path), settings=Settings(max_parallel_jobs=2),
+        )
         foreman = ForemanExecutor(
             inner=inner, base_workdir=str(tmp_path), max_parallel_jobs=2,
         )

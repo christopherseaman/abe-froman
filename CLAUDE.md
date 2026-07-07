@@ -145,7 +145,9 @@ langgraph-free).
   renderer (JsonlLogger-shaped `emit`/`log_update`/`close`).
 - `gates.py` — `run_evaluation_script`, `run_evaluation_llm`,
   output parsing, `EvaluationResult`.
-- `foreman.py` — `ForemanExecutor` (global semaphore + worktree pool).
+- `foreman.py` — `ForemanExecutor` (worktree pool + worktree-CREATION
+  throttle; the dispatch concurrency cap moved to `DispatchExecutor` so it
+  applies off-git too — foreman gates only creation, no double-count).
 - `memory_gate.py` — `wait_for_memory` (optional, default-off host-memory
   back-pressure; isolates the sole `psutil` dependency).
 - `promote.py` — `discover_changes` / `apply_changes` / `plan_promotions`
@@ -159,7 +161,9 @@ langgraph-free).
   (`_find_dotenv` / `_load_dotenv_once`), consumed by `url.py`'s
   header `${VAR}` expansion.
 - `worktree_share.py` — `write_worktree_excludes` / `materialize_shares` / `ensure_setup` (worktree dep sharing: info/exclude write, read-only symlinks, sentinel-gated rehydrate).
-- `executor/dispatch.py` — `DispatchExecutor` (10-row URL dispatch).
+- `executor/dispatch.py` — `DispatchExecutor` (10-row URL dispatch; owns
+  the `max_parallel_jobs` dispatch semaphore — always applied, foreman or
+  not, so a non-git fan-out is still throttled).
 - `executor/prompt.py` — module functions `apply_preamble` +
   `execute_with_downgrade` (template render, eval preamble, model
   downgrade); flattened from the former `PromptExecutor` class.

@@ -5,6 +5,11 @@ All notable changes to sqrlly are documented here. Format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- `max_parallel_jobs` is now enforced for ALL runs, not just git-workdir runs. The concurrency cap lived only in `ForemanExecutor`, which is skipped when the workdir is not a git repo (`worktree: off` in a non-repo), so an off-git fan-out dispatched EVERY child at once regardless of the setting (even the default 4) — saturating the upstream API and mass-failing children with `claude exited 1`. The cap moved into `DispatchExecutor` (which always runs); the foreman now throttles only worktree *creation*, so a git child never holds two semaphores (no double-count). Reported by the samus builder/adapter port as the fan-out blocker.
+
+
 ## [0.8.4] - 2026-07-07
 
 ### Fixed

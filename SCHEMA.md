@@ -60,7 +60,7 @@ Unknown keys in `settings:` are rejected with a `ValidationError` — no silent 
 
 | Field | Type | Default | Effect |
 |---|---|---|---|
-| `max_parallel_jobs` | `int` | `4` | Foreman global semaphore. |
+| `max_parallel_jobs` | `int` | `4` | Global cap on concurrently-dispatched nodes (enforced in `DispatchExecutor`, so it applies whether or not the git-worktree foreman is active). |
 | `memory_threshold_pct` | `float \| None` | `None` | Foreman blocks new dispatches while host memory percent is above this (0–100). `None` disables. |
 
 ### Worktree isolation

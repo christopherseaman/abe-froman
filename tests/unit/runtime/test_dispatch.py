@@ -248,3 +248,63 @@ class TestExecuteModeOverride:
         result = await executor.execute(node, {}, workdir=str(tmp_path))
         assert result.success is True
         assert "from-exec-mode-forced" in result.output
+
+
+class TestDispatchConcurrencyCap:
+    """max_parallel_jobs is enforced by DispatchExecutor itself, so the cap
+    applies even when there is no ForemanExecutor — i.e. off-git, where the
+    foreman is disabled. Regression for the fan-out saturation blocker: a
+    non-git fan-out previously dispatched every child at once."""
+
+    @pytest.mark.asyncio
+    async def test_cap_throttles_without_foreman(self, tmp_path):
+        import asyncio
+        import shutil
+        import time
+
+        sleep_bin = shutil.which("sleep") or "/bin/sleep"
+        sleep_s = 0.3
+        dispatch = DispatchExecutor(
+            workdir=str(tmp_path), settings=Settings(max_parallel_jobs=2),
+        )
+
+        def _node(i):
+            return Node(
+                id=f"p{i}", name=f"p{i}",
+                execute=Execute(url=sleep_bin, params={"args": [str(sleep_s)]}),
+            )
+
+        start = time.perf_counter()
+        results = await asyncio.gather(*[dispatch.execute(_node(i), {}) for i in range(4)])
+        elapsed = time.perf_counter() - start
+
+        assert all(r.success for r in results), [r.error for r in results]
+        # cap=2 over 4 jobs → two serialized waves ≈ 2×sleep. Uncapped (the
+        # bug) runs all four at once ≈ 1×sleep. 1.5× cleanly separates them.
+        assert elapsed >= sleep_s * 1.5, (
+            f"elapsed {elapsed:.3f}s < {sleep_s * 1.5:.3f}s — cap not enforced"
+        )
+
+    @pytest.mark.asyncio
+    async def test_high_cap_runs_parallel(self, tmp_path):
+        """Control: a cap >= job count runs fully parallel (~1 sleep)."""
+        import asyncio
+        import shutil
+        import time
+
+        sleep_bin = shutil.which("sleep") or "/bin/sleep"
+        sleep_s = 0.3
+        dispatch = DispatchExecutor(
+            workdir=str(tmp_path), settings=Settings(max_parallel_jobs=8),
+        )
+
+        def _node(i):
+            return Node(
+                id=f"p{i}", name=f"p{i}",
+                execute=Execute(url=sleep_bin, params={"args": [str(sleep_s)]}),
+            )
+
+        start = time.perf_counter()
+        await asyncio.gather(*[dispatch.execute(_node(i), {}) for i in range(4)])
+        elapsed = time.perf_counter() - start
+        assert elapsed < sleep_s * 2, f"elapsed {elapsed:.3f}s too long for cap=8"
