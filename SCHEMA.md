@@ -467,8 +467,9 @@ item.
 
 **Manifest structure and validation:**
 
-- Manifest items without an `id` field log a WARNING — all such items collapse onto a single `<parent_id>::unknown` child (a silent N→1 collapse, often unintended).
-- Duplicate `id` values within the manifest raise a `ManifestError` before dispatch, listing the duplicate child ids. Each item must have a unique `id` to produce one branch per item.
+- Manifest items without an `id` field log a WARNING — each collapses onto the single `<parent_id>::unknown` child id, so two or more of them produce a duplicate child id and fail the parent (below) instead of silently collapsing N→1.
+- Duplicate child ids in the manifest **fail the parent node** before dispatch (the error lists the duplicate ids; the run reports failure, and a bare `--resume` re-fans the parent once the manifest is fixed). Each item must have a unique `id` to produce one branch per item.
+- An unreadable, invalid-JSON, or mis-shaped `manifest_path` fails the parent node the same way — a recoverable node failure, not an aborting exception.
 
 **FanOutTemplate** fields:
 

@@ -82,10 +82,6 @@ does not re-flag them.
 - [ ] **T2-10 — dedup ~8 divergent test git-init helpers** into
   `tests/helpers.py::init_git_repo(path, *, branch, files)`. Test-only.
 
-## Post-Stage-5d audit findings (2026-05-08, eval/decision-split branch)
-
-- [x] **(29) Collapse the eval/decision pair (and the combined factory) into one gate node** (`compile/nodes.py`, `compile/graph.py`) — DONE. The Eval + Decision pair AND `_make_combined_eval_decide_node` are replaced by a single `Command`-returning `_make_gate_node` (registered under the existing `_eval_<id>` name), and the fan-out conditional-edge router (`_make_dynamic_router`) by a `_fan_<id>` dispatcher node. The dynamic-parent obstacle dissolved: the gate gotoes `_fan_<id>` (reached one super-step later, so it reads committed post-gate state — no baking, no combined factory). Duplicate-manifest ids now fail the parent node (recoverable via bare `--resume`) instead of raising. See CHANGELOG [Unreleased].
-
 ## Post-Phase-B audit findings (2026-05-08, framework alignment + test doctrine sweep)
 
 > **Two closures kept as "don't re-attempt this" notes** (both closed
@@ -115,6 +111,14 @@ the construct is unambiguously broken.
 - [~] **(34) Compile-time footgun checks for documented gotchas** —
   partial. Warning channel (`compile/lint.py::collect_warnings`) +
   hyphenated-node-id check delivered 2026-05-20. Remaining:
+  - [ ] 🤞 **`fan_out` + `route` on one node** — nothing forbids the
+    combo (no cross-field validator, no lint). Gated: fan_out wins and
+    the `_route_<id>` dispatcher is registered but unreachable (dead).
+    Ungated: BOTH the `_fan_<id>` plain edge and the route wiring fire —
+    double dispatch (pre-existing; confirmed by live probe in the Batch E
+    review, 2026-07-07). Fix: schema validator rejecting the combo (the
+    ungated combo is already broken, so forbidding loses nothing), or at
+    minimum a lint warning.
   - [ ] 🤞 **`{{sender_id}}` on a non-goto-reachable node** —
     `_route_sender` is last-write-wins; a node reached by a static
     `depends_on` edge *after* an inline-route hop elsewhere can
@@ -476,8 +480,6 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
 
 ## Langgraph adoption wins
 
-- [ ] **`Command` objects for node-level routing** — paired with the Evaluation/Decision split (top of file). A node returns `Command(update=..., goto=...)` instead of writing state and being routed by a downstream conditional edge. Removes router closures across `compile/graph.py` and makes the topology self-describing — the destination lives in the node return, not in a separate function reading state we just wrote.
-
 - [ ] **Interrupts / human-in-the-loop** — `interrupt()` + `Command(resume=...)` from langgraph. Free on the existing checkpointer; enables author/operator approval nodes, manual quality gates, draft review. New execution type (`type: human_review`) or `evaluation.mode: human` schema option.
 
 - [ ] **`add_messages` reducer for in-phase refinement loops** — multi-turn draft → critique → revise within a single phase using LangGraph's native message-list reducer. Phase-local `messages` channel; no ACP round-trip per turn for pure model revision.
@@ -585,8 +587,6 @@ unless flagged otherwise.
   which is observable but ugly.
 
 ## Reimplementation debt (drop in favor of native LangGraph)
-
-- [x] **Stop hand-writing router closures** — DONE. `_make_evaluation_router` deleted (Stage 5d Eval/Decision split). `_subphase_id_resolver` deleted (2026-05-15, was dead code). `_make_dynamic_router` + its `add_conditional_edges` scaffolding deleted in the Batch E gate collapse (item #29) — fan-out dispatch is now the `_fan_<id>` node emitting `Command(goto=[Send...])`. No conditional-edge routers remain in `compile/graph.py`.
 
 > **Not reimplementation — don't "fix" these:** eval-score retries vs `RetryPolicy` (complementary, exception- vs content-driven); `_merge_dicts`/`_merge_evaluations` reducers (no native dict-merge / per-key list-append); timeouts / concurrency caps / worktree pool (outside LangGraph's scope); thread-id derivation from `(workflow_name, workdir)` (policy, not a shadowed feature).
 
@@ -732,30 +732,17 @@ Champion re-reviewed all 9 original requests against 0.7.6: #1–#4 + #7–#9 al
 shipped; #5/#6 remain (Low). Verdict: no HIGH-priority product gap remains. New
 findings this pass:
 
-- [x] **N1 (bug) — bare `uv run pytest tests/` aborted collection** — FIXED 2026-06-24:
-  `tests/cli/test_cli_backend.py` + `tests/unit/runtime/test_cli_backend.py` shared a
-  basename (pytest `prepend` mode, no `__init__.py` — which the repo forbids) →
-  "import file mismatch". Renamed the live file `test_cli_backend_live.py` (the only
-  collision in the tree; `--import-mode=importlib` rejected to avoid touching the 16
-  `from helpers import` sites). Bare collection now clean.
-- [x] **N2 — `--entry <node>`: run a node / DAG tail from COLD — SHIPPED 0.7.7**
-  — `sqrlly run --entry <node>` cold-starts at `<node>` (no checkpoint), freezing
-  everything upstream and running `<node>` + downstream. Reuses
-  `compute_skip_set(config, {all ids}, set(), {entry})`; reseeds
-  `completed_nodes` + `_resume_skip`. Entry node reads on-disk inputs (empty
-  `{{upstream}}` vars). Mutually exclusive with `--resume` family.
 - [ ] **#5 — per-node token budget (Low)** — a declarative `budget_tokens`
   per node/preset that fails the node when exceeded (parallel to `timeout`).
   (The CLI-killpg half of the original #5 — process-group kill on timeout
   AND cancel — SHIPPED 0.7.7: `cli.py` now spawns with `start_new_session=True`
   and `os.killpg`-escalates on timeout/cancel, matching the ACP teardown
   discipline; only the `budget_tokens` half above remains open.)
-- [ ] **#6 — managed-team node with mid-flight oversight (Low)** — a coordinator node that
+- [ ] **#6 — managed-team node with mid-flight oversight (Low; resolved indirectly 0.7.9)** — the supported approach is the authoring pattern (coordinator prompt node granted `allowed_tools: ["Task"]`, members as sub-agents inside one node — see SKILLS.md); what remains open is a FIRST-CLASS coordinator node that
   spawns + supervises fan-out members during execution (check-ins, intervene, aggregate),
   above the fire-and-join `fan_out` primitive. (Folds in the N4 evidence: phase_3_1b auditors
   + planner tournament both want cooperating teams.) The #5 budget is the signal an overseer
   would act on.
-- [x] **✅ N3 — promote_exclude re-include allow-list — SHIPPED 0.7.8** — `settings.promote_include` (git pathspecs) is a second `discover_changes` pass unioned back into every promoting node's footprint after `promote_exclude` removes paths. Lets you drop a directory but keep a subpath (`promote_exclude: ["log/"]` + `promote_include: ["log/phases/**"]`); the include overrides the exclude. Threaded through `reconcile_promotions` and the CLI promote loop alongside `promote_exclude`.
 - Provider lock-in (non-anthropic) and dynamic fan-out observability (branch children absent
   from the terminal grid) remain Low — already tracked (TODO 36; the graph/view
   known-limitation).

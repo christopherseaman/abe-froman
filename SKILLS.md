@@ -293,9 +293,11 @@ A fan-out can override isolation per-block with `fan_out.template.worktree`
 `worktree: off` on the template when branches must write to the SHARED base
 workdir (a join node reads what they wrote); use `isolated` for a parallel
 build whose branch deltas you promote with `fan_out.promote`. Always give
-each manifest item a unique `id` — an id-less item WARNs and collapses every
-branch onto one `<parent>::unknown` child; a duplicate `id` is a hard
-`ManifestError` before dispatch.
+each manifest item a unique `id` — an id-less item WARNs and maps onto the
+single `<parent>::unknown` child, so two or more collide; a duplicate child
+id (or an unreadable/invalid `manifest_path`) **fails the parent node**
+before dispatch (run reports failure; fix the manifest and bare `--resume`
+re-fans the parent).
 
 **Remote sources.** `settings.base_url` sets the base for relative
 urls — including an `http(s)://` base, which fetches **prompt
@@ -330,13 +332,19 @@ is where a terminal run tells you where output / logs / artifacts
 landed. `--quiet` suppresses it.
 
 `sqrlly graph <config>` prints a Mermaid topology diagram of the
-**static** compiled LangGraph — dynamic `route:` `goto` targets are
-emitted as `Command(goto=...)` at run time and are not drawn, so branch
-targets may appear as unconnected nodes there. `sqrlly view <config>`
-writes a self-contained interactive HTML viewer that *does* draw
-declared `route:` edges (dotted, labeled with the `when` predicate) and
-fan-out parents (hexagon); only realized per-manifest fan-out children,
-created at run time, are absent.
+**authored** workflow — the same schema reconstruction `sqrlly view`
+uses, not the compiled LangGraph (whose gate/route/fan-out routing is
+runtime `Command(goto=...)` and would render edge-less). It draws
+`depends_on` edges, declared `route:` edges (dotted, labeled with the
+`when` predicate), fan-out parents (hexagon) with a dashed `×N per item`
+stand-in for their runtime children (entered `1→N`, fanning back in
+`N→1` on the synthesis step / declared `final_nodes`), and gated nodes
+(styled). Compiled synthetics (`_eval_` / `_fan_` / `_sub_`) never
+appear. `sqrlly view <config>` renders that same topology as a
+self-contained interactive HTML viewer with a per-node config panel
+(and, with `--log`, a status overlay). Only the realized per-manifest
+fan-out *children* — created at run time, varying per run and per re-fan
+wave — are absent from both.
 
 ## Debug a run
 
