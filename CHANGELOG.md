@@ -5,6 +5,8 @@ All notable changes to sqrlly are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-07-07
+
 ### Changed
 
 - A node that sets both `fan_out` and `route` is now rejected at load (`ValidationError`). The two pick incompatible dispatchers — a gated fan-out parent routes via `_fan_<id>` while `route` uses `_route_<id>`, and an ungated node fired BOTH static out-edges (double dispatch). To branch after a fan-out, put the `route` on a node downstream of it.
