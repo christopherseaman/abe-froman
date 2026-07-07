@@ -334,8 +334,28 @@ resolver sees) — distinct from faking what an external system returns.
   parent re-fans; the per-child gate in `compile/dynamic.py::_make_fan_out_node`
   freezes a child on `child_id in _resume_skip` alone, so completed siblings
   are NOT re-billed and only the formerly-failed child (never in the frozen
-  snapshot) re-runs. Stable-id-safe: a re-fan that drifts the manifest yields
-  new ids absent from the snapshot.
+  snapshot) re-runs. Requires STABLE manifest ids across the re-fan — the
+  child id is `<parent>::<item.id>`, so a dispatcher whose ids change on
+  resume (uuid / per-run counter) yields ids absent from the snapshot, which
+  would re-bill all N, orphan the failed child, and vanish completed siblings.
+  **Guarded:** the `_fan_<id>` dispatcher (`compile/graph.py::_fan_drift_command`,
+  called from BOTH the empty-manifest branch and the per-item path) compares
+  the re-fanned ids against the prior run's direct branch ids (seeded
+  per-parent as `_fan_prior_children` at resume in `cli/main.py::_seed_state`)
+  and, on any DROPPED prior branch, halts the parent BEFORE any `Send` per
+  `settings.on_manifest_drift` (`fail` default / `warn` to proceed). A drained
+  manifest (zero items on resume) is the maximal drift and is caught the same
+  way, not routed to the no-items path. Subgraph-template fan-outs don't
+  false-fire because a branch records only its `<parent>::<item>` id at the top
+  level (inner subgraph node ids stay in subgraph state — `make_subgraph_node`
+  returns just the branch id); `compile/_manifest.py::direct_child_ids`
+  additionally excludes any `<parent>::<item>::<inner>` id as a defensive
+  backstop. It keys on
+  DROPPED ids, so it fully catches ids that change every run; positional-index
+  / reset-counter ids are caught only when items are removed (not inserted /
+  reordered) — the `validate` advisory on runtime-manifest fan-outs steers to
+  stable ids for those. No-op on fresh / `--entry` / `--rerun-all`; a stable-id
+  or purely additive re-fan never trips it.
 - **No first-class managed-team / oversight node** — there is no supervised
   coordinator primitive, and none is planned near-term. The supported approach
   is an authoring pattern: a prompt node granted the `Task` tool

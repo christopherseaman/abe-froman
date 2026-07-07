@@ -866,6 +866,24 @@ class TestOnPromoteConflict:
             Settings(on_promote_conflict="merge")
 
 
+class TestOnManifestDrift:
+    def test_default_is_fail(self):
+        from sqrlly.schema.models import Settings
+        assert Settings().on_manifest_drift == "fail"
+
+    def test_accepts_both_modes(self):
+        from sqrlly.schema.models import Settings
+        for mode in ("fail", "warn"):
+            assert Settings(on_manifest_drift=mode).on_manifest_drift == mode
+
+    def test_rejects_unknown_mode(self):
+        import pytest
+        from pydantic import ValidationError
+        from sqrlly.schema.models import Settings
+        with pytest.raises(ValidationError):
+            Settings(on_manifest_drift="skip")
+
+
 class TestPromoteExclude:
     def test_defaults_empty(self):
         from sqrlly.schema.models import Settings

@@ -7,7 +7,7 @@ import pytest
 from sqrlly.compile._manifest import _read_manifest
 from sqrlly.runtime.result import ManifestError
 from sqrlly.runtime.state import make_initial_state
-from sqrlly.schema.models import Execute, FanOut, Node, FanOutTemplate
+from sqrlly.schema.models import Execute, FanOut, Node, FanOutTemplate, Settings
 
 
 def _phase_with_dynamic(manifest_path=None) -> Node:
@@ -241,7 +241,7 @@ class TestFanDispatcher:
         from sqrlly.compile.graph import _make_fan_dispatcher
 
         node = _phase_with_dynamic()
-        fan = _make_fan_dispatcher(node, no_items_targets=["after"])
+        fan = _make_fan_dispatcher(node, no_items_targets=["after"], settings=Settings())
         # completed_nodes empty → parent unsettled.
         state = make_initial_state(
             node_outputs={"p1": json.dumps([{"id": "a"}])}
@@ -262,7 +262,7 @@ class TestFanDispatcher:
         from sqrlly.compile.graph import _make_fan_dispatcher
 
         node = _phase_with_dynamic()  # fan_out, no manifest_path
-        fan = _make_fan_dispatcher(node, no_items_targets=["after"])
+        fan = _make_fan_dispatcher(node, no_items_targets=["after"], settings=Settings())
         state = make_initial_state(
             node_outputs={"p1": ""}, completed_nodes={"p1"},  # settled, no manifest
         )
@@ -282,7 +282,7 @@ class TestFanDispatcher:
         from sqrlly.compile.graph import _make_fan_dispatcher
 
         node = _phase_with_dynamic()
-        fan = _make_fan_dispatcher(node, no_items_targets=["after"])
+        fan = _make_fan_dispatcher(node, no_items_targets=["after"], settings=Settings())
         state = make_initial_state(
             node_outputs={"p1": json.dumps([{"id": "a"}])},
             failed_nodes={"p1"},
@@ -300,7 +300,7 @@ class TestFanDispatcher:
         from sqrlly.compile.graph import _make_fan_dispatcher
 
         node = _phase_with_dynamic()  # parent id 'p1'
-        fan = _make_fan_dispatcher(node, no_items_targets=["after"])
+        fan = _make_fan_dispatcher(node, no_items_targets=["after"], settings=Settings())
         state = make_initial_state(
             node_outputs={"p1": json.dumps([{"id": "dup"}, {"id": "dup"}])},
             completed_nodes={"p1"},
@@ -322,7 +322,7 @@ class TestFanDispatcher:
         from sqrlly.compile.graph import _make_fan_dispatcher
 
         node = _phase_with_dynamic()
-        fan = _make_fan_dispatcher(node, no_items_targets=["after"])
+        fan = _make_fan_dispatcher(node, no_items_targets=["after"], settings=Settings())
         state = make_initial_state(
             node_outputs={"p1": json.dumps([{"topic": "a"}, {"topic": "b"}])},
             completed_nodes={"p1"},
@@ -343,7 +343,7 @@ class TestFanDispatcher:
         from sqrlly.compile.graph import _make_fan_dispatcher
 
         node = _phase_with_dynamic()
-        fan = _make_fan_dispatcher(node, no_items_targets=["after"])
+        fan = _make_fan_dispatcher(node, no_items_targets=["after"], settings=Settings())
         state = make_initial_state(
             node_outputs={"p1": json.dumps([{"id": "a"}, {"id": "b"}])},
             completed_nodes={"p1"},
@@ -372,7 +372,7 @@ class TestFanDispatcher:
         from sqrlly.compile.graph import _make_fan_dispatcher
 
         node = _phase_with_dynamic(manifest_path="missing.json")
-        fan = _make_fan_dispatcher(node, no_items_targets=["after"])
+        fan = _make_fan_dispatcher(node, no_items_targets=["after"], settings=Settings())
         state = make_initial_state(
             workdir=str(tmp_path),
             node_outputs={"p1": "not json"},  # forces the disk-path fallback
@@ -385,3 +385,121 @@ class TestFanDispatcher:
         assert any(
             "could not be read" in e["error"] for e in result.update["errors"]
         )
+
+    def test_drift_fails_the_node_before_send(self):
+        """Step 4b: on --resume, a manifest whose new ids DROP prior branch ids
+        fails the parent BEFORE any Send. The error partitions the loss:
+        a dropped id in _resume_skip = a vanished completed sibling; a dropped
+        id NOT in skip = an orphaned failed child."""
+        from langgraph.graph import END
+        from langgraph.types import Command
+
+        from sqrlly.compile.graph import _make_fan_dispatcher
+
+        node = _phase_with_dynamic()  # parent id 'p1'
+        fan = _make_fan_dispatcher(node, no_items_targets=["after"], settings=Settings())
+        state = make_initial_state(
+            node_outputs={"p1": json.dumps([{"id": "new-a"}, {"id": "new-b"}])},
+            completed_nodes={"p1"},
+            _fan_prior_children={"p1": {"p1::old-a", "p1::old-b"}},
+            _resume_skip={"p1::old-a"},  # old-a completed last run; old-b failed
+        )
+        result = fan(state)
+        assert isinstance(result, Command)
+        assert result.goto == END
+        assert result.update["failed_nodes"] == {"p1"}
+        err = result.update["errors"][0]["error"]
+        assert "DRIFTED" in err
+        assert "p1::old-a" in err  # vanished completed sibling
+        assert "p1::old-b" in err  # orphaned failed child
+        # Partition is pinned: the vanished-completed sibling is named before
+        # the orphaned-failed child (a swapped partition must not pass).
+        assert err.index("p1::old-a") < err.index("p1::old-b")
+
+    def test_empty_manifest_on_resume_drift_fails(self):
+        """The maximal drift: on resume the manifest drains to ZERO items while
+        prior children exist → fail-loud BEFORE the no-items short-circuit, not
+        a silent green route to the no-items target."""
+        from langgraph.graph import END
+        from langgraph.types import Command
+
+        from sqrlly.compile.graph import _make_fan_dispatcher
+
+        node = _phase_with_dynamic()
+        fan = _make_fan_dispatcher(
+            node, no_items_targets=[END], settings=Settings(),
+        )
+        state = make_initial_state(
+            node_outputs={"p1": json.dumps([])},  # drained manifest
+            completed_nodes={"p1"},
+            _fan_prior_children={"p1": {"p1::a", "p1::b"}},
+            _resume_skip={"p1::a"},
+        )
+        result = fan(state)
+        assert isinstance(result, Command)
+        assert result.goto == END
+        assert result.update["failed_nodes"] == {"p1"}
+        assert "DRIFTED" in result.update["errors"][0]["error"]
+
+    def test_prior_children_present_but_stable_dispatches(self):
+        """Guard no-false-fire at the dispatcher level: prior children present
+        but the re-fan reproduces them (stable ids) → normal Send dispatch."""
+        from langgraph.types import Command, Send
+
+        from sqrlly.compile.graph import _make_fan_dispatcher
+
+        node = _phase_with_dynamic()
+        fan = _make_fan_dispatcher(node, no_items_targets=["after"], settings=Settings())
+        state = make_initial_state(
+            node_outputs={"p1": json.dumps([{"id": "a"}, {"id": "b"}])},
+            completed_nodes={"p1"},
+            _fan_prior_children={"p1": {"p1::a", "p1::b"}},  # same ids → no drift
+            _resume_skip={"p1::a"},
+        )
+        result = fan(state)
+        assert isinstance(result, Command)
+        assert isinstance(result.goto, list) and len(result.goto) == 2
+        assert all(isinstance(s, Send) for s in result.goto)
+
+    def test_drift_warn_dispatches_the_new_manifest(self):
+        """Step 4b under `on_manifest_drift: warn`: proceed with the drifted
+        manifest (opt-in re-fanning) — one Send per new item, no failure."""
+        from langgraph.types import Command, Send
+
+        from sqrlly.compile.graph import _make_fan_dispatcher
+
+        node = _phase_with_dynamic()
+        fan = _make_fan_dispatcher(
+            node, no_items_targets=["after"],
+            settings=Settings(on_manifest_drift="warn"),
+        )
+        state = make_initial_state(
+            node_outputs={"p1": json.dumps([{"id": "new-a"}, {"id": "new-b"}])},
+            completed_nodes={"p1"},
+            _fan_prior_children={"p1": {"p1::old-a", "p1::old-b"}},
+            _resume_skip={"p1::old-a"},
+        )
+        result = fan(state)
+        assert isinstance(result, Command)
+        assert isinstance(result.goto, list)
+        assert sorted(s.arg["_fan_out_item"]["id"] for s in result.goto) == [
+            "new-a", "new-b",
+        ]
+
+    def test_no_prior_children_skips_drift_check(self):
+        """Fresh run (no `_fan_prior_children`) → the drift guard is a no-op;
+        the manifest dispatches normally."""
+        from langgraph.types import Command, Send
+
+        from sqrlly.compile.graph import _make_fan_dispatcher
+
+        node = _phase_with_dynamic()
+        fan = _make_fan_dispatcher(node, no_items_targets=["after"], settings=Settings())
+        state = make_initial_state(
+            node_outputs={"p1": json.dumps([{"id": "x"}])},
+            completed_nodes={"p1"},
+        )
+        result = fan(state)
+        assert isinstance(result, Command)
+        assert isinstance(result.goto, list) and len(result.goto) == 1
+        assert result.goto[0].arg["_fan_out_item"]["id"] == "x"

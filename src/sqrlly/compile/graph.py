@@ -11,7 +11,11 @@ from typing import TYPE_CHECKING, Any
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, Send
 
-from sqrlly.compile._manifest import _read_manifest, find_terminal_nodes
+from sqrlly.compile._manifest import (
+    _read_manifest,
+    find_terminal_nodes,
+    manifest_drift,
+)
 from sqrlly.compile.dynamic import _make_final_fan_out_node, _make_fan_out_node
 from sqrlly.compile.nodes import (
     _make_execution_node,
@@ -207,7 +211,53 @@ def _wire_evaluation_pair(
     )
 
 
-def _make_fan_dispatcher(node: Node, no_items_targets: list[str]):
+def _fan_drift_command(
+    node: Node,
+    prior_children: "set[str] | None",
+    new_child_ids: set[str],
+    resume_skip: set[str],
+    settings: Settings,
+) -> "Command | None":
+    """Fan-out ``--resume`` manifest-drift check, shared by the empty-manifest
+    and per-item dispatch paths.
+
+    ``prior_children`` is the frozen prior-run DIRECT branch id set for this
+    parent (``None``/empty on a fresh run => no check). Returns a fail
+    ``Command`` when the re-fan DROPPED a prior branch under
+    ``on_manifest_drift='fail'``; otherwise ``None`` (no drift, or ``'warn'``
+    logged and proceed). An empty ``new_child_ids`` (drained manifest on
+    resume) is the maximal drift — every prior branch dropped. The drift is
+    partitioned by the frozen skip: dropped ids in ``resume_skip`` completed
+    last run (silent data loss); dropped ids not in skip were the
+    failed/never-run children (orphaned).
+    """
+    if not prior_children:
+        return None
+    drifted = manifest_drift(prior_children, new_child_ids)
+    if not drifted:
+        return None
+    vanished = sorted(c for c in drifted if c in resume_skip)
+    orphaned = sorted(c for c in drifted if c not in resume_skip)
+    msg = (
+        f"fan-out {node.id!r}: manifest DRIFTED on --resume — {len(drifted)} "
+        f"prior branch id(s) are absent from the re-fanned manifest, so "
+        f"completed siblings {vanished!r} would silently vanish and "
+        f"orphaned/failed children {orphaned!r} would never re-run "
+        f"({len(new_child_ids)} fresh child(ren) would run in their place). "
+        f"Give manifest items stable, deterministic 'id's across runs; set "
+        f"'settings.on_manifest_drift: warn' to proceed anyway."
+    )
+    if settings.on_manifest_drift == "fail":
+        return Command(update=make_failure_update(node.id, msg), goto=END)
+    logging.getLogger(__name__).warning(
+        "%s (on_manifest_drift=warn; proceeding)", msg
+    )
+    return None
+
+
+def _make_fan_dispatcher(
+    node: Node, no_items_targets: list[str], settings: Settings,
+):
     """Build the ``_fan_<id>`` dispatcher node body for a fan-out parent.
 
     Reached only by ``Command(goto=_fan_<id>)`` from the gate (gated
@@ -255,8 +305,18 @@ def _make_fan_dispatcher(node: Node, no_items_targets: list[str]):
 
         # 3. Empty manifest → route to the no-items target(s). Concrete ids
         #    (not a route_map key) so an empty manifest can fan to EVERY
-        #    dependent; the list may contain END.
+        #    dependent; the list may contain END. BUT on --resume with prior
+        #    children, an empty re-fan is the MAXIMAL drift (every prior branch
+        #    dropped, the failed child orphaned) — run it through the drift
+        #    policy BEFORE the no-items short-circuit, else fail/warn is
+        #    bypassed and the run silently completes green.
         if not items:
+            drift_cmd = _fan_drift_command(
+                node, state.get("_fan_prior_children", {}).get(node.id),
+                set(), state.get("_resume_skip", set()), settings,
+            )
+            if drift_cmd is not None:
+                return drift_cmd
             logging.getLogger(__name__).warning(
                 "fan-out %r: manifest resolved to zero items — routing to "
                 "no-items target(s) %s instead of fanning out.",
@@ -290,6 +350,15 @@ def _make_fan_dispatcher(node: Node, no_items_targets: list[str]):
                 ),
                 goto=END,
             )
+
+        # 4b. Manifest-drift guard (--resume only) — see _fan_drift_command.
+        #     `_fan_prior_children` is seeded ONLY on resume; absent => no-op.
+        drift_cmd = _fan_drift_command(
+            node, state.get("_fan_prior_children", {}).get(node.id),
+            seen, state.get("_resume_skip", set()), settings,
+        )
+        if drift_cmd is not None:
+            return drift_cmd
 
         # 5. Dispatch one Send per item. state is committed post-gate state,
         #    so children see merged completed_nodes / evaluations directly.
@@ -628,7 +697,9 @@ def build_workflow_graph(
             no_items_targets = [f"_final_{node.id}_{dsc.final_nodes[0].id}"]
         else:
             no_items_targets = deps_of or [END]
-        builder.add_node(fan_id, _make_fan_dispatcher(node, no_items_targets))
+        builder.add_node(
+            fan_id, _make_fan_dispatcher(node, no_items_targets, settings)
+        )
 
         if node.id in gated_node_ids:
             # Gated parent: exec → gate, gate gotoes _fan_<id> on pass.

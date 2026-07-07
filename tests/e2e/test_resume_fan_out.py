@@ -580,3 +580,302 @@ class TestResumeAfterDuplicateManifest:
         assert "dp::a" in result_2["completed_nodes"]
         assert "dp::b" in result_2["completed_nodes"]
         assert result_2["failed_nodes"] == set()
+
+
+# Dispatcher that DRIFTS its child ids across the re-fan: emits r1-* on the
+# first run, r2-* once refan.txt exists. Mirrors a real dispatcher that mints
+# non-deterministic ids (uuid / counter / positional index).
+_DRIFT_DISPATCHER_SRC = """
+import json
+from pathlib import Path
+prefix = "r2" if Path("refan.txt").exists() else "r1"
+items = [{"id": prefix + "-alpha"}, {"id": prefix + "-beta"}, {"id": prefix + "-gamma"}]
+print(json.dumps({"items": items}))
+"""
+
+
+def _build_drift_fanout(workdir: Path, drift_policy: str = "fail") -> Graph:
+    worker = _worker_path(workdir)
+    dispatcher = workdir / "drift_dispatcher.py"
+    dispatcher.write_text(_DRIFT_DISPATCHER_SRC)
+    return Graph(
+        name="resume-drift-fanout",
+        version="0.1.0",
+        nodes=[
+            {
+                "id": "cfan", "name": "cfan",
+                "execute": {
+                    "url": _PYTHON,
+                    "params": {"args": [str(dispatcher)]},
+                },
+                "fan_out": {
+                    "template": {
+                        "execute": {
+                            "url": _PYTHON,
+                            "params": {"args": [str(worker), "{{id}}"]},
+                        },
+                    },
+                },
+            },
+        ],
+        settings={"on_manifest_drift": drift_policy},
+    )
+
+
+# A 2-node member subgraph (step1 -> step2); each inner node runs the worker
+# keyed by the per-branch {{childid}}. `__PY__` / `__WORKER__` are substituted
+# (not f-string, to keep the literal `{{childid}}` Jinja var intact).
+_MEMBER_SUBGRAPH_TMPL = """
+name: member
+version: "0.1.0"
+nodes:
+  - id: step1
+    name: step1
+    execute:
+      url: "__PY__"
+      params:
+        args: ["__WORKER__", "{{childid}}", "step1"]
+  - id: step2
+    name: step2
+    depends_on: [step1]
+    execute:
+      url: "__PY__"
+      params:
+        args: ["__WORKER__", "{{childid}}", "step2"]
+"""
+
+
+def _build_subgraph_template_fanout(workdir: Path) -> Graph:
+    """Top-level fan-out over stable ids alpha/beta/gamma whose template is a
+    2-node member subgraph — the shape whose branches record both
+    `<parent>::<item>` and `<parent>::<item>::<inner>` in completed_nodes."""
+    worker = _worker_path(workdir)
+    member = workdir / "member.yaml"
+    member.write_text(
+        _MEMBER_SUBGRAPH_TMPL
+        .replace("__PY__", _PYTHON)
+        .replace("__WORKER__", str(worker))
+    )
+    manifest = json.dumps(
+        {"items": [{"id": "alpha"}, {"id": "beta"}, {"id": "gamma"}]}
+    )
+    return Graph(
+        name="resume-subgraph-template-fanout",
+        version="0.1.0",
+        nodes=[
+            {
+                "id": "cfan", "name": "cfan",
+                "execute": {"url": _ECHO, "params": {"args": ["-n", manifest]}},
+                "fan_out": {
+                    "template": {
+                        "execute": {
+                            "url": str(member),
+                            "params": {"inputs": {"childid": "{{id}}"}},
+                        },
+                    },
+                },
+            },
+        ],
+    )
+
+
+async def _resume_via_real_seed_state(
+    workdir: Path, config: Graph, db_path: str, thread_id: str,
+) -> dict:
+    """Phase 2 through the REAL cli `_seed_state` (which seeds
+    `_fan_prior_children`), NOT the test's hand-rolled seeding — so the drift
+    guard is exercised end-to-end on the production resume path."""
+    from sqrlly.cli.main import _seed_state
+
+    async with AsyncSqliteSaver.from_conn_string(db_path) as cp:
+        await cp.setup()
+        state = await _seed_state(
+            cp, config, str(workdir),
+            resume=True, resume_from=(), rerun_all=False,
+            entry=None, thread_id=thread_id,
+        )
+        compiled = build_workflow_graph(
+            config, DispatchExecutor(workdir=str(workdir)), checkpointer=cp,
+        )
+        return await run_workflow(compiled, state, config, thread_id=thread_id)
+
+
+class TestResumeManifestDrift:
+    @pytest.mark.asyncio
+    async def test_drift_fails_loud_before_any_send(self, tmp_path):
+        """Phase 1 fans over r1-*, r1-beta fails. Phase 2's dispatcher DRIFTS to
+        r2-* ids. With `on_manifest_drift: fail` (default), the re-fan dispatcher
+        detects that every prior child id vanished and HALTS the parent before
+        any Send — so NO r2-* child is billed (the silent N-wide re-bill that
+        would otherwise orphan r1-beta and vanish r1-alpha/r1-gamma)."""
+        config = _build_drift_fanout(tmp_path, drift_policy="fail")
+        db_path = str(tmp_path / ".checkpoint.db")
+        thread_id = "drift-fail"
+
+        # Phase 1: r1-beta fails.
+        (tmp_path / "fail.txt").write_text("r1-beta")
+        result_1 = await _run_phase(
+            tmp_path, config, db_path, thread_id, resume=False,
+        )
+        assert "cfan::r1-alpha" in result_1["completed_nodes"]
+        assert "cfan::r1-gamma" in result_1["completed_nodes"]
+        assert "cfan::r1-beta" in result_1["failed_nodes"]
+
+        # Phase 2: drift to r2-*, clear the failure marker (irrelevant — the
+        # guard halts before any child runs).
+        (tmp_path / "fail.txt").unlink()
+        (tmp_path / "refan.txt").write_text("go")
+        result_2 = await _resume_via_real_seed_state(
+            tmp_path, config, db_path, thread_id,
+        )
+
+        # Parent failed loud with a drift error; NO r2-* child was dispatched.
+        assert "cfan" in result_2["failed_nodes"]
+        assert any(
+            "drift" in e.get("error", "").lower() for e in result_2["errors"]
+        ), result_2["errors"]
+        assert _read_runs(tmp_path, "r2-alpha") == 0, "drifted child was billed"
+        assert _read_runs(tmp_path, "r2-beta") == 0, "drifted child was billed"
+        assert _read_runs(tmp_path, "r2-gamma") == 0, "drifted child was billed"
+
+    @pytest.mark.asyncio
+    async def test_drift_to_empty_manifest_fails_loud(self, tmp_path):
+        """The MAXIMAL drift: a resume dispatcher that re-reads its manifest to
+        ZERO items drops every prior branch — the failed child is orphaned and
+        completed siblings vanish. This must fail loud (default), not silently
+        route to the no-items path and complete green. (Regression: the empty-
+        manifest early return must not bypass the drift guard.)"""
+        worker = _worker_path(tmp_path)
+        dispatcher = tmp_path / "drain_dispatcher.py"
+        dispatcher.write_text(
+            "import json\n"
+            "from pathlib import Path\n"
+            "items = [] if Path('drain.txt').exists() else "
+            "[{'id': 'alpha'}, {'id': 'beta'}, {'id': 'gamma'}]\n"
+            "print(json.dumps({'items': items}))\n"
+        )
+        config = Graph(
+            name="resume-drain-fanout", version="0.1.0",
+            nodes=[{
+                "id": "cfan", "name": "cfan",
+                "execute": {"url": _PYTHON, "params": {"args": [str(dispatcher)]}},
+                "fan_out": {
+                    "template": {"execute": {
+                        "url": _PYTHON,
+                        "params": {"args": [str(worker), "{{id}}"]},
+                    }},
+                },
+            }],
+            settings={"on_manifest_drift": "fail"},
+        )
+        db_path = str(tmp_path / ".checkpoint.db")
+        thread_id = "drift-drain"
+
+        (tmp_path / "fail.txt").write_text("beta")
+        result_1 = await _run_phase(
+            tmp_path, config, db_path, thread_id, resume=False,
+        )
+        assert "cfan::beta" in result_1["failed_nodes"]
+
+        # Phase 2: manifest drains to empty. The failed child must NOT be
+        # silently abandoned.
+        (tmp_path / "fail.txt").unlink()
+        (tmp_path / "drain.txt").write_text("go")
+        result_2 = await _resume_via_real_seed_state(
+            tmp_path, config, db_path, thread_id,
+        )
+        assert "cfan" in result_2["failed_nodes"], (
+            "empty-manifest drift silently completed green"
+        )
+        assert any(
+            "drift" in e.get("error", "").lower() for e in result_2["errors"]
+        ), result_2["errors"]
+
+    @pytest.mark.asyncio
+    async def test_stable_id_resume_does_not_false_fire(self, tmp_path):
+        """The guard's core safety claim on a FLAT-template fan-out: a stable-id
+        fan-out resumed through the REAL `_seed_state` (guard live) must NOT
+        fire — only the failed child re-runs, completed siblings stay frozen."""
+        config = _build_failable_fanout(tmp_path)  # stable ids alpha/beta/gamma
+        db_path = str(tmp_path / ".checkpoint.db")
+        thread_id = "stable-no-false-fire"
+
+        (tmp_path / "fail.txt").write_text("beta")
+        await _run_phase(tmp_path, config, db_path, thread_id, resume=False)
+
+        (tmp_path / "fail.txt").unlink()
+        result_2 = await _resume_via_real_seed_state(
+            tmp_path, config, db_path, thread_id,
+        )
+        # Guard did NOT fire.
+        assert "cfan" not in result_2["failed_nodes"]
+        assert not any(
+            "drift" in e.get("error", "").lower() for e in result_2["errors"]
+        )
+        # Only the failed child re-ran; siblings frozen.
+        assert _read_runs(tmp_path, "alpha") == 1
+        assert _read_runs(tmp_path, "gamma") == 1
+        assert _read_runs(tmp_path, "beta") == 2
+
+    @pytest.mark.asyncio
+    async def test_subgraph_template_resume_does_not_false_fire(self, tmp_path):
+        """The champion's actual shape — a SUBGRAPH-template fan-out — resumed
+        through the real `_seed_state` with the guard live must NOT false-fire:
+        only the failed branch's subgraph re-runs; siblings freeze. (A branch
+        records only its `<parent>::<item>` id at the top level; the inner
+        subgraph node ids stay in the subgraph's own state, so the top-level
+        drift snapshot sees only the stable branch ids. The `direct_child_ids`
+        inner-id exclusion is defensive; its own contract is pinned by
+        `test_manifest_drift.py::TestDirectChildIds`.)"""
+        config = _build_subgraph_template_fanout(tmp_path)
+        db_path = str(tmp_path / ".checkpoint.db")
+        thread_id = "subgraph-no-false-fire"
+
+        # Phase 1: beta branch's step1 fails (so step2 never runs).
+        (tmp_path / "fail.txt").write_text("beta")
+        result_1 = await _run_phase(
+            tmp_path, config, db_path, thread_id, resume=False,
+        )
+        assert "cfan::beta" in result_1["failed_nodes"]
+        # alpha/gamma ran both inner steps (==2); beta failed at step1 (==1).
+        assert _read_runs(tmp_path, "alpha") == 2
+        assert _read_runs(tmp_path, "gamma") == 2
+        assert _read_runs(tmp_path, "beta") == 1
+
+        # Phase 2: resume through the real seed path — guard must NOT fire.
+        (tmp_path / "fail.txt").unlink()
+        result_2 = await _resume_via_real_seed_state(
+            tmp_path, config, db_path, thread_id,
+        )
+        assert "cfan" not in result_2["failed_nodes"]
+        assert not any(
+            "drift" in e.get("error", "").lower() for e in result_2["errors"]
+        )
+        # Only beta's subgraph re-ran (step1+step2 → +2 = 3); siblings frozen.
+        assert _read_runs(tmp_path, "alpha") == 2
+        assert _read_runs(tmp_path, "gamma") == 2
+        assert _read_runs(tmp_path, "beta") == 3
+
+    @pytest.mark.asyncio
+    async def test_drift_warn_proceeds(self, tmp_path):
+        """Same drift, but `on_manifest_drift: warn` → the re-fan proceeds with
+        the new manifest (opt-in for an author who intends a changed manifest on
+        resume). The r2-* children run; the run completes clean."""
+        config = _build_drift_fanout(tmp_path, drift_policy="warn")
+        db_path = str(tmp_path / ".checkpoint.db")
+        thread_id = "drift-warn"
+
+        (tmp_path / "fail.txt").write_text("r1-beta")
+        await _run_phase(tmp_path, config, db_path, thread_id, resume=False)
+
+        (tmp_path / "fail.txt").unlink()
+        (tmp_path / "refan.txt").write_text("go")
+        result_2 = await _resume_via_real_seed_state(
+            tmp_path, config, db_path, thread_id,
+        )
+
+        # warn let the drifted manifest through: r2-* children ran, run clean.
+        assert result_2["failed_nodes"] == set()
+        assert _read_runs(tmp_path, "r2-alpha") == 1
+        assert _read_runs(tmp_path, "r2-beta") == 1
+        assert _read_runs(tmp_path, "r2-gamma") == 1

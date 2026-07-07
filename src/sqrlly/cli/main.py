@@ -419,19 +419,33 @@ async def _seed_state(
         old = dict(prev.checkpoint.get("channel_values", {}))
         from sqrlly.compile.resume import compute_skip_set
         prior_completed = set(old.get("completed_nodes", set()))
+        prior_failed = set(old.get("failed_nodes", set()))
         skip = (
             set()
             if rerun_all
             else compute_skip_set(
-                config, prior_completed,
-                set(old.get("failed_nodes", set())), set(resume_from),
+                config, prior_completed, prior_failed, set(resume_from),
             )
         )
+        # Prior fan-out branch ids per parent, for the manifest-drift guard.
+        # Union of completed | failed direct children (from the ORIGINAL prior
+        # state, before the reseed below wipes failed_nodes). Skipped under
+        # --rerun-all (a full replay intends to re-fan everything).
+        from sqrlly.compile._manifest import direct_child_ids
+        fan_prior: dict[str, set[str]] = {}
+        if not rerun_all:
+            prior_ids = prior_completed | prior_failed
+            for n in config.nodes:
+                if n.fan_out:
+                    kids = direct_child_ids(n.id, prior_ids)
+                    if kids:
+                        fan_prior[n.id] = kids
         state = {
             **old,
             "completed_nodes": skip,
             "failed_nodes": set(), "retries": {}, "errors": [],
             "workdir": workdir, "dry_run": False, "_resume_skip": skip,
+            "_fan_prior_children": fan_prior,
         }
         if rerun_all:
             source = "all nodes (rerun-all)"

@@ -5,6 +5,12 @@ All notable changes to sqrlly are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-07-07
+
+### Added
+
+- Fan-out `--resume` **manifest-drift guard**. On resume, a fan-out parent re-reads its manifest and re-fans; if the dispatcher's item `id`s are not stable across runs (e.g. uuid or a per-run counter — every id changes), the re-fanned ids no longer match the frozen prior-run snapshot, so completed siblings silently vanish, the failed child is orphaned, and all N re-run — while the CLI still prints a truthful-looking `re-running 1`. The `_fan_<id>` dispatcher now compares the re-fanned child ids against the prior run's ids (seeded per-parent at resume) and, on any DROPPED prior branch, halts the parent **before any `Send`** with an error naming the vanished-completed and orphaned-failed ids. A drained manifest (zero items on resume with prior children) is the maximal drift and is caught the same way, not silently routed to the no-items path. New `settings.on_manifest_drift: "fail" | "warn"` (default `"fail"`, mirroring `on_promote_conflict`); `warn` logs and proceeds with the new manifest — the opt-in for an author who intends a changed manifest on resume. A stable-id (or purely additive) re-fan never trips it; the guard is a no-op on fresh / `--entry` / `--rerun-all` runs. The guard keys on **dropped** prior branch ids, so it fully covers ids that change every run; positional-index / reset-counter ids are caught only when items are *removed* (not inserted or reordered), for which the `validate`/`run` advisory (flagging any fan-out whose manifest is a runtime output) steers authors to stable ids. Verified with the samus builder/adapter port: bare `--resume` already re-runs only the failed child for top-level + subgraph-template fan-outs with stable ids; this closes the remaining silent re-bill on id drift.
+
 ## [0.8.5] - 2026-07-07
 
 ### Fixed

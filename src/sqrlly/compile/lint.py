@@ -20,8 +20,35 @@ def collect_warnings(config: Graph) -> list[str]:
         + _advisory_gate_warnings(config)
         + _worktree_setup_exclude_warnings(config)
         + _fanout_parent_promote_warnings(config)
+        + _fanout_resume_drift_warnings(config)
         + _remote_url_warnings(config)
     )
+
+
+def _fanout_resume_drift_warnings(config: Graph) -> list[str]:
+    """Advise deterministic item ids on a fan-out whose manifest is a RUNTIME
+    output (no static ``manifest_path``).
+
+    On ``--resume`` the parent re-reads its manifest and re-fans; if the
+    dispatcher mints non-deterministic ids (uuid / counter / positional
+    index), completed siblings silently vanish and the failed child is
+    orphaned while all N re-run. The runtime drift guard
+    (``settings.on_manifest_drift``) catches it, but flagging it at
+    ``validate`` time steers authors to stable ids up front. A static
+    ``manifest_path`` file has stable ids by construction — silent.
+    """
+    out: list[str] = []
+    for node in config.nodes:
+        fo = node.fan_out
+        if fo is not None and fo.manifest_path is None:
+            out.append(
+                f"node '{node.id}': fan-out manifest is a runtime output — on "
+                f"'--resume' the dispatcher must emit deterministic item "
+                f"'id's, else completed children are re-billed and the failed "
+                f"child orphaned. Set 'settings.on_manifest_drift: warn' to "
+                f"opt into intentional re-fanning."
+            )
+    return out
 
 
 def _remote_url_warnings(config: Graph) -> list[str]:

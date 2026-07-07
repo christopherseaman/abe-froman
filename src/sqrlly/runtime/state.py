@@ -93,6 +93,14 @@ class WorkflowState(TypedDict):
     # (NO REDUCER — must not set-union-accumulate). Guards read it; nothing
     # mutates it. Absent on a fresh run => skip nothing.
     _resume_skip: NotRequired[set[str]]
+    # Prior fan-out branch ids per parent, for the `--resume` manifest-drift
+    # guard. `{parent_id: {"<parent>::<item>", ...}}` — the DIRECT branch ids
+    # (completed | failed) from the prior checkpoint. Seeded ONCE at resume
+    # entry (`cli/main.py::_seed_state`), only for parents that had children,
+    # and NOT on fresh / --entry / --rerun-all. Read by the `_fan_<id>`
+    # dispatcher to detect a re-fan that DROPS a prior branch. Frozen,
+    # last-write-wins (NO REDUCER). Absent => no drift check.
+    _fan_prior_children: NotRequired[dict[str, set[str]]]
 
 
 def make_initial_state(

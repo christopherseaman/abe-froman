@@ -18,6 +18,8 @@ from sqrlly.runtime.state import WorkflowState
 from sqrlly.schema.models import Node
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from sqrlly.schema.models import Graph
 
 logger = logging.getLogger(__name__)
@@ -34,6 +36,37 @@ def find_terminal_nodes(config: "Graph") -> list[str]:
     for node in config.nodes:
         depended_on.update(node.depends_on)
     return [n.id for n in config.nodes if n.id not in depended_on]
+
+
+def direct_child_ids(parent_id: str, node_ids: Iterable[str]) -> set[str]:
+    """A fan-out parent's DIRECT branch ids (``<parent>::<item>``) in ``node_ids``.
+
+    Excludes the bare parent, other parents, and any deeper
+    ``<parent>::<item>::<inner>`` id. Today a subgraph-template branch records
+    only its own ``<parent>::<item>`` id at the top level — inner subgraph node
+    ids stay in the subgraph's own state (``compile/subgraph.py::make_subgraph_node``
+    returns just the branch id), so they never reach ``completed_nodes`` — but
+    this exclusion is DEFENSIVE: if an inner id ever surfaced at the top level
+    (e.g. a future fan-out-in-subgraph resume), counting it as a branch child
+    would make the drift guard false-fire on the (working) subgraph-template
+    shape.
+    """
+    prefix = f"{parent_id}::"
+    return {
+        nid for nid in node_ids
+        if nid.startswith(prefix) and "::" not in nid[len(prefix):]
+    }
+
+
+def manifest_drift(prior_children: set[str], new_child_ids: set[str]) -> set[str]:
+    """Prior fan-out branch ids NOT covered by the freshly read manifest.
+
+    ``prior - new``: empty for a stable-id resume OR a purely additive re-fan
+    (``new`` is a superset of ``prior``), so those never trip the drift guard —
+    it fires only when a resume DROPS a prior branch (silent data loss: a
+    completed sibling vanishes, or the failed child is orphaned).
+    """
+    return set(prior_children) - set(new_child_ids)
 
 
 def _normalize_items(items: object) -> list[dict]:

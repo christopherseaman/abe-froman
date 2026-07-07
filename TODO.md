@@ -333,6 +333,18 @@ genuine gaps:
   only add if a concrete workflow proves the need; a global
   `max_parallel_jobs: 1` is the current workaround.
 
+  - **Per-model concurrency re-raised post-0.8.5, DECLINED YAGNI again
+    (2026-07-07).** The champion argued the ground shifted: 0.8.0 cut
+    `per_model_limits` as "a no-op (cap always == `max_parallel_jobs`)", which
+    was only true because the cap was broken off-git; 0.8.5 made the cap real
+    and global, and they adopted mixed-model workflows (haiku default + sonnet
+    dial-ups on synthesis/build), so one `max_parallel_jobs` can't express
+    "run haiku 8-wide but sonnet 3-wide" — and sonnet is where the tighter
+    rate limits live. Operator ruled YAGNI: no wall hit (the 0.8.5 cap fix +
+    cooled API sufficed) and it assumes a provider-throttle shape we haven't
+    measured. Do NOT reintroduce a per-model sub-cap without a concrete
+    workflow that provably needs it AND measured per-model throttle evidence.
+
 - [ ] **Streaming / no-barrier fan-out (SPECULATIVE — no consumer yet).** The
   Workflow tool's `pipeline` default flows each item through its downstream
   independently, no barrier between stages. sqrlly's fan-out ALWAYS joins at
@@ -767,6 +779,60 @@ so the parent re-fans; `compile/dynamic.py::_make_fan_out_node`'s per-child
 gate was changed to freeze on `child_id in _resume_skip` alone (dropping the
 `parent_node.id in skip` guard), so completed siblings stay frozen (no re-bill)
 and only the formerly-failed child re-runs.
+
+- [ ] **#4 follow-up — overload fall-through to backoff (LOW; safety-net, not
+  blocked-on).** Today an `OverloadError` walks the model-downgrade chain
+  (opus→sonnet→haiku) and, if the chain is exhausted, is terminal —
+  `backend_max_retries` only catches NON-overload backend errors. Enhancement:
+  let an exhausted downgrade chain fall through to `backend_max_retries` with
+  a real `retry_backoff` so a residual rate-limit blip backs off and retries
+  instead of dying. **Evidence status (2026-07-07):** with the 0.8.5 cap
+  biting, the champion saw **zero residual 429s** across a full phase_2
+  fan-out, so this is a safety-net for harsher load, not a live blocker. The
+  one case where it still matters structurally: a **haiku** node overloads at
+  the BOTTOM of the downgrade chain — no lower model to fall to, so backoff is
+  its only recourse. Ship when convenient; keep on the list for that case.
+
+- [ ] **Fan-out `--resume` drift guard (Phase 1) — CHAMPION-GREENLIT 2026-07-07.**
+  Runtime-verified (real CLI, `worktree:auto`, foreman) that bare `--resume`
+  already re-runs ONLY the failed child for the two common shapes: top-level
+  fan-out + stable ids, AND subgraph-*template* fan-out (each branch a member
+  subgraph). Two configs still re-bill all N: **(a) manifest-id DRIFT** (the
+  dispatcher mints different child ids on the re-fan → none match the frozen
+  `_resume_skip` → all N run, failed child orphaned, completed siblings silently
+  vanish, while the CLI still prints "re-running 1"); **(b) fan-out nested INSIDE
+  a referenced subgraph** (documented v1 limitation). Full analysis +
+  reproductions + design panel in `.temp/FANOUT_RESUME_PROPOSAL.md`; champion
+  review in `../samus-ai/builder-sqrlly/FANOUT_RESUME_REVIEW.md`.
+  - Champion hit NEITHER gap — both their pipelines pass through stable ids
+    (frozen upstream + fixed `WAVE_INDEX`) on the top-level+template shape that
+    works. Their "re-billing all N" was their RUNNERS avoiding `--resume` on a
+    STALE BELIEF ("`--resume` re-queues 0 failed children") predating the
+    `resume.py:75-90` machinery — not a code bug. Their fix is internal: verify
+    bare `--resume` on their fan-outs, then delete the workarounds (builder's
+    whole-wave rebuild; adapter's `--resume-from parent`).
+  - **Phase 1 SHIPPED 0.9.0** — the detect-warn design; footgun-elimination 5/5: a drift
+    guard at the re-fan dispatcher (`compile/graph.py::_make_fan_dispatcher`)
+    comparing the fresh manifest's child ids against prior child ids seeded
+    per-parent at resume (`cli/main.py::_seed_state` → new ephemeral
+    `_fan_prior_children` channel in `runtime/state.py`). `drifted = prior −
+    new_ids`; on drift, fail-loud BEFORE any `Send` (reuse the duplicate-id
+    `Command(update=make_failure_update, goto=END)` pattern), naming the
+    vanished-completed ids, the orphaned-failed id, and the would-be re-bill
+    count. New `Settings.on_manifest_drift: Literal["fail","warn"] = "fail"`
+    (sibling of `on_promote_conflict`); `warn` proceeds (wave-pattern opt-in).
+    Plus a `compile/lint.py` advisory for runtime-manifest fan-outs and
+    SCHEMA/CLAUDE docs. The drift predicate (loss, not change) means a stable-id
+    resume never trips it — the two working shapes are untouched. Effort M.
+    Message-correction note: the "skipping N; re-running 1" line prints at seed
+    time BEFORE the re-fan, so the runtime breadth is only knowable at dispatch
+    — the corrected/loud message is inherently part of the Phase 1 drift
+    detection, not a separable always-on fix (stable-id runs already print the
+    truthful count).
+  - **DEFER Phase 2** (snapshot-reconcile: persist the manifest + opt-in
+    `fan_out.resume: reconcile`) and **case (b)** (fan-out-in-subgraph
+    individual skippability) — no consumer; the champion explicitly does not
+    need either. Revisit only when a real consumer appears.
 
 ### Builder reconciliation findings (2026-06-24, vs builder-sqrlly @ 0.7.6)
 

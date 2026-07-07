@@ -431,6 +431,17 @@ class Settings(BaseModel):
     # last-write-wins. `skip`: the first promoting node (in `nodes` order)
     # keeps the path; later nodes drop it (their other paths still promote).
     on_promote_conflict: Literal["fail", "warn", "overwrite", "skip"] = "warn"
+    # Fan-out `--resume` manifest-drift policy. On resume, a fan-out parent
+    # re-reads its manifest and re-fans; if that manifest DROPS a prior branch
+    # id (the dispatcher minted non-deterministic ids, e.g. uuid/counter), the
+    # completed siblings silently vanish and the failed child is orphaned while
+    # all N re-run. `fail` (default): halt the parent before any Send, naming
+    # the vanished/orphaned ids — matches `on_promote_conflict: fail`. `warn`:
+    # log and proceed with the new manifest (opt-in for an author who INTENDS a
+    # changed manifest on resume). A stable-id (or purely additive) re-fan never
+    # trips it. Only fires on `--resume` / `--resume-from` (not fresh / --entry /
+    # --rerun-all).
+    on_manifest_drift: Literal["fail", "warn"] = "fail"
     # Git pathspecs filtered out of EVERY promoting node's footprint (promote
     # layer). Defense-in-depth beneath worktree-level excludes: keeps generated
     # artifacts (node_modules, build caches) from being promoted into base even
