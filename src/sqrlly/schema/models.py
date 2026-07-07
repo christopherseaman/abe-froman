@@ -546,6 +546,19 @@ class Node(BaseModel):
         _check_worktree_group_exclusive(self.worktree, self.worktree_group)
         return self
 
+    @model_validator(mode="after")
+    def _fan_out_route_exclusive(self) -> "Node":
+        # fan_out and route pick incompatible dispatchers: a gated fan-out
+        # parent goes to _fan_<id> while route goes to _route_<id>, and an
+        # ungated node fires BOTH static out-edges (double dispatch). To
+        # branch after a fan-out, route from a downstream node instead.
+        if self.fan_out is not None and self.route is not None:
+            raise ValueError(
+                f"Node {self.id!r} sets both fan_out and route — mutually "
+                f"exclusive; route from a node downstream of the fan-out."
+            )
+        return self
+
     def effective_timeout(self, settings: Settings) -> float | None:
         if self.timeout is not None:
             return self.timeout

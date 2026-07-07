@@ -10,6 +10,7 @@ from sqrlly.schema.models import (
     Evaluation,
     Execute,
     FanOut,
+    FanOutTemplate,
     Graph,
     LlmPreset,
     Node,
@@ -591,6 +592,18 @@ class TestInlineRoute:
         )
         assert config.nodes[1].execute is None
         assert config.nodes[1].route is not None
+
+    def test_fan_out_and_route_on_one_node_rejected(self):
+        # A node cannot both fan out and carry an inline route: gated fan-out
+        # dispatches via _fan_<id> while route dispatches via _route_<id>;
+        # ungated, both static edges fire and double-dispatch. Fail at load.
+        with pytest.raises(ValidationError, match="fan_out.*route|route.*fan_out"):
+            Node(
+                id="p", name="P",
+                execute=Execute(url="p.md"),
+                fan_out=FanOut(template=FanOutTemplate(execute=Execute(url="w.md"))),
+                route=Route(goto="d"),
+            )
 
 
 class TestDependencyValidation:

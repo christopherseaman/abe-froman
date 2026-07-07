@@ -111,14 +111,12 @@ the construct is unambiguously broken.
 - [~] **(34) Compile-time footgun checks for documented gotchas** —
   partial. Warning channel (`compile/lint.py::collect_warnings`) +
   hyphenated-node-id check delivered 2026-05-20. Remaining:
-  - [ ] 🤞 **`fan_out` + `route` on one node** — nothing forbids the
-    combo (no cross-field validator, no lint). Gated: fan_out wins and
-    the `_route_<id>` dispatcher is registered but unreachable (dead).
-    Ungated: BOTH the `_fan_<id>` plain edge and the route wiring fire —
-    double dispatch (pre-existing; confirmed by live probe in the Batch E
-    review, 2026-07-07). Fix: schema validator rejecting the combo (the
-    ungated combo is already broken, so forbidding loses nothing), or at
-    minimum a lint warning.
+  - [x] **`fan_out` + `route` on one node — FIXED 2026-07.** A Node
+    `model_validator` now rejects the combo at load
+    (`schema/models.py::_fan_out_route_exclusive`). Both dispatchers
+    (`_fan_<id>` and `_route_<id>`) fired for the ungated case
+    (double dispatch); the gated case left `_route_<id>` dead. Route
+    from a node downstream of the fan-out instead.
   - [ ] 🤞 **`{{sender_id}}` on a non-goto-reachable node** —
     `_route_sender` is last-write-wins; a node reached by a static
     `depends_on` edge *after* an inline-route hop elsewhere can

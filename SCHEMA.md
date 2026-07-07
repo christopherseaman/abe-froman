@@ -22,7 +22,9 @@ The top-level document.
 Compile-time validation rejects: duplicate node ids; `depends_on`
 references to a missing or self node; `route` targets that are neither a
 real node id nor `__end__`; a node that `depends_on` an inline-route
-node; a `params.preset` that names no preset in `settings.presets`.
+node; a node that sets both `fan_out` and `route` (incompatible
+dispatchers — route from a node downstream of the fan-out instead); a
+`params.preset` that names no preset in `settings.presets`.
 
 ---
 
