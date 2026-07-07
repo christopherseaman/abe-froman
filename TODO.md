@@ -732,17 +732,18 @@ Champion re-reviewed all 9 original requests against 0.7.6: #1–#4 + #7–#9 al
 shipped; #5/#6 remain (Low). Verdict: no HIGH-priority product gap remains. New
 findings this pass:
 
-- [ ] **#5 — per-node token budget (Low)** — a declarative `budget_tokens`
-  per node/preset that fails the node when exceeded (parallel to `timeout`).
-  (The CLI-killpg half of the original #5 — process-group kill on timeout
-  AND cancel — SHIPPED 0.7.7: `cli.py` now spawns with `start_new_session=True`
-  and `os.killpg`-escalates on timeout/cancel, matching the ACP teardown
-  discipline; only the `budget_tokens` half above remains open.)
+- [~] **#5 — per-node token budget — WON'T DO (operator decision 2026-07).**
+  No token tracking in sqrlly. The `budget_tokens` idea (fail a node when
+  its token count exceeds a declarative cap) needs a token-accounting
+  foundation the operator has explicitly ruled out building. The other
+  half of the original #5 — process-group kill on timeout/cancel — SHIPPED
+  0.7.7 (`cli.py` spawns with `start_new_session=True`, `os.killpg`-escalates,
+  matching the ACP teardown discipline). Nothing open here.
 - [ ] **#6 — managed-team node with mid-flight oversight (Low; resolved indirectly 0.7.9)** — the supported approach is the authoring pattern (coordinator prompt node granted `allowed_tools: ["Task"]`, members as sub-agents inside one node — see SKILLS.md); what remains open is a FIRST-CLASS coordinator node that
   spawns + supervises fan-out members during execution (check-ins, intervene, aggregate),
   above the fire-and-join `fan_out` primitive. (Folds in the N4 evidence: phase_3_1b auditors
-  + planner tournament both want cooperating teams.) The #5 budget is the signal an overseer
-  would act on.
+  + planner tournament both want cooperating teams.) An overseer acts on gate scores /
+  node status — NOT token budgets (#5 is won't-do; no token tracking).
 - Provider lock-in (non-anthropic) and dynamic fan-out observability (branch children absent
   from the terminal grid) remain Low — already tracked (TODO 36; the graph/view
   known-limitation).
