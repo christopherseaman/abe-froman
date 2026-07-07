@@ -67,8 +67,9 @@ class CLIBackend:
 
     Each ``send_prompt`` spawns a fresh ``claude -p --model <model>``
     subprocess, pipes the prompt on stdin, captures stdout as the
-    response. Exit code 0 → success; non-zero stderr is checked for
-    overload substrings then surfaced as ``RuntimeError`` otherwise.
+    response. Exit code 0 → success. On non-zero exit, BOTH streams are
+    inspected for overload substrings (``claude -p`` reports overload /
+    rate-limit on stdout, not stderr) and surfaced in the error.
     """
 
     def __init__(
@@ -157,17 +158,22 @@ class CLIBackend:
 
         if proc.returncode != 0:
             stderr_text = stderr_b.decode().strip()
-            # Substring overload check matches the ACP path: any
-            # 529/overload signal triggers ``OverloadError`` so
-            # ``PromptExecutor``'s downgrade chain activates. If the
-            # error isn't transient, surface the raw stderr.
+            stdout_text = stdout_b.decode().strip()
+            # `claude -p` writes its result AND its diagnostics (overload /
+            # rate-limit / usage-limit messages) to STDOUT, not stderr — so
+            # on a non-zero exit the actual reason is usually in stdout.
+            # Feed BOTH streams to the overload check (a 529/overload on
+            # stdout must still engage the downgrade chain, not go terminal)
+            # and surface BOTH in the error so the failure is never a bare
+            # "claude exited 1:" black box.
+            combined = "\n".join(t for t in (stderr_text, stdout_text) if t)
             maybe_raise_overload(
-                RuntimeError(stderr_text),
+                RuntimeError(combined),
                 message_substrings=ACP_OVERLOAD_SUBSTRINGS,
             )
+            detail = combined or "(no output on stdout or stderr)"
             raise RuntimeError(
-                f"{self._argv_prefix[0]} exited {proc.returncode}: "
-                f"{stderr_text}"
+                f"{self._argv_prefix[0]} exited {proc.returncode}: {detail}"
             )
         return ExecutionResult(output=stdout_b.decode().strip())
 

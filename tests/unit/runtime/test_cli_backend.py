@@ -204,6 +204,48 @@ class TestCLIBackendFailureModes:
             await backend.send_prompt("x", "sonnet", str(tmp_path))
         assert "42" in str(ei.value)
 
+    @pytest.mark.asyncio
+    async def test_nonzero_exit_surfaces_stdout_diagnostic(self, tmp_path):
+        """`claude -p` writes its result/diagnostics to STDOUT, not stderr.
+        On a non-zero exit with empty stderr, the stdout message must reach
+        the surfaced error — otherwise the consumer sees a bare
+        'claude exited 1:' black box (the fan-out blocker report)."""
+        fake = _write_fake(
+            tmp_path, "claude-fake",
+            '#!/bin/sh\necho "usage limit reached: try again in 30s"\nexit 1\n',
+        )
+        backend = _backend_for(fake)
+        with pytest.raises(RuntimeError) as ei:
+            await backend.send_prompt("x", "haiku", str(tmp_path))
+        assert "usage limit reached" in str(ei.value)
+        assert "1" in str(ei.value)
+
+    @pytest.mark.asyncio
+    async def test_overload_on_stdout_raises_overload(self, tmp_path):
+        """An overload/529 reported on STDOUT (empty stderr) must classify
+        as OverloadError so the downgrade chain engages — not go terminal.
+        """
+        fake = _write_fake(
+            tmp_path, "claude-fake",
+            '#!/bin/sh\necho "Error: 529 overloaded_error"\nexit 1\n',
+        )
+        backend = _backend_for(fake)
+        with pytest.raises(OverloadError):
+            await backend.send_prompt("x", "sonnet", str(tmp_path))
+
+    @pytest.mark.asyncio
+    async def test_nonzero_exit_no_output_is_explicit(self, tmp_path):
+        """A genuinely silent non-zero exit (nothing on either stream) says
+        so, instead of ending the message on a bare colon."""
+        fake = _write_fake(
+            tmp_path, "claude-fake",
+            '#!/bin/sh\nexit 1\n',
+        )
+        backend = _backend_for(fake)
+        with pytest.raises(RuntimeError) as ei:
+            await backend.send_prompt("x", "sonnet", str(tmp_path))
+        assert "no output" in str(ei.value).lower()
+
 
 class TestCLIBackendTimeout:
     @pytest.mark.asyncio

@@ -5,6 +5,11 @@ All notable changes to sqrlly are documented here. Format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- CLI backend: on a non-zero `claude` exit, **stdout** is now surfaced in the error and fed to the overload check — previously only stderr was, so a `claude -p` failure (which writes its result/diagnostics to stdout, not stderr) surfaced as a bare `claude exited 1:` black box, and a 529/overload reported on stdout was never classified as transient (so the downgrade chain never engaged and the node went terminal on the first blip). Both streams are now inspected; a genuinely silent exit reads `(no output on stdout or stderr)` instead of ending on a colon. Fixes the fan-out blocker reported by the builder/adapter port.
+
+
 ## [0.8.3] - 2026-07-07
 
 ### Changed
