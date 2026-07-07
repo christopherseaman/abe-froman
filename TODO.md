@@ -297,6 +297,50 @@ Multi-dim scoring with per-field `min` thresholds landed with the multi-dimensio
     - Make synthesis explicit: a `synthesis_node:` block with `merges_from: [...]` listing branch ids, blocking gate, pre-merge worktree
     - Enables: synthesis-gate blocking merge (if gate fails, changes never fold back); reset semantics for the escalation tiers above
 
+## Orchestration patterns — mirror of the Claude Code Workflow tool (2026-07)
+
+Comparing sqrlly (declarative DAG) against the Claude Code **Workflow** tool
+(imperative JS orchestration; internal API notes:
+`notion.so/sqrlly/Claude-Code-Workflows-383d9fdd1a1a805f83b7f1126d77ba51`).
+Its "patterns worth stealing" catalogue is a checklist of orchestration
+capabilities. Most sqrlly already covers — loop-until-dry = the **wave
+pattern** (`wave_planner`); perspective-diverse verify ≈ `evaluation.dimensions`;
+loop-until-budget = token budget (WON'T-DO, no token tracking). Three are
+genuine gaps:
+
+- [ ] **Panel / voting evaluation gate (RECOMMENDED — strengthens the core
+  differentiator).** Today a gate is single-shot: one script or one LLM call
+  decides pass/retry/fail. The Workflow tool's most-used confidence pattern is
+  *adversarial verify* / *judge panel* — run N INDEPENDENT judges and require a
+  majority (or quorum), so one plausible-but-wrong verdict can't pass a node.
+  Proposed: an `evaluation.mode: panel` (or `votes: N` + `quorum:`) that runs
+  the validator N times / N distinct judge prompts and aggregates by majority
+  or threshold. Aligns with sqrlly's gate system (the value-add over raw
+  LangGraph); relates to the Gate-evaluation extensibility section above
+  (composite scoring, synthesis-gate). A lighter first step: document the panel
+  as a SKILLS.md authoring pattern (fan-out N judges → a synthesis final node
+  that tallies) before committing to a first-class `mode`.
+
+- [ ] **Serial-resource concurrency group (YAGNI-flagged — build only on a
+  real consumer).** The Workflow doc's "serial shared resources" rule: keep
+  every stage touching one non-shareable resource (a single DB / device /
+  simulator) sequential, parallelize only the no-resource work. sqrlly has
+  `max_parallel_jobs` (global) and `worktree` isolation but no NAMED MUTEX to
+  serialize nodes sharing an external resource while others still run in
+  parallel. A `resource_group: <name>` (nodes with the same name never run
+  concurrently) would express it. CAUTION: this is close to the removed
+  `per_model_limits` (per-model concurrency sub-cap, cut as YAGNI in 0.8.0) —
+  only add if a concrete workflow proves the need; a global
+  `max_parallel_jobs: 1` is the current workaround.
+
+- [ ] **Streaming / no-barrier fan-out (SPECULATIVE — no consumer yet).** The
+  Workflow tool's `pipeline` default flows each item through its downstream
+  independently, no barrier between stages. sqrlly's fan-out ALWAYS joins at
+  `final_nodes` (the barrier). A `fan_out.mode: stream` where each branch
+  continues to its own downstream without waiting for siblings would mirror
+  it. Real difference, but the join barrier is load-bearing for the synthesis
+  pattern and nobody has asked — lowest confidence of the three.
+
 ## Sharing readiness (surfaced 2026-05-27, post-0.3.x publish)
 
 - [ ] **ASCII box-art workflow viz (`sqrlly graph --ascii`)** —
