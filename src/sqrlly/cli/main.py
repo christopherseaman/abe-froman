@@ -395,6 +395,150 @@ def _collect_subgraph_presets(
     return collected
 
 
+async def _seed_state(
+    cp: Any,
+    config: Graph,
+    workdir: str,
+    *,
+    resume: bool,
+    resume_from: tuple[str, ...],
+    rerun_all: bool,
+    entry: str | None,
+    thread_id: str,
+) -> dict:
+    """Seed the initial WorkflowState for a run and wipe the checkpoint
+    thread (so reducers don't merge with stale state). Three modes:
+    resume from checkpoint, cold-start at ``entry``, or a fresh run.
+    """
+    if resume:
+        prev = await cp.aget_tuple({"configurable": {"thread_id": thread_id}})
+        if prev is None:
+            raise click.ClickException(
+                f"No saved state for this workflow at {_db_path(workdir)}"
+            )
+        old = dict(prev.checkpoint.get("channel_values", {}))
+        from sqrlly.compile.resume import compute_skip_set
+        prior_completed = set(old.get("completed_nodes", set()))
+        skip = (
+            set()
+            if rerun_all
+            else compute_skip_set(
+                config, prior_completed,
+                set(old.get("failed_nodes", set())), set(resume_from),
+            )
+        )
+        state = {
+            **old,
+            "completed_nodes": skip,
+            "failed_nodes": set(), "retries": {}, "errors": [],
+            "workdir": workdir, "dry_run": False, "_resume_skip": skip,
+        }
+        if rerun_all:
+            source = "all nodes (rerun-all)"
+        elif resume_from:
+            source = ", ".join(sorted(resume_from))
+        else:
+            source = "failed nodes"
+        click.echo(
+            f"Resuming: skipping {len(skip)} completed; re-running "
+            f"{len(prior_completed - skip)} (from: {source})."
+        )
+        # Wipe the thread so reducers don't merge with stale state
+        await cp.adelete_thread(thread_id)
+        return state
+
+    if entry is not None:
+        # Cold start at `entry`: NO checkpoint read. Seed FRESH state, then
+        # compute the skip set as if every top-level node had already
+        # completed and `entry` were the sole rerun target — the existing
+        # dirty closure dirties `entry` + its downstream and freezes the
+        # rest. Reseed completed_nodes + _resume_skip to that frozen set so
+        # downstream join/barrier guards see upstream as done, exactly like
+        # the resume reseed. The entry node trusts ON-DISK upstream
+        # artifacts: upstream never ran this session, so node_outputs is
+        # empty and `{{upstream}}` template vars resolve to nothing — an
+        # --entry node must read files, not interpolate upstream output.
+        from sqrlly.compile.resume import compute_skip_set
+        all_ids = {n.id for n in config.nodes}
+        skip = compute_skip_set(config, all_ids, set(), {entry})
+        await cp.adelete_thread(thread_id)
+        state = make_initial_state(
+            workflow_name=config.name, workdir=workdir, dry_run=False,
+        )
+        state["completed_nodes"] = set(skip)
+        state["_resume_skip"] = set(skip)
+        click.echo(
+            f"Cold start at {entry!r}: running "
+            f"{len(all_ids - skip)} node(s) ({entry} + downstream); "
+            f"freezing {len(skip)} upstream (trusting on-disk artifacts)."
+        )
+        return state
+
+    await cp.adelete_thread(thread_id)
+    return make_initial_state(
+        workflow_name=config.name, workdir=workdir, dry_run=False,
+    )
+
+
+async def _promote_and_gc(
+    config: Graph, executor_obj: Any, result: dict, workdir: str,
+) -> None:
+    """After a CLEAN run under a foreman, promote top-level + fan-out
+    branch worktree deltas to the base (BEFORE GC — reclaim would remove
+    the tree first), then GC if configured. A promote conflict/error
+    propagates (data-loss path), unlike reclaim's best-effort cleanup.
+    """
+    clean = not result.get("failed_nodes")
+    if not (clean and isinstance(executor_obj, ForemanExecutor)):
+        return
+    specs: list[tuple[str, str, list[str] | None]] = []
+    for node in config.nodes:
+        if not node.promote:
+            continue
+        tree = executor_obj.get_worktree(node.id)
+        if tree is None:
+            continue  # `off` node already wrote to the base workdir
+        # output_contract.required_files (base_directory-prepended)
+        # doubles as the promote pathspec filter when present;
+        # otherwise the full delta is promoted (discover mode).
+        globs = (
+            node.output_contract.required_paths()
+            if node.output_contract else None
+        )
+        specs.append((node.id, tree, globs))
+    # Fan-out branch worktrees opt in via fan_out.promote — route
+    # them through the same reconcile path (inherits conflict
+    # detection + promote_exclude + promote_include). They are recorded in
+    # node_worktrees keyed <parent>::<item>.
+    promote_parents = {
+        n.id for n in config.nodes
+        if n.fan_out is not None and n.fan_out.promote
+    }
+    specs.extend(fanout_branch_specs(
+        promote_parents, result.get("node_worktrees", {}),
+    ))
+    if specs:
+        try:
+            plan = reconcile_promotions(
+                specs, workdir,
+                config.settings.on_promote_conflict,
+                excludes=config.settings.promote_exclude or None,
+                includes=config.settings.promote_include or None,
+            )
+        except PromoteConflictError as e:
+            raise click.ClickException(str(e)) from e
+        if (plan.conflicts
+                and config.settings.on_promote_conflict == "warn"):
+            for path, nodes in sorted(plan.conflicts.items()):
+                click.echo(click.style(
+                    f"warning: promote conflict on {path!r} — "
+                    f"promoted by {', '.join(nodes)}; "
+                    f"last-write-wins",
+                    fg="yellow"), err=True)
+    if config.settings.worktree_gc == "on_success":
+        await executor_obj.reclaim()
+
+
 async def _execute_workflow(
     config: Graph,
     workdir: str,
@@ -492,72 +636,11 @@ async def _execute_workflow(
 
     async with AsyncSqliteSaver.from_conn_string(_db_path(workdir)) as cp:
         await cp.setup()
-        state: dict
-        if resume:
-            prev = await cp.aget_tuple({"configurable": {"thread_id": thread_id}})
-            if prev is None:
-                raise click.ClickException(
-                    f"No saved state for this workflow at {_db_path(workdir)}"
-                )
-            old = dict(prev.checkpoint.get("channel_values", {}))
-            from sqrlly.compile.resume import compute_skip_set
-            prior_completed = set(old.get("completed_nodes", set()))
-            skip = (
-                set()
-                if rerun_all
-                else compute_skip_set(
-                    config, prior_completed,
-                    set(old.get("failed_nodes", set())), set(resume_from),
-                )
-            )
-            state = {
-                **old,
-                "completed_nodes": skip,
-                "failed_nodes": set(), "retries": {}, "errors": [],
-                "workdir": workdir, "dry_run": False, "_resume_skip": skip,
-            }
-            if rerun_all:
-                source = "all nodes (rerun-all)"
-            elif resume_from:
-                source = ", ".join(sorted(resume_from))
-            else:
-                source = "failed nodes"
-            click.echo(
-                f"Resuming: skipping {len(skip)} completed; re-running "
-                f"{len(prior_completed - skip)} (from: {source})."
-            )
-            # Wipe the thread so reducers don't merge with stale state
-            await cp.adelete_thread(thread_id)
-        elif entry is not None:
-            # Cold start at `entry`: NO checkpoint read. Seed FRESH state, then
-            # compute the skip set as if every top-level node had already
-            # completed and `entry` were the sole rerun target — the existing
-            # dirty closure dirties `entry` + its downstream and freezes the
-            # rest. Reseed completed_nodes + _resume_skip to that frozen set so
-            # downstream join/barrier guards see upstream as done, exactly like
-            # the resume reseed. The entry node trusts ON-DISK upstream
-            # artifacts: upstream never ran this session, so node_outputs is
-            # empty and `{{upstream}}` template vars resolve to nothing — an
-            # --entry node must read files, not interpolate upstream output.
-            from sqrlly.compile.resume import compute_skip_set
-            all_ids = {n.id for n in config.nodes}
-            skip = compute_skip_set(config, all_ids, set(), {entry})
-            await cp.adelete_thread(thread_id)
-            state = make_initial_state(
-                workflow_name=config.name, workdir=workdir, dry_run=False,
-            )
-            state["completed_nodes"] = set(skip)
-            state["_resume_skip"] = set(skip)
-            click.echo(
-                f"Cold start at {entry!r}: running "
-                f"{len(all_ids - skip)} node(s) ({entry} + downstream); "
-                f"freezing {len(skip)} upstream (trusting on-disk artifacts)."
-            )
-        else:
-            await cp.adelete_thread(thread_id)
-            state = make_initial_state(
-                workflow_name=config.name, workdir=workdir, dry_run=False,
-            )
+        state = await _seed_state(
+            cp, config, workdir,
+            resume=resume, resume_from=resume_from, rerun_all=rerun_all,
+            entry=entry, thread_id=thread_id,
+        )
 
         if _is_git_repo(workdir):
             executor_obj = ForemanExecutor(
@@ -588,58 +671,7 @@ async def _execute_workflow(
                 compiled, state, config,
                 thread_id=thread_id, logger=logger,
             )
-            clean = not result.get("failed_nodes")
-            # Promotion runs only for top-level nodes on a clean run, and
-            # BEFORE GC (reclaim would remove the tree first). A promotion
-            # error propagates (it is a data-loss path) rather than being
-            # swallowed like reclaim's best-effort cleanup.
-            if clean and isinstance(executor_obj, ForemanExecutor):
-                specs: list[tuple[str, str, list[str] | None]] = []
-                for node in config.nodes:
-                    if not node.promote:
-                        continue
-                    tree = executor_obj.get_worktree(node.id)
-                    if tree is None:
-                        continue  # `off` node already wrote to the base workdir
-                    # output_contract.required_files (base_directory-prepended)
-                    # doubles as the promote pathspec filter when present;
-                    # otherwise the full delta is promoted (discover mode).
-                    globs = (
-                        node.output_contract.required_paths()
-                        if node.output_contract else None
-                    )
-                    specs.append((node.id, tree, globs))
-                # Fan-out branch worktrees opt in via fan_out.promote — route
-                # them through the same reconcile path (inherits conflict
-                # detection + promote_exclude + promote_include). They are recorded in
-                # node_worktrees keyed <parent>::<item>.
-                promote_parents = {
-                    n.id for n in config.nodes
-                    if n.fan_out is not None and n.fan_out.promote
-                }
-                specs.extend(fanout_branch_specs(
-                    promote_parents, result.get("node_worktrees", {}),
-                ))
-                if specs:
-                    try:
-                        plan = reconcile_promotions(
-                            specs, workdir,
-                            config.settings.on_promote_conflict,
-                            excludes=config.settings.promote_exclude or None,
-                            includes=config.settings.promote_include or None,
-                        )
-                    except PromoteConflictError as e:
-                        raise click.ClickException(str(e)) from e
-                    if (plan.conflicts
-                            and config.settings.on_promote_conflict == "warn"):
-                        for path, nodes in sorted(plan.conflicts.items()):
-                            click.echo(click.style(
-                                f"warning: promote conflict on {path!r} — "
-                                f"promoted by {', '.join(nodes)}; "
-                                f"last-write-wins",
-                                fg="yellow"), err=True)
-                if config.settings.worktree_gc == "on_success":
-                    await executor_obj.reclaim()
+            await _promote_and_gc(config, executor_obj, result, workdir)
         finally:
             await executor_obj.close()
 
