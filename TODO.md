@@ -115,8 +115,12 @@ does not re-flag them.
     day (surfacing-only). Champion reviewed + approved; all 4 questions answered
     and folded into the parent item's LOCKED decisions.
 
-- [ ] **Convert uncaught worktree/setup crashes into a `node_failed` with an
-  infra/transient `kind` (champion's next-priority follow-up 2026-07-07).**
+- [x] **Convert uncaught worktree/setup crashes into a `node_failed` with an
+  infra/transient `kind` — SHIPPED 0.9.2 (2026-07-08; champion-requested
+  follow-up).** New transient kind `infra`; caught at `ForemanExecutor.execute`
+  AND the subgraph fan-out invoker (adversarial review caught the isolated
+  subgraph-branch gap); the no-backend preset-wiring bug returns `node_error`
+  (deterministic). Original diagnosis:
   Distinct from (and after) the `kind`-surfacing change — this is new failure
   HANDLING, not surfacing. Today `foreman.py:198` (git worktree add
   `RuntimeError`), `worktree_share.py` setup/share failures, and the no-backend
