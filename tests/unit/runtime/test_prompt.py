@@ -554,6 +554,37 @@ class TestDispatchPromptFlow:
         assert timeout is None
 
     @pytest.mark.asyncio
+    async def test_no_backend_for_resolved_preset_returns_node_error(self, tmp_path):
+        """A node resolving to a valid preset that has NO registered backend
+        (a preset-wiring bug) returns a failed ExecutionResult(kind='node_error')
+        — deterministic → halt — instead of escaping as a raw RuntimeError
+        traceback (which would leave workflow_end at 0/0). A --resume reproduces
+        a preset typo identically, so it must NOT be a transient kind."""
+        from sqrlly.schema.models import LlmPreset
+        prompt = tmp_path / "p.md"
+        prompt.write_text("body")
+        settings = Settings(presets={
+            "default": LlmPreset(transport="acp", provider="anthropic",
+                                 model="sonnet", default=True),
+            "smart": LlmPreset(transport="acp", provider="anthropic",
+                               model="opus"),
+        })
+        # Resolves to "smart" (a valid preset) but only "default" is wired.
+        node = Node(
+            id="p1", name="P1",
+            execute=Execute(url=f"file://{prompt}", params={"preset": "smart"}),
+        )
+        executor = DispatchExecutor(
+            workdir=str(tmp_path),
+            prompt_backends={"default": MemoryBackend()},  # never invoked
+            settings=settings,
+        )
+        result = await executor.execute(node, {}, workdir=str(tmp_path))
+        assert result.success is False
+        assert result.error_kind == "node_error"
+        assert "no backend is registered" in result.error
+
+    @pytest.mark.asyncio
     async def test_preset_drives_model_per_node(self, tmp_path):
         """params.preset selects a non-default preset; the resolved
         preset's model is what the backend sees."""

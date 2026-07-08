@@ -325,7 +325,18 @@ def make_fan_out_subgraph_invoker(
         # else fall back to the caller-supplied workdir.
         use_branch = prefix and _isolate and hasattr(executor, "acquire_branch_worktree")
         if use_branch:
-            branch_tree = await executor.acquire_branch_worktree(prefix)
+            try:
+                branch_tree = await executor.acquire_branch_worktree(prefix)
+            except RuntimeError as e:
+                # A subgraph fan-out BRANCH acquires its worktree here, not via
+                # ForemanExecutor.execute — so the same transient-infra aborts
+                # (git worktree add / worktree_share / worktree_setup) must be
+                # caught here too, returned as this branch's `infra` failure
+                # (the dynamic fan-out funnel forwards error_kind), so the graph
+                # settles instead of the RuntimeError escaping as a traceback.
+                return ExecutionResult(
+                    success=False, error=str(e), error_kind="infra",
+                )
         else:
             branch_tree = workdir
 

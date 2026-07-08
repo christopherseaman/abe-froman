@@ -359,7 +359,8 @@ wave — are absent from both.
   full output text — capture that from the node itself if you need it.
 - A failed `run` exits non-zero and lists the failed nodes. Each
   `node_failed` event carries a `kind` — `overload` / `backend_error` /
-  `timeout` (transient — worth a *bounded* retry, e.g. via `--resume`),
+  `timeout` / `infra` (transient — worth a *bounded* retry, e.g. via
+  `--resume`; `infra` is a worktree/setup blip),
   `gate_failure` / `node_error` (deterministic — halt until fixed), and
   `upstream_failed` (this node was blocked; the real failure is elsewhere
   in the stream). `workflow_end` also carries a `failed_kinds` map. Branch

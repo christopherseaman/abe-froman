@@ -372,8 +372,12 @@ class TestWorktreePool:
                 execute=Execute(url=_PWD, params={"args": []}),
                 worktree_group="team",
             )
-            with pytest.raises(RuntimeError):
-                await foreman.execute(node, {})
+            # The orphan is not silently reused: the worktree-add refusal now
+            # surfaces as a classified `infra` failure (caught + returned) rather
+            # than a raw RuntimeError traceback.
+            result = await foreman.execute(node, {})
+            assert result.success is False
+            assert result.error_kind == "infra"
         finally:
             await foreman.close()
 
@@ -554,33 +558,32 @@ class TestConcurrencyCap:
 
 class TestWorktreeCreationFailure:
     @pytest.mark.asyncio
-    async def test_non_git_workdir_raises_runtime_error(self, tmp_path):
+    async def test_non_git_workdir_returns_infra_kind(self, tmp_path):
         """base_workdir is not a git repo → `git worktree add` fails; foreman
-        surfaces the error loudly rather than silently degrading."""
+        surfaces it as a classified `infra` failure (node_failed) rather than a
+        raw traceback or a silent degrade."""
         # NOT calling _init_git_repo — tmp_path is a plain directory.
         inner = DispatchExecutor(workdir=str(tmp_path))
         foreman = ForemanExecutor(inner=inner, base_workdir=str(tmp_path))
         try:
-            with pytest.raises(RuntimeError) as excinfo:
-                await foreman.execute(_cmd_phase("alpha"), {})
-            msg = str(excinfo.value)
-            assert "git worktree add" in msg
-            assert "alpha" in msg
+            result = await foreman.execute(_cmd_phase("alpha"), {})
+            assert result.success is False
+            assert result.error_kind == "infra"
+            assert "git worktree add" in result.error
+            assert "alpha" in result.error
         finally:
             await foreman.close()
 
     @pytest.mark.asyncio
-    async def test_bad_base_workdir_raises_runtime_error(self, tmp_path):
-        """base_workdir doesn't exist at all → same loud failure."""
+    async def test_bad_base_workdir_returns_infra_kind(self, tmp_path):
+        """base_workdir doesn't exist at all → same classified `infra` failure."""
         missing = tmp_path / "does-not-exist"
         inner = DispatchExecutor(workdir=str(tmp_path))
         foreman = ForemanExecutor(inner=inner, base_workdir=str(missing))
         try:
-            with pytest.raises(Exception) as excinfo:
-                await foreman.execute(_cmd_phase("beta"), {})
-            # Either FileNotFoundError from mkdir/spawn or RuntimeError from
-            # the git return-code path — both are acceptable loud failures.
-            assert "beta" in str(excinfo.value) or not str(excinfo.value).startswith("foreman:")
+            result = await foreman.execute(_cmd_phase("beta"), {})
+            assert result.success is False
+            assert result.error_kind == "infra"
         finally:
             await foreman.close()
 
@@ -773,3 +776,25 @@ async def test_foreman_reclaims_tree_even_if_setup_fails(tmp_path):
         await fm.acquire_branch_worktree("b1")
     removed = await fm.reclaim()
     assert any(".sqrlly" in p for p in removed)  # the half-built tree was reclaimed
+
+
+class TestInfraKind:
+    @pytest.mark.asyncio
+    async def test_worktree_abort_returns_infra_kind_not_raise(self, tmp_path):
+        """A worktree acquisition abort (here a worktree_setup command exiting
+        non-zero) returns a failed ExecutionResult(kind='infra') from
+        execute() — a caught, classified failure that lets the graph settle —
+        instead of escaping as a raw RuntimeError traceback (no node_failed,
+        workflow_end 0/0)."""
+        _init_git_repo(tmp_path)
+        inner = DispatchExecutor(workdir=str(tmp_path))
+        foreman = ForemanExecutor(
+            inner, str(tmp_path),
+            settings=Settings(
+                worktree="isolated", worktree_setup=["sh -c 'exit 4'"],
+            ),
+        )
+        result = await foreman.execute(_cmd_phase("n1"), {})
+        assert result.success is False
+        assert result.error_kind == "infra"
+        assert "setup failed" in result.error

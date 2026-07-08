@@ -5,6 +5,12 @@ All notable changes to sqrlly are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-07-08
+
+### Added
+
+- Worktree/setup aborts now surface as a `node_failed` with a new transient failure `kind: "infra"` instead of escaping as a raw traceback. The three genuinely transient-infra abort sites — `git worktree add`, a `worktree_share` path absent from base, and a `worktree_setup` command exiting non-zero — previously raised an uncaught `RuntimeError`, so no `node_failed` landed and `workflow_end` logged `0/0` (a halted run was indistinguishable from a clean one). `ForemanExecutor.execute` (and, for an isolated subgraph fan-out branch that acquires its worktree in the fan-out invoker rather than through `execute`, the invoker) now catches these at the caller (which knows the node/child id), returns a classified failure, and lets the graph settle — so the failed node lands in `failed_nodes` / `failed_kinds` and a bare `--resume` re-runs exactly that node (or fan-out child). `infra` joins `overload` / `backend_error` / `timeout` in the transient class (worth a **bounded** retry — a persistent infra failure is a structurally-absent path or a permanently-failing setup). Separately, a preset-wiring bug (a node resolving to a valid preset with no registered backend) now returns `node_error` (deterministic → halt) instead of raising — a `--resume` reproduces a preset typo identically, so it must not be treated as transient. Requested by the samus builder/adapter port as the follow-up to 0.9.1.
+
 ## [0.9.1] - 2026-07-07
 
 ### Added

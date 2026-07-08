@@ -245,8 +245,26 @@ class DispatchExecutor:
         settings: Settings,
     ) -> ExecutionResult:
         """Read prompt body (file or remote), render Jinja, send to backend."""
-        resolved_backend = self._resolve_prompt_backend(node, settings)
+        try:
+            resolved_backend = self._resolve_prompt_backend(node, settings)
+        except RuntimeError as e:
+            # A resolved preset with no registered backend — a preset-wiring
+            # bug validation should have caught. Deterministic: a --resume
+            # reproduces it identically, so classify `node_error` (halt), not a
+            # transient kind, and surface it as this node's failure (settling
+            # the graph) rather than a raw traceback.
+            return ExecutionResult(
+                success=False, error=str(e), error_kind="node_error",
+            )
         if resolved_backend is None:
+            # DELIBERATE raise (not a node_error return): this is a GLOBAL
+            # construction misuse — the executor was built with no prompt
+            # backend at all — not a per-node failure, and it is unreachable via
+            # the CLI (settings.presets is required + validated, always wiring a
+            # backend). Converting it would emit one identical failure per
+            # prompt node masking one setup mistake; raising loudly is the right
+            # signal. (Distinct from the resolved-preset-with-no-backend wiring
+            # bug above, which IS per-node and returns node_error.)
             raise RuntimeError(
                 f"Cannot dispatch prompt node {node.id!r}: no prompt "
                 f"backend wired. DispatchExecutor was constructed without "

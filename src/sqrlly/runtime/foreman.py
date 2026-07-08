@@ -96,8 +96,22 @@ class ForemanExecutor:
             # Throttle worktree CREATION only; released before dispatch, so
             # the inner DispatchExecutor's own cap is the sole dispatch gate
             # (no nested-semaphore double-count).
-            async with self._worktree_create_sem:
-                run_dir = await self._acquire_worktree(node.id, pool_key, group)
+            try:
+                async with self._worktree_create_sem:
+                    run_dir = await self._acquire_worktree(
+                        node.id, pool_key, group
+                    )
+            except RuntimeError as e:
+                # A transient-infra abort (git worktree add / worktree_share
+                # materialize / worktree_setup) — return a classified failure
+                # for THIS node (attribution at the caller, which knows the id)
+                # rather than escaping as a raw traceback. `infra` is transient:
+                # a bounded --resume retry can clear a disk/FS/install blip, and
+                # returning (not raising) lets the graph settle so node_failed +
+                # workflow_end.failed_kinds land (no 0/0 halted-vs-clean ambiguity).
+                return ExecutionResult(
+                    success=False, error=str(e), error_kind="infra",
+                )
         if node.output_contract:
             scaffold_output_directory(node.output_contract, run_dir)
         result = await self._inner.execute(

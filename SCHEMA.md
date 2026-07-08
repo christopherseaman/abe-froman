@@ -554,15 +554,17 @@ worse, the node name). `workflow_end` also carries a `failed_kinds` map
 | `overload` | API 529/overloaded; the opus→sonnet→haiku downgrade chain was exhausted before output. | **transient** |
 | `backend_error` | Backend `send_prompt` raised a non-overload exception surviving `backend_max_retries` (e.g. a `claude exited 1` blip). | **transient** |
 | `timeout` | `TimeoutError` on node execution or on a gate/evaluation await. | **transient** |
+| `infra` | A worktree/setup abort during dispatch — `git worktree add`, a `worktree_share` path, or a `worktree_setup` command failed. Caught at the foreman (or, for an isolated subgraph fan-out branch, the fan-out invoker) and returned as this node's failure instead of a raw traceback. | **transient** |
 | `gate_failure` | A **blocking** evaluation scored below threshold after `max_retries` — a real quality verdict on work that ran. | **deterministic** |
 | `node_error` | The node (or its dispatch/config/manifest/output-contract) definitively failed; re-running unchanged reproduces it. Also the **fail-safe default** for any unclassified failure. | **deterministic** |
 | `upstream_failed` | This node did **not** do the failing work: a `depends_on` id already failed, or an inner subgraph/fan-out branch node failed. The real failure is elsewhere in the same JSONL stream (a bare sibling id, or a `parent::child`-prefixed inner id). | **not-this-node** |
 
 **Guidance, not policy.** The `disposition` column is advice, and the
-`transient` label has a **deterministic tail** on all three transient kinds —
+`transient` label has a **deterministic tail** on all four transient kinds —
 a *persistent* `overload` is a capacity crisis, a persistent `backend_error`
-is a missing binary, a persistent `timeout` is a task that is simply too big.
-So a transient kind is worth a **bounded** retry, never an unbounded one:
+is a missing binary, a persistent `timeout` is a task that is simply too big,
+and a persistent `infra` is a structurally-absent path or a permanently-failing
+setup. So a transient kind is worth a **bounded** retry, never an unbounded one:
 consumers must cap retries (worst case: waste ≤ N attempts, then halt). sqrlly
 does not emit a `retryable` boolean — that would freeze a settings-dependent
 policy (`backend_max_retries` defaults to `0`) into the wire contract; the
