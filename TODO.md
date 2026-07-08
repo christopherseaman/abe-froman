@@ -57,8 +57,8 @@ does not re-flag them.
     guards — not distribution. Keep this as a design stream but weight it BELOW
     the local-ergonomics items when choosing next work.
 
-- [ ] **Structured failure `kind` on `node_failed` / `workflow_end` events —
-  CHAMPION-APPROVED, BUILD (2026-07-07; review
+- [x] **Structured failure `kind` on `node_failed` / `workflow_end` events —
+  SHIPPED 0.9.1 (2026-07-07; TDD + adversarial review "SHIP"; review
   `../samus-ai/builder-sqrlly/FAILURE_KIND_REVIEW.md`).** Taxonomy LOCKED: the
   6-kind kind-only set below, names as proposed. Champion decisions: **do NOT
   split `node_error`** (they halt on all of it); **no `retryable:bool`**
