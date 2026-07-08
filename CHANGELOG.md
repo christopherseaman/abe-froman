@@ -5,6 +5,13 @@ All notable changes to sqrlly are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-07-08
+
+### Documentation
+
+- Documented two `failed_kinds` reading rules in `SCHEMA.md`: (1) a fan-out child is keyed `<parent>::<item>` and reports *that child's* kind — for a subgraph-template fan-out a failure *inside* the branch surfaces as `upstream_failed`, with the inner root-cause kind only in the `node_failed` stream under a `<parent>::<item>::<inner>` id, while a branch-acquisition `infra` abort (caught *before* the branch runs) surfaces its true kind; (2) on `--resume` the `--log` file accumulates every attempt's `node_failed` (append mode) but run *state* does not (each resume reseeds `errors` / `failed_nodes` and wipes the checkpoint), so the **last** `workflow_end.failed_kinds` is the authoritative per-node resolution. Surfaced by the samus builder/adapter port's 0.9.2 acknowledgment.
+- Corrected two stale claims exposed while documenting the above: the `SCHEMA.md` "coverage boundary" paragraph still said worktree/setup aborts escape as a raw traceback (`0/0` `workflow_end`) — since 0.9.2 they surface as `infra`; and the `failed_kinds_map` docstring (with its test) described a cross-`--resume` last-write-wins that `_seed_state`'s per-resume state reset makes impossible (last-write-wins applies only within a single run).
+
 ## [0.9.2] - 2026-07-08
 
 ### Added

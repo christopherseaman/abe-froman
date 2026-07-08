@@ -16,9 +16,12 @@ def failed_kinds_map(
     Reads the kind from the node's error record (default ``node_error``).
     Error records for nodes NOT in ``failed_nodes`` — e.g. a ``warn_continue``
     note on a node that COMPLETED — are excluded, so the map only ever names
-    genuine failures. ``errors`` is append-only, so on ``--resume`` a node's
-    prior-run record precedes its re-run record; last-write-wins reports the
-    TERMINAL kind, not the stale prior one.
+    genuine failures. ``errors`` accumulates within a run (``operator.add``),
+    so a node carrying more than one record resolves last-write-wins to its
+    latest kind. It does NOT span ``--resume``: each resumed process reseeds
+    ``errors`` to ``[]`` and wipes the checkpoint (``cli/main.py::_seed_state``),
+    so this map covers only the current run's failures — the append-mode
+    ``--log`` file holds the cross-attempt history.
     """
     failed = set(failed_nodes)
     out: dict[str, str] = {}

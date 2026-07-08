@@ -128,14 +128,14 @@ class TestLogUpdate:
         assert m == {"a": "overload", "b": "node_error"}
 
     def test_failed_kinds_map_is_last_write_wins(self):
-        """`errors` is append-only, so on --resume a node's prior-run record
-        precedes its re-run record. The summary must report the TERMINAL
-        (last) kind, not the stale prior one."""
+        """`errors` accumulates within a run (operator.add), so a node can
+        carry more than one record. The summary must report the TERMINAL
+        (last) kind, not an earlier one."""
         from sqrlly.runtime.logging import failed_kinds_map
         m = failed_kinds_map(
             {"a"},
-            [{"node": "a", "error": "old", "kind": "overload"},   # prior run
-             {"node": "a", "error": "new", "kind": "gate_failure"}],  # this run
+            [{"node": "a", "error": "old", "kind": "overload"},   # earlier record
+             {"node": "a", "error": "new", "kind": "gate_failure"}],  # later record
         )
         assert m == {"a": "gate_failure"}
 

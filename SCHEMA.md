@@ -570,10 +570,29 @@ does not emit a `retryable` boolean — that would freeze a settings-dependent
 policy (`backend_max_retries` defaults to `0`) into the wire contract; the
 consumer maps `kind` → retry over this stable vocabulary.
 
+**Fan-out granularity.** `failed_kinds` keys a fan-out child at
+`<parent>::<item>` and reports *that child's* kind. For a subgraph-template
+fan-out, a failure **inside** the branch surfaces here as `upstream_failed` —
+the child collapses the inner outcome — and the inner root-cause kind survives
+only in the `node_failed` stream, under a `<parent>::<item>::<inner>` id. A
+branch-acquisition abort (an `infra` worktree/setup failure, caught *before*
+the branch subgraph runs) is the exception: it never enters the branch, so it
+surfaces its true `infra` kind here.
+
+**`--resume` accumulates the log, not the state.** A reused `--log <path>`
+opens append, so `node_failed` lines from every `--resume` attempt — each a
+separate `sqrlly run` process emitting its own `workflow_start` /
+`workflow_end` — pile up in one file, and a naive whole-file scan double-counts
+a stale earlier-attempt kind. Read the **last** `workflow_end.failed_kinds`:
+run *state* does not accumulate (each resume reseeds `errors` / `failed_nodes`
+and wipes the checkpoint — `cli/main.py::_seed_state`), so the final
+`workflow_end` is a self-contained per-node resolution of that attempt.
+
 **Known coverage boundary.** A `kind` only rides failures that reach
-`node_failed`. Two families do not today: a broken validator / unevaluable
-route predicate raises and aborts the run (a clean `ClickException`, no
-`node_failed`); and some infrastructure crashes (a `git worktree add` /
-worktree-setup failure) escape as a traceback (`workflow_end` then logs
-`0/0`). Distinguish a halted run from a clean one by the CLI exit code, not by
+`node_failed`. The main escape is a broken validator / unevaluable route
+predicate: it raises and aborts the run as a clean `ClickException`, with no
+`node_failed` event, and a genuinely unexpected exception can likewise abort
+with a raw traceback and a `0/0` `workflow_end`. (Worktree/setup aborts are
+**not** in this class — they surface as `infra`; see the table above.)
+Distinguish a halted run from a clean one by the CLI exit code, not by
 `workflow_end` counts.
