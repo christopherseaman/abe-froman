@@ -8,6 +8,27 @@ from pathlib import Path
 from typing import IO, Any
 
 
+def failed_kinds_map(
+    failed_nodes: "set[str] | list[str]", errors: "list[dict[str, Any]]",
+) -> dict[str, str]:
+    """Map each failed node id to its failure ``kind`` for ``workflow_end``.
+
+    Reads the kind from the node's error record (default ``node_error``).
+    Error records for nodes NOT in ``failed_nodes`` — e.g. a ``warn_continue``
+    note on a node that COMPLETED — are excluded, so the map only ever names
+    genuine failures. ``errors`` is append-only, so on ``--resume`` a node's
+    prior-run record precedes its re-run record; last-write-wins reports the
+    TERMINAL kind, not the stale prior one.
+    """
+    failed = set(failed_nodes)
+    out: dict[str, str] = {}
+    for err in errors or []:
+        node = err.get("node")
+        if node in failed:
+            out[node] = err.get("kind", "node_error")
+    return out
+
+
 def _emit_update_events(emitter: Any, update: dict[str, Any]) -> None:
     """Derive workflow events from a single super-step partial update.
 
@@ -76,11 +97,17 @@ def _emit_update_events(emitter: Any, update: dict[str, Any]) -> None:
 
     for node in update.get("failed_nodes") or []:
         error = ""
+        # Fail-safe default: an unclassified failure reads as `node_error`
+        # (deterministic → halt), never an accidental transient retry kind.
+        kind = "node_error"
         for err in update.get("errors") or []:
             if err.get("node") == node:
                 error = err.get("error", "")
+                kind = err.get("kind", "node_error")
                 break
-        emitter.emit({"event": "node_failed", "node": node, "error": error})
+        emitter.emit(
+            {"event": "node_failed", "node": node, "error": error, "kind": kind}
+        )
 
     for node, count in (update.get("retries") or {}).items():
         emitter.emit({"event": "node_retried", "node": node, "attempt": count})

@@ -342,10 +342,15 @@ async def _run_async(
             # `result` stays {} if _execute_workflow raised before
             # returning; workflow_end then logs zeros. The detailed
             # error surfaces via Click already.
+            from sqrlly.runtime.logging import failed_kinds_map
             logger.emit({
                 "event": "workflow_end",
                 "completed": len(result.get("completed_nodes", set())),
                 "failed": len(result.get("failed_nodes", set())),
+                "failed_kinds": failed_kinds_map(
+                    result.get("failed_nodes", set()),
+                    result.get("errors", []),
+                ),
             })
             logger.close()
 

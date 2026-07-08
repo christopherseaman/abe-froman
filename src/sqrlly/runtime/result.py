@@ -18,6 +18,13 @@ class ExecutionResult:
     success: bool = True
     output: str = ""
     error: str | None = None
+    # Failure classification carried up to the JSONL `node_failed.kind` field
+    # (via `make_failure_update`). Set at the point the failure is classified
+    # (`overload` / `backend_error` in the prompt executor, `timeout` in
+    # `run_with_timeout`); `None` on success or an unclassified dispatch
+    # failure, which the failure funnel defaults to `node_error` (fail-safe
+    # toward halt). See SCHEMA.md for the kind vocabulary + dispositions.
+    error_kind: str | None = None
     structured_output: dict[str, Any] | None = None
     # The directory the node actually executed in (a foreman git
     # worktree, when active). Set by ForemanExecutor; None means the node

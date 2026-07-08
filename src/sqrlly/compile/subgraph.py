@@ -238,6 +238,9 @@ def make_subgraph_node(
                     f"subgraph '{sub_config.name}' had failed nodes: "
                     f"{sub_result['failed_nodes']}"
                 ),
+                # The real failure is an inner subgraph node (see the prefixed
+                # `parent::inner` id in the same stream), not this reference node.
+                "kind": "upstream_failed",
             }]
             update["completed_nodes"] = set()
 
@@ -377,6 +380,8 @@ def make_fan_out_subgraph_invoker(
                     f"subgraph '{sub_config.name}' had failed nodes: "
                     f"{sub_result['failed_nodes']}"
                 ),
+                # An inner branch-subgraph node is the real failure.
+                error_kind="upstream_failed",
             )
         return ExecutionResult(
             success=True,

@@ -210,7 +210,8 @@ def _make_fan_out_node(
                 )
             if not exec_result.success:
                 return _merge_updates(update, make_failure_update(
-                    child_id, exec_result.error
+                    child_id, exec_result.error,
+                    kind=exec_result.error_kind or "node_error",
                 ))
 
             exec_update: dict[str, Any] = {

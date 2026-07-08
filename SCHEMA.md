@@ -540,3 +540,38 @@ nesting-depth cap (`MAX_SUBGRAPH_DEPTH = 10`).
 
 A node with `evaluation:` and no `execute:` runs the gate against an
 empty output — useful as a synthetic checkpoint between phases.
+
+## Failure kinds (JSONL `node_failed.kind`)
+
+Every `node_failed` event carries a `kind` — the classification sqrlly
+already computes internally — so a consumer can decide *retry-with-resume vs
+halt* on a real field instead of pattern-matching the free-text `error` (or,
+worse, the node name). `workflow_end` also carries a `failed_kinds` map
+(`{node_id: kind}`) built from the same records, for a post-run summary read.
+
+| kind | meaning | disposition |
+|---|---|---|
+| `overload` | API 529/overloaded; the opus→sonnet→haiku downgrade chain was exhausted before output. | **transient** |
+| `backend_error` | Backend `send_prompt` raised a non-overload exception surviving `backend_max_retries` (e.g. a `claude exited 1` blip). | **transient** |
+| `timeout` | `TimeoutError` on node execution or on a gate/evaluation await. | **transient** |
+| `gate_failure` | A **blocking** evaluation scored below threshold after `max_retries` — a real quality verdict on work that ran. | **deterministic** |
+| `node_error` | The node (or its dispatch/config/manifest/output-contract) definitively failed; re-running unchanged reproduces it. Also the **fail-safe default** for any unclassified failure. | **deterministic** |
+| `upstream_failed` | This node did **not** do the failing work: a `depends_on` id already failed, or an inner subgraph/fan-out branch node failed. The real failure is elsewhere in the same JSONL stream (a bare sibling id, or a `parent::child`-prefixed inner id). | **not-this-node** |
+
+**Guidance, not policy.** The `disposition` column is advice, and the
+`transient` label has a **deterministic tail** on all three transient kinds —
+a *persistent* `overload` is a capacity crisis, a persistent `backend_error`
+is a missing binary, a persistent `timeout` is a task that is simply too big.
+So a transient kind is worth a **bounded** retry, never an unbounded one:
+consumers must cap retries (worst case: waste ≤ N attempts, then halt). sqrlly
+does not emit a `retryable` boolean — that would freeze a settings-dependent
+policy (`backend_max_retries` defaults to `0`) into the wire contract; the
+consumer maps `kind` → retry over this stable vocabulary.
+
+**Known coverage boundary.** A `kind` only rides failures that reach
+`node_failed`. Two families do not today: a broken validator / unevaluable
+route predicate raises and aborts the run (a clean `ClickException`, no
+`node_failed`); and some infrastructure crashes (a `git worktree add` /
+worktree-setup failure) escape as a traceback (`workflow_end` then logs
+`0/0`). Distinguish a halted run from a clean one by the CLI exit code, not by
+`workflow_end` counts.

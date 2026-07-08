@@ -106,6 +106,62 @@ class TestLogUpdate:
         assert events[0]["node"] == "build"
         assert events[0]["error"] == "exit code 1"
 
+    def test_node_failed_carries_kind(self):
+        """The failure `kind` from the error record is surfaced on the event."""
+        buf = StringIO()
+        logger = JsonlLogger(buf)
+        logger.log_update({
+            "failed_nodes": {"build"},
+            "errors": [{"node": "build", "error": "overloaded", "kind": "overload"}],
+        })
+        event = json.loads(buf.getvalue().strip())
+        assert event["event"] == "node_failed"
+        assert event["kind"] == "overload"
+
+    def test_failed_kinds_map_pairs_node_to_kind(self):
+        from sqrlly.runtime.logging import failed_kinds_map
+        m = failed_kinds_map(
+            {"a", "b"},
+            [{"node": "a", "error": "x", "kind": "overload"},
+             {"node": "b", "error": "y"}],  # no kind → node_error
+        )
+        assert m == {"a": "overload", "b": "node_error"}
+
+    def test_failed_kinds_map_is_last_write_wins(self):
+        """`errors` is append-only, so on --resume a node's prior-run record
+        precedes its re-run record. The summary must report the TERMINAL
+        (last) kind, not the stale prior one."""
+        from sqrlly.runtime.logging import failed_kinds_map
+        m = failed_kinds_map(
+            {"a"},
+            [{"node": "a", "error": "old", "kind": "overload"},   # prior run
+             {"node": "a", "error": "new", "kind": "gate_failure"}],  # this run
+        )
+        assert m == {"a": "gate_failure"}
+
+    def test_failed_kinds_map_excludes_non_failed_nodes(self):
+        """A warn_continue error record sits on a COMPLETED node — it must not
+        leak into the failed-kind map."""
+        from sqrlly.runtime.logging import failed_kinds_map
+        m = failed_kinds_map(
+            {"a"},
+            [{"node": "a", "error": "x", "kind": "gate_failure"},
+             {"node": "c", "error": "below threshold"}],  # c not failed
+        )
+        assert m == {"a": "gate_failure"}
+
+    def test_node_failed_kind_defaults_to_node_error(self):
+        """An error record with no `kind` (a legacy/unclassified site) emits
+        `node_error` — fail-safe toward halt, never an accidental retry kind."""
+        buf = StringIO()
+        logger = JsonlLogger(buf)
+        logger.log_update({
+            "failed_nodes": {"build"},
+            "errors": [{"node": "build", "error": "boom"}],
+        })
+        event = json.loads(buf.getvalue().strip())
+        assert event["kind"] == "node_error"
+
     def test_detects_gate(self):
         """gate_evaluated sources from update.evaluations (real scores)."""
         buf = StringIO()

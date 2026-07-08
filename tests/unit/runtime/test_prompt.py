@@ -167,6 +167,20 @@ class ErrorBackend:
         pass
 
 
+class TimeoutBackend:
+    """Backend whose send_prompt hits its own (params.timeout) deadline."""
+
+    async def send_prompt(
+        self, prompt: str, model: str, workdir: str,
+        timeout: float | None = None,
+    ) -> ExecutionResult:
+        import asyncio
+        raise asyncio.TimeoutError()
+
+    async def close(self) -> None:
+        pass
+
+
 class OverloadThenSucceedBackend:
     """Raises OverloadError until ``fail_count`` is reached, then succeeds.
 
@@ -363,6 +377,19 @@ class TestExecuteRendered:
         )
         assert result.success is False
         assert "connection failed" in result.error
+        assert result.error_kind == "backend_error"
+
+    @pytest.mark.asyncio
+    async def test_backend_timeout_is_kind_timeout_not_backend_error(self, tmp_path):
+        """A backend-level (params.timeout) TimeoutError classifies as
+        `timeout`, not `backend_error` — matching the SCHEMA definition that
+        `timeout` covers a node-execution deadline."""
+        result = await execute_with_downgrade(
+            TimeoutBackend(), "x", "sonnet", str(tmp_path), timeout=0.01,
+            settings=Settings(),
+        )
+        assert result.success is False
+        assert result.error_kind == "timeout"
 
     @pytest.mark.asyncio
     async def test_structured_output_passed_through(self, tmp_path):
@@ -419,6 +446,7 @@ class TestOverloadDowngrade:
         assert result.success is False
         assert "exhausted model chain" in result.error
         assert "haiku" in result.error
+        assert result.error_kind == "overload"
         assert [c[1] for c in backend.calls] == ["opus", "sonnet", "haiku"]
 
     @pytest.mark.asyncio

@@ -48,6 +48,89 @@ does not re-flag them.
   application code — a single build environment beat a distributed
   workflow engine. Keep the remote-fetch branch **modular** so this
   can grow without entangling the every-node local dispatch path.
+  - **DEPRIORITIZED by the actual consumer (champion, 2026-07-07).** The
+    builder/adapter port runs single-environment DELIBERATELY (a single build
+    VM beats a distributed engine for their build/revise-code workflows) and
+    says remote/cloud "isn't our priority." The sqrlly surface that keeps
+    paying off for them is **local orchestration ergonomics** — structured
+    failure signals, clean failed-child resume, native promote, loud drift
+    guards — not distribution. Keep this as a design stream but weight it BELOW
+    the local-ergonomics items when choosing next work.
+
+- [ ] **Structured failure `kind` on `node_failed` / `workflow_end` events —
+  CHAMPION-APPROVED, BUILD (2026-07-07; review
+  `../samus-ai/builder-sqrlly/FAILURE_KIND_REVIEW.md`).** Taxonomy LOCKED: the
+  6-kind kind-only set below, names as proposed. Champion decisions: **do NOT
+  split `node_error`** (they halt on all of it); **no `retryable:bool`**
+  (disposition table → SCHEMA.md as guidance); **`failed_kinds` = include**
+  (cheap, helps summary-consumers); **bounded retry budget is UNIVERSALLY
+  mandatory** — the transient disposition has a deterministic tail on ALL three
+  transient kinds (persistent overload=capacity, backend_error=missing binary,
+  timeout=too-big), so the SCHEMA guidance must say "transient = worth a
+  BOUNDED retry, not unbounded." The champion's top ask; grounded in a real bug.
+  decides retry-with-resume vs halt by GREPPING the run JSONL for
+  `claude exited|backend error|overload` — which false-positived when a node
+  was NAMED `broken-overload-feature` (the name contains "overload"). sqrlly
+  ALREADY knows the real kind internally
+  (`runtime/executor/backends/_overload.py::maybe_raise_overload` →
+  `OverloadError` for transient SDK errors, distinct from a gate/eval failure,
+  timeout, or generic backend error) but THROWS IT AWAY at the event boundary:
+  `node_failed` emits only `{event, node, error:<free-text>}`
+  (`runtime/logging.py`), `workflow_end` only counts (`cli/main.py`). **Ask
+  (surfacing, not new logic):** thread a failure `kind` through
+  `ExecutionResult.error_kind` (set where the exception is classified in
+  `executor/prompt.py::execute_with_downgrade` — overload vs backend_error —
+  and `run_with_timeout` — timeout) and through `make_failure_update(...,
+  kind=)` at every call site (gate_failure, manifest/drift, dep_failure,
+  output_contract), then emit it on `node_failed` (and failed-id→kind on
+  `workflow_end`). Consumer then keys retry-vs-halt on a real signal and
+  deletes the log-grep classifier. Recommend `kind` (specific) over a bare
+  `retryable: bool` — a bool bakes a retry POLICY into sqrlly; let the consumer
+  map kind→retry. Additive/backward-compatible event-schema change. This is the
+  local-orchestration-ergonomics surface the champion values most.
+  - **TAXONOMY PROPOSAL (champion-facing) at `.temp/FAILURE_KIND_TAXONOMY.md`**
+    (workflow: 4 parallel failure-site audits + completeness critic → 3
+    taxonomy variants → adversarial judge). Recommends **6 kinds, KIND-ONLY**
+    sized to the CONSUMER'S decision (not the ~24 cause sites): `overload` /
+    `backend_error` / `timeout` (transient) · `gate_failure` / `node_error`
+    (deterministic) · `upstream_failed` (not-this-node — retry the ROOT, not a
+    blocked node). Recommend AGAINST `retryable:bool` (freezes a
+    settings-dependent policy — `backend_max_retries` defaults 0, so a static
+    table would lie; and a bool has no cell for the not-this-node case). Plumb
+    via `ExecutionResult.kind` + the 4 `errors[]` choke points
+    (`make_failure_update`, the inline output_contract / fail_blocking /
+    subgraph-parent dicts) → emit on `node_failed` + `failed_kinds` map on
+    `workflow_end`; unknown source defaults `node_error` (fail-safe toward
+    halt). **Honest scope caveats (surfacing ≠ new failure handling):** three
+    families are NOT reachable by a kind-on-`node_failed` today and are called
+    out as separate follow-ups — (1) raise-and-abort (`EvaluationError` /
+    `RouteError` caught at `cli/main.py:804` → `ClickException`, never enter
+    `failed_nodes`); (2) uncaught crashes (foreman worktree-add / worktree
+    setup / no-backend `RuntimeError` escape as a traceback, `workflow_end`
+    logs 0/0); (3) `warn_continue` emits `node_completed` (not a failure). Two
+    disclosed hazards for the consumer's retry loop: `backend_error` conflates
+    a transient blip with a missing-`claude` binary (bounded retry budget
+    mandatory), and an LLM-gate backend outage launders to score 0.0 →
+    surfaces as deterministic `gate_failure` (halted, not retried). Effort ~1
+    day (surfacing-only). Champion reviewed + approved; all 4 questions answered
+    and folded into the parent item's LOCKED decisions.
+
+- [ ] **Convert uncaught worktree/setup crashes into a `node_failed` with an
+  infra/transient `kind` (champion's next-priority follow-up 2026-07-07).**
+  Distinct from (and after) the `kind`-surfacing change — this is new failure
+  HANDLING, not surfacing. Today `foreman.py:198` (git worktree add
+  `RuntimeError`), `worktree_share.py` setup/share failures, and the no-backend
+  / preset-missing `RuntimeError` are NOT in the `cli/main.py:804` except
+  tuple, so they escape as a raw traceback: no `node_failed` event and
+  `workflow_end` logs `0/0` (a halted run is indistinguishable from a clean
+  zero-failure run at the event layer; the champion distinguishes only via the
+  runner exit code). These are the **only genuinely transient-infra failures in
+  the system** — a worktree / disk blip a resume loop SHOULD retry — yet
+  they're invisible to the exact consumer that wants them. Fix: catch these at
+  the node/foreman boundary and emit a `node_failed` with `kind: infra`
+  (transient) instead of aborting, so the run settles cleanly and the consumer
+  can retry-with-resume. Champion: "of everything adjacent, the highest-value
+  future ask for our recovery loops."
 
 **Kept — do not re-flag (footprint audit "leave alone"):**
 
@@ -829,10 +912,38 @@ and only the formerly-failed child re-runs.
     — the corrected/loud message is inherently part of the Phase 1 drift
     detection, not a separable always-on fix (stable-id runs already print the
     truthful count).
-  - **DEFER Phase 2** (snapshot-reconcile: persist the manifest + opt-in
-    `fan_out.resume: reconcile`) and **case (b)** (fan-out-in-subgraph
-    individual skippability) — no consumer; the champion explicitly does not
-    need either. Revisit only when a real consumer appears.
+  - **Phase 2 — DESIGN-COMPLETE, PERMANENTLY DEFERRED (champion review
+    2026-07-07).** Champion reviewed the brief and confirmed **stable-id-as-
+    contract is their PERMANENT answer, not a temporary state** — both their
+    dispatchers pass through stable ids from a frozen upstream file by
+    construction, no legitimately-drifting manifest exists or is on their
+    roadmap, so reconcile adds nothing (a stable re-read IS the snapshot).
+    Don't build until a consumer with ALL THREE triggers appears
+    (legitimately-mutating manifest + failed-child-only resume + `final_nodes`).
+    Design is build-ready: both stress-test fixes validated by the champion,
+    and the 3 open questions answered — **Q2 parent-freeze: YES** (freeze
+    parent EXECUTE under reconcile, reconcile-aware skip in `_seed_state`,
+    preserve `node_outputs[parent]`); **Q3: capture-always** (only failed item
+    dicts, negligible cost, preserves flip-to-reconcile at resume); **Q4:
+    advisory lint, NOT hard error** (intra-run goto re-fire never enters
+    `_seed_state` so a reconcile flag on a self-looping fan-out is structurally
+    INERT, not corrupting — warn, don't fail; contrast Phase 1's `fail` which
+    guards a genuinely corrupting case). Also **DEFER case (b)**
+    (fan-out-in-subgraph individual skippability) — no consumer. Phase 2 DESIGN
+    BRIEF (grounded in shipped 0.9.0, champion-facing) at
+    `.temp/FANOUT_RESUME_PHASE2_BRIEF.md`: recommends **failed-items-only
+    snapshot-reconcile** (per-fan-out `resume: reconcile|refresh`, default
+    refresh = 0.9.0 byte-for-byte; persist only FAILED item dicts via a
+    child-stamped `_fan_out_failed_items` channel; reconcile skips
+    `_read_manifest`+drift-guard and re-emits only the failed items). Two
+    load-bearing corrections the stress-test surfaced: the fan-in barrier
+    (`_make_final_fan_out_node`, re-reads the manifest → would deadlock on a
+    drifted re-fan) must take its expected set from `_fan_prior_children`; and
+    the parent EXECUTE node must be frozen under reconcile so a
+    nondeterministic manifest-gen parent doesn't skew `parent_output`. Effort
+    M; build trigger = a consumer with a legitimately-mutating manifest that
+    still needs failed-child-only resume. Champion review:
+    `../samus-ai/builder-sqrlly/FANOUT_RESUME_PHASE2_REVIEW.md`.
 
 ### Builder reconciliation findings (2026-06-24, vs builder-sqrlly @ 0.7.6)
 

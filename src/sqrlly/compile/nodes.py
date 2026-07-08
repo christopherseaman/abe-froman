@@ -46,6 +46,8 @@ def check_dep_failed(node: Node, state: WorkflowState) -> dict | None:
                     {
                         "node": node.id,
                         "error": f"Skipped: dependency '{dep}' failed",
+                        # This node never ran — the real failure is the dep.
+                        "kind": "upstream_failed",
                     }
                 ],
             }
@@ -234,13 +236,20 @@ async def run_with_timeout(
     except asyncio.TimeoutError:
         return ExecutionResult(
             success=False, error=f"Node timed out after {timeout}s",
+            error_kind="timeout",
         )
 
 
-def make_failure_update(node_id: str, error_message: str) -> dict[str, Any]:
+def make_failure_update(
+    node_id: str, error_message: str, kind: str = "node_error",
+) -> dict[str, Any]:
+    """Build a single-node failure update. ``kind`` is the failure
+    classification surfaced on the JSONL ``node_failed`` event; it defaults to
+    ``node_error`` (deterministic → halt), the fail-safe for any site that
+    can't name a more specific kind."""
     return {
         "failed_nodes": {node_id},
-        "errors": [{"node": node_id, "error": error_message}],
+        "errors": [{"node": node_id, "error": error_message, "kind": kind}],
     }
 
 
@@ -387,6 +396,9 @@ def build_outcome_only_update(
             {
                 "node": key,
                 "error": f"Evaluation failed after {max_retries} retries ({summary})",
+                # A blocking eval scored below threshold on work that ran — a
+                # deterministic quality verdict, not a transient failure.
+                "kind": "gate_failure",
             }
         ]
     elif outcome == "warn_continue":
@@ -522,7 +534,7 @@ async def _run_eval_core(
             eval_result = await eval_call
     except asyncio.TimeoutError:
         return None, make_failure_update(
-            node_id, f"Evaluation timed out after {timeout}s"
+            node_id, f"Evaluation timed out after {timeout}s", kind="timeout",
         )
     return eval_result, None
 
@@ -628,7 +640,12 @@ def _make_execution_node(
             timeout,
         )
         if not exec_result.success:
-            return make_failure_update(node.id, exec_result.error)
+            # Carry the classification the executor set (overload / backend_error
+            # / timeout); an unclassified dispatch failure defaults to node_error.
+            return make_failure_update(
+                node.id, exec_result.error,
+                kind=exec_result.error_kind or "node_error",
+            )
 
         if node.output_contract:
             # Validate where the node actually ran — its foreman worktree
@@ -648,6 +665,9 @@ def _make_execution_node(
                                 f"Output contract violated: missing files: "
                                 f"{', '.join(missing)}"
                             ),
+                            # Deterministic: the node ran but didn't produce
+                            # its required files.
+                            "kind": "node_error",
                         }
                     ],
                     "node_outputs": {node.id: exec_result.output},

@@ -127,13 +127,23 @@ async def execute_with_downgrade(
                                 f"API overloaded, exhausted model chain "
                                 f"(last: {current_model})"
                             ),
+                            error_kind="overload",
                         )
                     current_model = next_model
             break
         except Exception as e:
             if attempt >= settings.backend_max_retries:
+                # A backend-level (params.timeout) deadline is a `timeout`, not
+                # a generic `backend_error` — classified only at exhaustion so
+                # the retry loop is unchanged.
+                if isinstance(e, asyncio.TimeoutError):
+                    return ExecutionResult(
+                        success=False, error=f"Backend timed out: {e}",
+                        error_kind="timeout",
+                    )
                 return ExecutionResult(
-                    success=False, error=f"Backend error: {e}"
+                    success=False, error=f"Backend error: {e}",
+                    error_kind="backend_error",
                 )
             attempt += 1
             delay = retry_delay(attempt, settings.retry_backoff)

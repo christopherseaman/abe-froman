@@ -5,6 +5,12 @@ All notable changes to sqrlly are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-07-07
+
+### Added
+
+- Structured failure **`kind`** on the `node_failed` JSONL event, and a **`failed_kinds`** map (`{node_id: kind}`) on `workflow_end`. A consumer can now decide *retry-with-resume vs halt* on a real field instead of grepping the free-text `error` (which false-positived when a node was *named* `broken-overload-feature`). Six kinds surface the classification sqrlly already computes: `overload` / `backend_error` / `timeout` (transient), `gate_failure` / `node_error` (deterministic, `node_error` also the fail-safe default), and `upstream_failed` (this node was blocked by a failed dependency or inner subgraph/fan-out branch — the real failure is elsewhere in the stream). Threaded via a new `ExecutionResult.error_kind` (set at the classification points — overload/backend_error in the prompt executor, timeout in `run_with_timeout`) and `make_failure_update(..., kind=)` at every failure site. No `retryable` boolean is emitted — it would freeze a settings-dependent policy (`backend_max_retries` defaults to 0) into the wire contract; the disposition table is published in `SCHEMA.md` as guidance (transient kinds warrant a *bounded* retry — persistent overload/backend_error/timeout each have a deterministic tail). Additive/backward-compatible: existing `event`/`node`/`error` fields are unchanged. Requested by the samus builder/adapter port. Coverage boundary (documented): raise-and-abort failures (broken validator / route predicate → `ClickException`) and uncaught infra crashes (worktree add/setup) do not reach `node_failed` — a separate follow-up.
+
 ## [0.9.0] - 2026-07-07
 
 ### Added

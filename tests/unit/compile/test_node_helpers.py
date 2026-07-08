@@ -472,12 +472,18 @@ class TestRunWithTimeout:
 
 
 class TestMakeFailureUpdate:
-    def test_structure(self):
+    def test_structure_defaults_kind_to_node_error(self):
         result = make_failure_update("p1", "something broke")
         assert result == {
             "failed_nodes": {"p1"},
-            "errors": [{"node": "p1", "error": "something broke"}],
+            "errors": [
+                {"node": "p1", "error": "something broke", "kind": "node_error"},
+            ],
         }
+
+    def test_explicit_kind_is_carried(self):
+        result = make_failure_update("p1", "overloaded", kind="overload")
+        assert result["errors"][0]["kind"] == "overload"
 
 
 class TestAssembleSuccessUpdate:
