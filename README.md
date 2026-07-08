@@ -100,7 +100,7 @@ sqrlly run examples/jokes/workflow.yaml --log run.jsonl
 ```
 
 - `validate` — compiles the graph and reports the node count.
-- `run` — executes the workflow; with `--log`, writes a JSONL event stream (`workflow_start`, `node_completed`, `gate_evaluated`, `node_retried`, `workflow_end`).
+- `run` — executes the workflow; with `--log`, writes a JSONL event stream (`workflow_start`, `node_model`, `node_completed`, `node_failed`, `gate_evaluated`, `node_retried`, `workflow_end`).
 
 ## How it works
 

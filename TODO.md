@@ -876,7 +876,7 @@ and only the formerly-failed child re-runs.
   the BOTTOM of the downgrade chain — no lower model to fall to, so backoff is
   its only recourse. Ship when convenient; keep on the list for that case.
 
-- [ ] **Fan-out `--resume` drift guard (Phase 1) — CHAMPION-GREENLIT 2026-07-07.**
+- [x] **Fan-out `--resume` drift guard (Phase 1) — SHIPPED 0.9.0 (champion-greenlit 2026-07-07).**
   Runtime-verified (real CLI, `worktree:auto`, foreman) that bare `--resume`
   already re-runs ONLY the failed child for the two common shapes: top-level
   fan-out + stable ids, AND subgraph-*template* fan-out (each branch a member

@@ -357,7 +357,14 @@ wave — are absent from both.
   ids need only be unique within their own subgraph, not across
   siblings. Note: events carry status/score, not the node's
   full output text — capture that from the node itself if you need it.
-- A failed `run` exits non-zero and lists the failed nodes.
+- A failed `run` exits non-zero and lists the failed nodes. Each
+  `node_failed` event carries a `kind` — `overload` / `backend_error` /
+  `timeout` (transient — worth a *bounded* retry, e.g. via `--resume`),
+  `gate_failure` / `node_error` (deterministic — halt until fixed), and
+  `upstream_failed` (this node was blocked; the real failure is elsewhere
+  in the stream). `workflow_end` also carries a `failed_kinds` map. Branch
+  retry-vs-halt on `kind`, not on the free-text `error`. See the "Failure
+  kinds" section in `SCHEMA.md`.
 - A node that keeps retrying is failing its gate — inspect the
   `gate_evaluated` events for the `score` (and, for a `dimensions:`
   gate, per-dimension `scores` plus `dimension_thresholds` — the
@@ -398,6 +405,14 @@ large parallel build that loses one branch resumes cheaply.
   `settings.presets`, exactly one must have `default: true`.
 - **Subgraphs share the schema** — a subgraph `.yaml` is an ordinary
   workflow and must validate standalone.
+- **Fan-out manifests need STABLE item ids for `--resume`** — a manifest
+  generated at runtime must emit deterministic `id`s (not a uuid /
+  per-run counter / positional index). On `--resume` a manifest that
+  DROPS a prior branch id trips `settings.on_manifest_drift` (default
+  `fail` halts before any `Send`; `warn` proceeds) — else completed
+  siblings silently vanish and the failed child is orphaned. A stable-id
+  or purely additive re-fan never trips it; `validate`/`run` flag any
+  runtime-manifest fan-out with an advisory.
 - **Workflow YAML is trusted input** — `file://` / local paths are NOT
   confined to the workdir: an absolute (`/etc/…`) or `../`-relative
   `execute.url` or `validator` reads/runs with the orchestrator

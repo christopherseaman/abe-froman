@@ -494,9 +494,9 @@ subgraph instead of a single executor call.
 
 ## Fan-out resume behavior
 
-On `--resume` after a failed run, fan-out children that failed are re-run; siblings that completed successfully are frozen (not re-billed). This asymmetry means a workflow that fans out over a manifest can efficiently re-test only the broken items without re-running good ones.
+On `--resume` after a failed run, fan-out children that failed are re-run; siblings that completed successfully are frozen (not re-billed). This asymmetry means a workflow that fans out over a manifest can efficiently re-test only the broken items without re-running good ones. The parent re-reads its manifest on re-fan; if prior branch ids are dropped, the run halts or warns per `settings.on_manifest_drift` (see the `on_manifest_drift` row) — a stable-id or purely additive re-fan never trips it.
 
-When using `--resume-from <fan_out_parent>`, the parent re-fans over its manifest, but only non-completed children from that fan-out are dispatched — completed siblings remain frozen. (Prior behavior: all children were re-run; now: only failed/missing children run.)
+When using `--resume-from <fan_out_parent>`, the parent re-fans over its manifest, but only non-completed children from that fan-out are dispatched — completed siblings remain frozen.
 
 ---
 
