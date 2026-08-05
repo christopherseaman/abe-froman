@@ -124,12 +124,6 @@ nodes:
           - "output/paper.pdf"
 settings:
   preamble_file: "examples/absurd-paper/preamble.md"
-  # Generate with a clean, reproducible Claude: safe_mode runs every cli
-  # call as `claude --safe-mode`, disabling operator customizations (output
-  # styles, CLAUDE.md, skills, MCP, hooks). Without it, e.g. an
-  # "explanatory" output style prepends commentary into paper.md or a
-  # gate's JSON. Override per run with `--safe-mode` / `--no-safe-mode`.
-  safe_mode: true
   # Run every node in the workdir (no per-node git worktrees). The paper
   # is assembled across nodes via the shared `output/` directory, so the
   # nodes must agree on one filesystem location — `persist` writes
@@ -144,14 +138,14 @@ settings:
   presets:
     default:
       transport: cli
-      provider: anthropic
-      model: "sonnet"
+      provider: openai
+      model: "gpt-5.6-luna"
       default: true
     uv_script:
       kind: command
       # Every python script node runs under PATH-resolved `uv` — so the
       # demo's only executable deps are `uv` (you already have it from
-      # `uv tool install sqrlly`) and `claude`. `--script` resolves any
+      # `uv tool install sqrlly`) and `codex`. `--script` resolves any
       # PEP 723 inline deps on demand (render_pdf.py needs markdown +
       # weasyprint; the stdlib scripts declare none).
       command: "uv run --script"

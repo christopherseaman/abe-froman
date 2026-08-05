@@ -47,11 +47,11 @@ def pytest_collection_modifyitems(config, items):
     cli_tests = [
         i for i in items if "tests/cli/" in str(i.fspath).replace("\\", "/")
     ]
-    if cli_tests and shutil.which("claude") is None:
+    if cli_tests and shutil.which("codex") is None:
         pytest.exit(
-            "CLI transport tests collected but `claude` not on PATH.\n"
-            "Install the Claude CLI (https://docs.anthropic.com/claude/docs/claude-code), "
-            "or run with `--ignore=tests/cli`.",
+            "CLI transport tests collected but `codex` not on PATH.\n"
+            "Install and authenticate the Codex CLI, or run with "
+            "`--ignore=tests/cli`.",
             returncode=4,
         )
 

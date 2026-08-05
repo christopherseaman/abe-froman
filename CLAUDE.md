@@ -1,7 +1,7 @@
 # sqrlly — Operator Notes for Claude
 
-Workflow orchestrator using LangGraph for graph topology and Claude
-(via the local ACP adapter) / scripts for execution.
+Workflow orchestrator using LangGraph for graph topology and local agent
+CLIs (Codex by default, Claude via ACP/CLI) / scripts for execution.
 
 This file is operational guidance for Claude Code working inside this
 repo. Narrative documentation lives elsewhere:
@@ -49,11 +49,11 @@ enforced by `tests/architecture/test_layers.py`.
 ```bash
 uv sync                                      # core deps
 npm i -g @zed-industries/claude-code-acp     # for ACP backend / acp tests
-# `claude` CLI on PATH                       # for cli backend / cli tests
+# `codex` CLI on PATH                        # for cli backend / cli tests
 
 uv run pytest tests/ --ignore=tests/acp --ignore=tests/cli -v   # ~1k tests, ~50s
 uv run pytest tests/acp -v                   # ACP tests, ~2 min, requires npm package above
-uv run pytest tests/cli -v                   # CLI tests, ~15s, requires `claude` on PATH
+uv run pytest tests/cli -v                   # CLI tests, ~15s, requires `codex` on PATH
 uv run pytest -m live -v                     # restored live-roundtrip (cli-only)
 uv run pytest tests/architecture/test_layers.py  # layer rule enforcement
 
@@ -62,7 +62,7 @@ uv run sqrlly run config.yaml             # uses settings.presets (required)
 uv run sqrlly run config.yaml -p <name>   # force a named preset from settings.presets
 uv run sqrlly run config.yaml --resume    # resume from checkpoint
 uv run sqrlly run config.yaml --entry <node>  # cold-start: run <node> + downstream, no checkpoint
-uv run sqrlly run config.yaml --safe-mode  # claude --safe-mode (no operator output-styles/CLAUDE.md/skills/MCP); overrides settings.safe_mode
+uv run sqrlly run config.yaml --safe-mode  # Claude-only clean mode; no effect on Codex/ACP
 uv run sqrlly run config.yaml --log out.jsonl
 uv run sqrlly graph config.yaml           # Mermaid topology
 uv run sqrlly view config.yaml            # self-contained HTML viewer
@@ -171,8 +171,8 @@ langgraph-free).
   (named-preset → backend registry; CLI `--preset` override).
 - `executor/backends/{acp,cli,factory}.py`. Two LLM backends
   coexist: ACP (warm `claude-code-acp` adapter) and CLI
-  (subprocess-per-call `claude -p`).
-  `factory.create_backend_from_preset` is a two-row lookup table
+  (subprocess-per-call Codex or Claude).
+  `factory.create_backend_from_preset` is a lookup table
   keyed on `(transport, provider)`.
 - `executor/backends/_overload.py` — `maybe_raise_overload` +
   `ACP_OVERLOAD_SUBSTRINGS`. Both ACP and CLI backends share the
@@ -256,7 +256,7 @@ resolver sees) — distinct from faking what an external system returns.
   top-level parent). v1: like `--resume`, subgraph inner nodes are not
   individually addressable as the entry.
 - **CLI backend kills the whole process group on timeout** — the CLI backend
-  spawns `claude -p` with `start_new_session=True` (own process group) and, on
+  spawns the provider CLI with `start_new_session=True` (own process group) and, on
   timeout/cancel, SIGTERM→SIGKILLs the process GROUP
   (`runtime/executor/backends/cli.py::_kill_process_group`), so descendants
   (MCP servers, test runners, headless browsers) are reaped too. Unlike ACP —

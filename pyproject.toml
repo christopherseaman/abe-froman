@@ -1,7 +1,7 @@
 [project]
 name = "sqrlly"
 version = "0.9.3"
-description = "Workflow orchestrator using LangGraph with Claude (via ACP) and script execution backends"
+description = "Workflow orchestrator using LangGraph with local agent CLIs and script execution backends"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
@@ -107,6 +107,7 @@ exclude = [
     "**/*.db-wal",
     "/.env",
     "/CLAUDE.md",
+    "/AGENTS.md",
     "/TODO.md",
     # In-flight superpowers plan/spec docs and SDD scratch must never
     # ship to PyPI (the tracked set is deleted after each feature lands).
@@ -122,7 +123,7 @@ testpaths = ["tests"]
 pythonpath = ["tests"]
 markers = [
     "acp: tests requiring a live ACP adapter + Claude API (may be slow/flaky)",
-    "cli: tests requiring the `claude` CLI on PATH (transport: cli; may be slow/flaky)",
+    "cli: tests requiring the `codex` CLI on PATH (transport: cli; may be slow/flaky)",
     "live: tests requiring live network access (consumed by tests/e2e/test_live_backend_roundtrip.py — cli-only after the api-transport strip)",
 ]
 

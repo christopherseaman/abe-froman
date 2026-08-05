@@ -319,6 +319,40 @@ class TestLlmPresetTransport:
         )
         assert p.transport == "acp"
 
+    def test_codex_cli_provider_validates(self):
+        p = LlmPreset(
+            transport="cli", provider="openai",
+            model="gpt-5.6-luna", default=True,
+        )
+        assert p.provider == "openai"
+
+    def test_transport_and_provider_default_to_codex(self):
+        p = LlmPreset(model="gpt-5.6-luna", default=True)
+        assert p.transport == "cli"
+        assert p.provider == "openai"
+
+    def test_anthropic_provider_defaults_to_claude_cli(self):
+        p = LlmPreset(provider="anthropic", model="sonnet", default=True)
+        assert p.transport == "cli"
+
+    def test_acp_without_provider_is_rejected(self):
+        with pytest.raises(ValidationError, match="requires provider: anthropic"):
+            LlmPreset(transport="acp", model="sonnet", default=True)
+
+    def test_codex_provider_rejected_for_acp(self):
+        with pytest.raises(ValidationError, match="requires provider: anthropic"):
+            LlmPreset(
+                transport="acp", provider="openai",
+                model="gpt-5.6-luna", default=True,
+            )
+
+    def test_codex_rejects_claude_tool_flags(self):
+        with pytest.raises(ValidationError, match="only supported"):
+            LlmPreset(
+                transport="cli", provider="openai", model="gpt-5.6-luna",
+                permission_mode="plan",
+            )
+
     def test_api_transport_still_rejected(self):
         """The 0.2.x strip removed ``api``; cli's restoration must not
         leak a regression that re-accepts it."""
@@ -753,7 +787,7 @@ class TestFullExampleParse:
 
         assert config.name == "Absurd Academic Paper"
         assert len(config.nodes) > 0
-        # Migrated to presets; default preset's model is sonnet. The
+        # The default preset uses Codex. The
         # registry now mixes LlmPresets with a CommandPreset (PDF render),
         # and CommandPresets carry no `default` flag — hence getattr.
         defaults = [
@@ -761,7 +795,7 @@ class TestFullExampleParse:
             if getattr(p, "default", False)
         ]
         assert len(defaults) == 1
-        assert defaults[0].model == "sonnet"
+        assert defaults[0].model == "gpt-5.6-luna"
 
     def test_example_has_all_execution_types(self, kitchen_sink_workflow_path):
         """Kitchen-sink YAML exercises prompt, subgraph reference, and script nodes."""

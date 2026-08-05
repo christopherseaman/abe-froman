@@ -36,6 +36,8 @@ class TestInit:
         assert (target / "workflow.yaml").exists()
         assert (target / "prompts" / "hello.md").exists()
         wf = (target / "workflow.yaml").read_text()
+        assert "provider: openai" in wf
+        assert "model: gpt-5.6-luna" in wf
         assert "transport: cli" in wf
         assert 'name: "My sqrlly workflow"' in wf
 

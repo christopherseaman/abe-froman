@@ -100,6 +100,24 @@ class TestCLIBackendArgvAssembly:
         assert "--allowedTools Edit" in result.output
 
     @pytest.mark.asyncio
+    async def test_codex_prompt_marker_follows_options(self, tmp_path):
+        fake = _write_fake(
+            tmp_path, "codex-fake", '#!/bin/sh\necho "argv: $@"\n',
+        )
+        backend = CLIBackend(
+            argv_prefix=(str(fake), "exec", "--skip-git-repo-check"),
+            prompt_arg="-",
+            cli_args=["--ephemeral"],
+        )
+        result = await backend.send_prompt(
+            "hello", "gpt-5.6-luna", str(tmp_path),
+        )
+        assert result.output == (
+            "argv: exec --skip-git-repo-check --model gpt-5.6-luna "
+            "--ephemeral -"
+        )
+
+    @pytest.mark.asyncio
     async def test_argv_changes_with_model(self, tmp_path):
         """Different `model=` → different `--model <value>` token."""
         fake = _write_fake(

@@ -22,7 +22,7 @@ SKILL_INSTALL_REL = Path(".agents/skills/sqrlly/SKILL.md")
 # Curated examples scaffoldable via `sqrlly init --example`. dest -> repo src.
 EXAMPLES: dict[str, dict] = {
     "jokes": {
-        "description": "LLM prompt + quality gate + multi-node (needs an authed `claude` CLI).",
+        "description": "LLM prompt + quality gate + multi-node (needs an authed `codex` CLI).",
         "files": {
             "workflow.yaml": "examples/jokes/workflow.yaml",
             "generate.md": "examples/jokes/generate.md",
@@ -46,7 +46,7 @@ EXAMPLES: dict[str, dict] = {
         "files": {"workflow.yaml": "examples/pipeline_style/workflow.yaml"},
     },
     "absurd-paper": {
-        "description": "Full showcase: prompts + multi-dim gates + subgraph → rendered PDF (needs authed `claude` CLI + `uv`).",
+        "description": "Full showcase: prompts + multi-dim gates + subgraph → rendered PDF (needs authed `codex` CLI + `uv`).",
         "files": {
             "gates/abstract_multi_dim.md": "examples/absurd-paper/gates/abstract_multi_dim.md",
             "gates/choose_topic_eval.md": "examples/absurd-paper/gates/choose_topic_eval.md",
@@ -175,9 +175,9 @@ nodes:
 settings:
   presets:
     default:
-      transport: cli         # cli | acp
-      provider: anthropic
-      model: sonnet
+      transport: cli
+      provider: openai       # uses Codex CLI; anthropic selects Claude
+      model: gpt-5.6-luna
       default: true
 """
 

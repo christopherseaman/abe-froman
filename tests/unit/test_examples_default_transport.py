@@ -53,6 +53,25 @@ def test_example_default_run_avoids_acp_transport(path):
     )
 
 
+@pytest.mark.parametrize(
+    "path", EXAMPLE_YAMLS, ids=lambda p: str(p.relative_to(EXAMPLES_DIR))
+)
+def test_example_default_llm_run_uses_codex_cli(path):
+    selected, presets = _selected_presets(path)
+    llm_selected = [
+        (name, presets[name])
+        for name in selected
+        if isinstance(presets.get(name), LlmPreset)
+    ]
+    assert all(
+        preset.transport == "cli" and preset.provider == "openai"
+        for _, preset in llm_selected
+    ), (
+        f"{path.relative_to(EXAMPLES_DIR)} has a non-Codex selected LLM "
+        f"preset: {[(name, p.transport, p.provider) for name, p in llm_selected]!r}"
+    )
+
+
 def test_guard_covers_every_example_yaml():
     """The parametrization must actually discover the example tree — an empty
     sweep would make the guard above vacuously pass."""

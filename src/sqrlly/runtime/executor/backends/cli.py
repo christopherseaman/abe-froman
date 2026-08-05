@@ -1,6 +1,6 @@
 """Subprocess-per-call CLI backend.
 
-Spawns a fresh ``claude -p`` (or any ``provider`` CLI) subprocess per
+Spawns a fresh provider CLI subprocess per
 ``send_prompt``. No warm process, no protocol, no shared accumulator —
 every call is fully independent. Concurrent calls get real
 ``asyncio.create_subprocess_exec`` parallelism without contending for a
@@ -10,10 +10,8 @@ Lifecycle: zero. ``close()`` is a no-op. There is no in-process state
 to tear down, and each subprocess inherits / exits on its own.
 
 Overload mapping uses the same substring set as the ACP backend
-(``ACP_OVERLOAD_SUBSTRINGS = {"529", "overload"}``) — Claude's
-overload responses are identical across transports because both
-ultimately hit the same upstream API; the name "ACP_OVERLOAD_SUBSTRINGS"
-is kept for historical reasons but the set is shared by design.
+(``ACP_OVERLOAD_SUBSTRINGS = {"529", "overload"}``). The historical
+constant name is retained, but the set is shared by all CLI providers.
 """
 from __future__ import annotations
 
@@ -34,8 +32,8 @@ async def _kill_process_group(proc: Any) -> None:
 
     The child is spawned with ``start_new_session=True``, so it is the
     leader of its own process group and ``os.getpgid(proc.pid)`` is the
-    group containing every descendant ``claude`` forked (MCP servers, test
-    runners, headless browsers). ``proc.kill()`` would signal only the
+    group containing every descendant the provider CLI forked (MCP servers,
+    test runners, headless browsers). ``proc.kill()`` would signal only the
     direct child and leak that tree; ``os.killpg`` reaches the whole group.
 
     No ``/proc`` walk is needed (unlike ``backends/acp.py``): the ACP path
@@ -65,17 +63,17 @@ async def _kill_process_group(proc: Any) -> None:
 class CLIBackend:
     """Subprocess-per-call LLM backend.
 
-    Each ``send_prompt`` spawns a fresh ``claude -p --model <model>``
-    subprocess, pipes the prompt on stdin, captures stdout as the
-    response. Exit code 0 → success. On non-zero exit, BOTH streams are
-    inspected for overload substrings (``claude -p`` reports overload /
-    rate-limit on stdout, not stderr) and surfaced in the error.
+    Each ``send_prompt`` spawns a fresh provider CLI subprocess, pipes the
+    prompt on stdin, and captures stdout as the response. Exit code 0 →
+    success. On non-zero exit, both streams are inspected for overload
+    substrings and surfaced in the error.
     """
 
     def __init__(
         self,
         argv_prefix: tuple[str, ...] = ("claude", "-p"),
         *,
+        prompt_arg: str | None = None,
         permission_mode: str | None = None,
         allowed_tools: list[str] | None = None,
         disallowed_tools: list[str] | None = None,
@@ -83,6 +81,7 @@ class CLIBackend:
         env: dict[str, str] | None = None,
     ):
         self._argv_prefix = argv_prefix
+        self._prompt_arg = prompt_arg
         self._permission_mode = permission_mode
         self._allowed_tools = allowed_tools
         self._disallowed_tools = disallowed_tools
@@ -90,8 +89,7 @@ class CLIBackend:
         self._env = env
 
     def _tool_argv(self) -> list[str]:
-        """Tool-permission flags appended to every invocation. Empty when
-        the preset sets none → bare ``claude -p`` (the prior behavior)."""
+        """Provider-specific flags appended to every invocation."""
         argv: list[str] = []
         if self._permission_mode:
             argv += ["--permission-mode", self._permission_mode]
@@ -108,6 +106,8 @@ class CLIBackend:
         timeout: float | None = None,
     ) -> ExecutionResult:
         argv = [*self._argv_prefix, "--model", model, *self._tool_argv()]
+        if self._prompt_arg is not None:
+            argv.append(self._prompt_arg)
         # Overlay the preset env on the inherited environment; empty → None
         # (inherit unchanged), preserving prior behavior exactly.
         proc_env = {**os.environ, **self._env} if self._env else None
@@ -126,9 +126,9 @@ class CLIBackend:
                 start_new_session=True,
             )
         except FileNotFoundError as e:
-            # The CLI binary (default `claude`) isn't on PATH. Surface an
+            # The CLI binary isn't on PATH. Surface an
             # actionable message instead of a bare FileNotFoundError errno —
-            # a user who installed sqrlly but not `claude` hits this on the
+            # a user who installed sqrlly but not the selected CLI hits this on the
             # first prompt node.
             missing = e.filename or self._argv_prefix[0]
             raise RuntimeError(
@@ -151,7 +151,7 @@ class CLIBackend:
             raise
         except asyncio.CancelledError:
             # The task was cancelled (e.g. the orchestrator is shutting down
-            # an in-flight node). Kill the process group so the `claude` subtree
+            # an in-flight node). Kill the process group so the provider CLI subtree
             # doesn't leak, then re-raise so cooperative cancellation propagates.
             await _kill_process_group(proc)
             raise
@@ -159,13 +159,13 @@ class CLIBackend:
         if proc.returncode != 0:
             stderr_text = stderr_b.decode().strip()
             stdout_text = stdout_b.decode().strip()
-            # `claude -p` writes its result AND its diagnostics (overload /
+            # Provider CLIs may write their result and diagnostics (overload /
             # rate-limit / usage-limit messages) to STDOUT, not stderr — so
-            # on a non-zero exit the actual reason is usually in stdout.
+            # on a non-zero exit the actual reason may be in stdout.
             # Feed BOTH streams to the overload check (a 529/overload on
             # stdout must still engage the downgrade chain, not go terminal)
             # and surface BOTH in the error so the failure is never a bare
-            # "claude exited 1:" black box.
+            # provider-exited message.
             combined = "\n".join(t for t in (stderr_text, stdout_text) if t)
             maybe_raise_overload(
                 RuntimeError(combined),

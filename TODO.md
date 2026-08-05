@@ -226,16 +226,15 @@ the construct is unambiguously broken.
   fresh process (collapses the warmth advantage over CLI)? Settle by
   measurement before committing either way.
 
-- [ ] **(36) `transport: cli` provider expansion** — cheap future
-  wins once item 35's `provider: anthropic` (`claude -p`) lands.
+- [~] **(36) `transport: cli` provider expansion** — Codex support shipped;
+  Gemini and custom CLI providers remain open. The initial Codex mapping is
+  `provider: openai` → `codex exec`.
   Each is roughly a factory row + an argv builder + minimal tests;
   most cost is in pinning the CLI's actual print-mode syntax and
   authenticating against it. None block on schema changes.
 
-  - **`provider: openai`** → `codex exec` (or whatever the current
-    print-mode flag is — pin at impl time against the installed
-    Codex CLI). Different argv shape than `claude -p`; needs an
-    argv-builder per provider.
+  - **`provider: openai`** → `codex exec` is shipped. The current
+    invocation is pinned in the factory and covered by unit tests.
   - **`provider: google`** → `gemini -p` (tentative; gemini-cli's
     print-mode surface is still maturing as of 2026-05). Add
     `"google"` to the `provider` literal at the same time.
@@ -750,10 +749,11 @@ file. This is the builder-facing view.
 ### B1 — No direct-API backend
 
 Planning docs claim it "landed," but the repo stripped Anthropic /
-OpenAI / DeepSeek backends in the 0.2.x transport rework — only Claude
-Code via `acp` / `cli` remains; `transport: api` is roadmap. Fine for
-the builder today (already direct-CLI), but the "use the direct SDK to
-dodge ACP process leaks" plan is **not currently available**.
+OpenAI / DeepSeek direct-API backends in the 0.2.x transport rework —
+local agent CLIs via `acp` / `cli` remain, with Codex and Claude supported;
+`transport: api` is roadmap. Fine for the builder today (already
+direct-CLI), but the "use the direct SDK to dodge ACP process leaks" plan
+is **not currently available**.
 
 ### ✅ B2 — `--resume` skips completed nodes — SHIPPED 0.6.0
 

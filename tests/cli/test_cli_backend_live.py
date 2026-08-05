@@ -1,8 +1,8 @@
 """Full E2E: CLI transport generates jokes -> deterministic gate
 validates JSON schema -> CLI transport selects best joke. Exercises
-the entire pipeline with real ``claude -p`` subprocess execution.
+the entire pipeline with real ``codex exec`` subprocess execution.
 
-Lives under ``tests/cli/`` because it requires ``claude`` on PATH;
+Lives under ``tests/cli/`` because it requires ``codex`` on PATH;
 the collection-time pre-flight in ``tests/conftest.py`` and the
 ``--ignore=tests/cli`` exclusion both apply.
 
@@ -16,7 +16,7 @@ import json
 import pytest
 
 from sqrlly.compile.graph import build_workflow_graph
-from sqrlly.runtime.executor.backends.cli import CLIBackend
+from sqrlly.runtime.executor.backends.factory import create_backend_from_preset
 from sqrlly.runtime.executor.dispatch import DispatchExecutor
 from sqrlly.runtime.state import make_initial_state
 
@@ -77,13 +77,13 @@ class TestJokeWorkflowCLIIntegration:
             ],
             presets={
                 "default": {
-                    "transport": "cli", "provider": "anthropic",
-                    "model": "sonnet", "default": True,
+                    "transport": "cli", "provider": "openai",
+                    "model": "gpt-5.6-luna", "default": True,
                 },
             },
         )
 
-        backend = CLIBackend()
+        backend = create_backend_from_preset(config.settings.presets["default"])
         executor = DispatchExecutor(
             workdir=str(tmp_path),
             prompt_backends={"default": backend},

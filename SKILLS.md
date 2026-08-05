@@ -17,11 +17,13 @@ Install the CLI: `pipx install sqrlly` (or `uv tool install sqrlly`).
 Use the `[acp]` extra (`pipx install "sqrlly[acp]"`) only for
 `transport: acp`.
 
-LLM nodes drive Claude Code, so the chosen backend must be installed
+LLM nodes drive a local agent CLI, so the chosen backend must be installed
 and authenticated — auth is per-CLI, not sqrlly's job:
 
-- `transport: cli` — the `claude` binary on PATH, logged in once with
-  `claude /login`. No extra Python deps.
+- `transport: cli`, `provider: openai` (scaffolded default) — the
+  authenticated `codex` binary on PATH. No extra Python deps.
+- `transport: cli`, `provider: anthropic` — the authenticated `claude`
+  binary on PATH. No extra Python deps.
 - `transport: acp` — `npm i -g @zed-industries/claude-code-acp`, plus
   the same `claude` login.
 
@@ -48,30 +50,34 @@ write a YAML file with `name`, `version`, `nodes`, and `settings`.
    template reads an upstream node's output as `{{other_id}}` (full
    Jinja2 — `{% if %}`, `{% for %}`, filters all work).
 4. **Pick a backend** under `settings.presets` — one named `LlmPreset`
-   marked `default: true`. Two transports drive Claude Code:
-   `transport: acp` (warm adapter, streaming) or `transport: cli`
-   (subprocess-per-call, real asyncio parallelism — pair with fan-out).
+   marked `default: true`. The default is subprocess-per-call Codex;
+   Claude remains available through CLI or its warm ACP adapter.
    ```yaml
    settings:
      presets:
        default:
-         transport: cli        # or acp
-         provider: anthropic   # only provider currently supported
-         model: sonnet
+         transport: cli
+         provider: openai      # Codex CLI; anthropic selects Claude
+         model: gpt-5.6-luna
          default: true
-         # Tool use (optional). Same shape on both transports:
-         permission_mode: acceptEdits   # default | acceptEdits | bypassPermissions | plan
-         allowed_tools: ["Edit", "Bash(git *)"]
-         # disallowed_tools: ["WebFetch"]
-         # cli_args: ["--add-dir", "."]   # cli-only escape hatch
+         # Codex options go in cli_args; Claude-only permission fields
+         # belong on a provider: anthropic preset.
+         cli_args: ["--ephemeral"]      # cli-only escape hatch
    ```
+   With no global Codex `model_reasoning_effort` override, the installed
+   Codex catalog currently defaults `gpt-5.6-luna` to `medium` effort.
+   sqrlly leaves that choice to Codex; Claude remains available through an
+   explicit `provider: anthropic` preset.
+   `transport` defaults to `cli` and `provider` defaults to `openai`, so a
+   preset needs only `model` for Codex. `provider: anthropic` selects Claude
+   and defaults to its CLI; `transport: acp` requires that provider explicitly.
    There is no environment auto-detect. A workflow whose nodes are all
    script / binary / subgraph can omit `settings.presets` (or set it to
    `{}`); any **LLM (prompt) node** needs at least one preset with
    `default: true`, or dispatch fails at run time.
 
-   **Tool use.** `permission_mode` is the portable knob; on `cli` it maps
-   to `claude`'s `--permission-mode`, on `acp` it gates by tool *kind*
+   **Tool use.** Claude CLI presets may use `permission_mode`,
+   `allowed_tools`, and `disallowed_tools`; ACP gates by tool *kind*
    (`bypassPermissions` = all, `acceptEdits` = edits+reads not execute,
    `default`/`plan` = read-only). `allowed_tools` / `disallowed_tools`
    are exact claude tool names on `cli` and best-effort (kind/title

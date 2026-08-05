@@ -24,25 +24,23 @@ uv add sqrlly                   # CLI backend    (or: pip install sqrlly)
 uv add "sqrlly[acp]"            # + ACP backend  (or: pip install "sqrlly[acp]")
 ```
 
-LLM dispatch goes through Claude Code via one of two transports:
+LLM dispatch uses a local authenticated agent CLI. Codex is the default:
 
 - `transport: acp` — the `claude-code-acp` adapter (warm process,
   streaming chunks). Requires `npm i -g @zed-industries/claude-code-acp`.
-- `transport: cli` — `claude -p` subprocess-per-call (no warm
-  process, real `asyncio` parallelism). Requires `claude` on PATH.
+- `transport: cli`, `provider: openai` — `codex exec` subprocess-per-call
+  (no warm process, real `asyncio` parallelism). Requires `codex` on PATH.
+- `transport: cli`, `provider: anthropic` — the opt-in `claude -p`
+  subprocess backend. Requires `claude` on PATH.
 
 The direct-API backends (Anthropic / OpenAI / DeepSeek / custom
 OpenAI-compatible endpoints) were removed in 0.2.x while the project
-consolidates around Claude Code; restoring `transport: api` remains
-on the roadmap, and additional `transport: cli` providers (codex /
-gemini) are tracked in TODO 36.
+consolidates around local agent CLIs; restoring `transport: api` remains
+on the roadmap.
 
 **Auth is per-CLI, not sqrlly's job.** Each CLI you point sqrlly at
-handles its own credentials independently — log in once with
-`claude /login` and sqrlly's runs (acp OR cli) use that session.
-Future cli providers will follow the same pattern (`codex auth`,
-`gemini auth login`, etc.). sqrlly never reads or stores API keys
-for these tools.
+handles its own credentials independently. Authenticate Codex or Claude
+with that CLI's normal login flow; sqrlly never reads or stores API keys.
 
 Python 3.11+. From source: `git clone` then `uv sync`.
 
@@ -89,8 +87,8 @@ settings:
   presets:
     default:
       transport: cli
-      provider: anthropic
-      model: sonnet
+      provider: openai
+      model: gpt-5.6-luna
       default: true
 ```
 
@@ -119,26 +117,36 @@ LLM and script execution is configured by **presets** under `settings.presets` �
 settings:
   presets:
     default:
-      transport: cli       # or acp — see below
-      provider: anthropic
-      model: sonnet
+      transport: cli
+      provider: openai     # Codex CLI
+      model: gpt-5.6-luna
       default: true
 ```
+
+When no global Codex `model_reasoning_effort` override is configured, the
+installed Codex model catalog currently gives `gpt-5.6-luna` its `medium`
+default effort. sqrlly does not set that effort in workflow YAML. Claude
+remains available as an explicit `provider: anthropic` preset.
 
 Pick a transport by what shape suits the workflow:
 
 | Transport | Invocation | Best for |
 |---|---|---|
 | `acp` | `claude-code-acp` adapter (warm process, streaming) | Workflows that want streamed chunks or MCP-via-session. |
-| `cli` | `claude -p` subprocess per call (no warm state) | Fan-out workflows — real `asyncio` parallelism per call, simpler lifecycle. |
+| `cli` | `codex exec ... -` for `provider: openai`; `claude -p` for `provider: anthropic` | Fan-out workflows — real `asyncio` parallelism per call, simpler lifecycle. |
 
-Both pair with `provider: anthropic` today and both authenticate via the local `claude` CLI session — `claude /login` once and either transport runs against it. Multiple presets can coexist in a single workflow; only one is `default: true`, others get named via `params.preset` per node.
+`transport` defaults to `cli` and `provider` defaults to `openai`, so a
+preset needs only `model` for the default Codex CLI. Use
+`provider: anthropic` for Claude; it defaults to the Claude CLI when
+`transport` is omitted. `transport: acp` requires an explicit
+`provider: anthropic`. Multiple presets can coexist in one workflow; only
+one is `default: true`, and nodes select alternatives with `params.preset`.
 
 **Declare presets explicitly.** sqrlly doesn't probe your environment
 or synthesize defaults. Empty `settings.presets` is valid for
 script-only workflows; any LLM-dispatching node will fail at its call
 site with a clear "no prompt backend wired" error. If a backend's
-toolchain is missing at run time (`npx` for acp, `claude` for cli),
+toolchain is missing at run time (`npx` for acp, or `codex`/`claude` for cli),
 the backend surfaces a clear error at the first prompt call — never
 as a pre-flight check (a pre-flight would forbid workflows that
 install the toolchain in an earlier script node).
@@ -165,7 +173,7 @@ Full reference (including `CommandPreset` for custom script interpreters): [SCHE
 - `--entry <node>` — cold-start at `<node>`: run it and everything downstream WITHOUT a checkpoint (the upstream artifacts must already be on disk). Mutually exclusive with `--resume` / `--resume-from` / `--rerun-all`.
 - `--log <path>` — write a JSONL event log.
 - `--quiet / -q` — suppress the live terminal renderer (use in CI / piped runs).
-- `--safe-mode / --no-safe-mode` — run Claude with operator customizations (output styles, CLAUDE.md, skills, MCP, hooks) disabled, for clean reproducible output (cli transport). Overrides `settings.safe_mode`; absent, the setting applies.
+- `--safe-mode / --no-safe-mode` — run Anthropic's CLI provider with Claude operator customizations (output styles, CLAUDE.md, skills, MCP, hooks) disabled. It has no effect on Codex or ACP. Overrides `settings.safe_mode`; absent, the setting applies.
 
 `run` shows a live per-node status grid + a clock-driven aliveness spinner when stdout is a TTY. Non-TTY runs (piped, redirected, CI) fall through to the plain summary output automatically. Workflow events only — no LLM-token streaming. On completion `run` prints a `where to find things` summary — the produced output files, the log path (or how to capture one with `--log`), and run artifacts (checkpoint DB + worktree pool); `--quiet` suppresses it.
 

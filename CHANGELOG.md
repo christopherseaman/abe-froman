@@ -3,7 +3,21 @@
 All notable changes to sqrlly are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.9.4] - 2026-08-05
+
+### Added
+
+- Codex CLI support via `transport: cli` + `provider: openai`, invoking
+  `codex exec` with prompts on stdin. New scaffolds and bundled LLM examples
+  default to Codex; Claude CLI/ACP remains available explicitly through
+  `provider: anthropic`. Documented that the installed Codex catalog defaults
+  `gpt-5.6-luna` to `medium` effort when no global effort override is set.
+
+### Changed
+
+- LLM presets now default omitted `transport` to `cli` and omitted `provider`
+  to `openai` (Codex). Explicit `provider: anthropic` still selects Claude,
+  and `transport: acp` still requires that provider explicitly.
 
 ## [0.9.3] - 2026-07-08
 

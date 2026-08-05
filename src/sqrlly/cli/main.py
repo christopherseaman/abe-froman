@@ -637,9 +637,9 @@ async def _execute_workflow(
     # backend, so its optional dependency (the `acp` package) is only
     # imported if a node actually dispatches to it.
     # `--safe-mode`/`--no-safe-mode` overrides `settings.safe_mode`; the
-    # resolved value is threaded into every cli backend (appends
-    # `--safe-mode` to its argv). Applies to all presets including subgraph
-    # ones — it's a per-claude-invocation isolation flag for the whole run.
+    # resolved value is threaded into every CLI builder. The factory applies
+    # the Claude-only flag only to Anthropic CLI presets, including presets
+    # inherited by subgraphs.
     run_safe_mode = _effective_safe_mode(safe_mode, config.settings)
     prompt_backend_builders = {
         name: functools.partial(
@@ -742,10 +742,10 @@ async def _execute_workflow(
 )
 @click.option(
     "--safe-mode/--no-safe-mode", "safe_mode", default=None,
-    help="Run Claude with operator customizations (output styles, CLAUDE.md, "
-         "skills, MCP, hooks) disabled — clean, reproducible output, cli "
-         "transport only. Overrides settings.safe_mode; absent flag uses the "
-         "setting.",
+    help="Run Anthropic's CLI provider with Claude operator customizations "
+         "(output styles, CLAUDE.md, skills, MCP, hooks) disabled. Has no "
+         "effect on Codex or ACP. Overrides settings.safe_mode; absent flag "
+         "uses the setting.",
 )
 def run(
     config_file: str,

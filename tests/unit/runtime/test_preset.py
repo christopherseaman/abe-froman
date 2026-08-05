@@ -141,6 +141,26 @@ class TestCreateBackendFromPreset:
         backend = create_backend_from_preset(preset)
         assert isinstance(backend, CLIBackend)
 
+    def test_codex_cli_uses_noninteractive_stdin_invocation(self):
+        from sqrlly.runtime.executor.backends.cli import CLIBackend
+        preset = _preset(
+            transport="cli", provider="openai", model="gpt-5.6-luna",
+        )
+        backend = create_backend_from_preset(preset)
+        assert isinstance(backend, CLIBackend)
+        assert backend._argv_prefix == (
+            "codex", "exec", "--skip-git-repo-check",
+        )
+        assert backend._prompt_arg == "-"
+
+    def test_omitted_transport_and_provider_use_codex_cli(self):
+        from sqrlly.runtime.executor.backends.cli import CLIBackend
+        backend = create_backend_from_preset(LlmPreset(model="gpt-5.6-luna"))
+        assert isinstance(backend, CLIBackend)
+        assert backend._argv_prefix == (
+            "codex", "exec", "--skip-git-repo-check",
+        )
+
     def test_cli_threads_tool_permissions(self):
         """Factory passes the preset's tool fields into the cli backend."""
         preset = LlmPreset(

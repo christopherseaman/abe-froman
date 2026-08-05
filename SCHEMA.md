@@ -40,7 +40,7 @@ Unknown keys in `settings:` are rejected with a `ValidationError` — no silent 
 |---|---|---|---|
 | `max_retries` | `int` | `3` | Default retry budget when an evaluation fails. |
 | `backend_max_retries` | `int` | `0` | Retries of the SAME backend dispatch on a non-overload backend error (e.g. `claude exited 1` — a transient blip), with `retry_backoff` between attempts. Distinct from `max_retries` (the gate/evaluation budget). `0` = one attempt, terminal. Overload stays on the fixed opus→sonnet→haiku downgrade path and is not counted here. |
-| `safe_mode` | `bool` | `false` | Run Claude with `--safe-mode` (cli transport only): operator customizations — output styles, CLAUDE.md, skills, MCP, hooks — are disabled, so generation stays reproducible and free of e.g. an "explanatory" output style prepending commentary into node output. Default off — sqrlly never overrides operator settings unless asked. The `--safe-mode` / `--no-safe-mode` CLI flag overrides this per run. |
+| `safe_mode` | `bool` | `false` | Run Claude with `--safe-mode` (`transport: cli`, `provider: anthropic` only): operator customizations — output styles, CLAUDE.md, skills, MCP, hooks — are disabled. It has no effect on Codex or ACP. The `--safe-mode` / `--no-safe-mode` CLI flag overrides this per run. |
 | `default_timeout` | `float \| None` | `None` | Per-node timeout (seconds); `None` = no timeout. |
 | `preamble_file` | `str \| None` | `None` | Prepended to every prompt before Jinja rendering. A missing file is a hard error. |
 | `retry_backoff` | `list[float]` | `[]` | `asyncio.sleep` seconds before each retry; clamps to the last value past the list length. |
@@ -106,21 +106,20 @@ defaults to `llm`, so pre-`CommandPreset` YAML still parses).
 | Field | Type | Default | Effect |
 |---|---|---|---|
 | `kind` | `"llm"` | `"llm"` | Discriminator. |
-| `transport` | `"acp" \| "cli"` | required | Invocation shape — see comparison below. |
-| `provider` | `"anthropic"` | required | Vendor / model family (only option for both transports today). |
+| `transport` | `"acp" \| "cli"` | `"cli"` | Invocation shape — see comparison below. |
+| `provider` | `"openai" \| "anthropic"` | `"openai"` | CLI implementation/model family. `openai` maps to Codex CLI; `anthropic` maps to Claude. |
 | `model` | `str` | required | Model id. |
 | `default` | `bool` | `false` | Exactly one `LlmPreset` must be `true`. |
-| `permission_mode` | `"default" \| "acceptEdits" \| "bypassPermissions" \| "plan" \| None` | `None` | Tool-use policy. `cli` → `--permission-mode`; `acp` → kind-gate in the permission callback (`bypassPermissions`=all, `acceptEdits`=edits+reads not execute, `default`/`plan`=read-only). |
-| `allowed_tools` | `list[str] \| None` | `None` | Tools to permit. `cli` → `--allowedTools` (exact claude names); `acp` → best-effort match vs tool kind/title. |
-| `disallowed_tools` | `list[str] \| None` | `None` | Tools to deny. `cli` → `--disallowedTools`; `acp` → best-effort denylist by kind/title. |
+| `permission_mode` | `"default" \| "acceptEdits" \| "bypassPermissions" \| "plan" \| None` | `None` | Claude CLI tool-use policy via `--permission-mode`; ACP uses a kind-gate in its permission callback. Rejected for Codex. |
+| `allowed_tools` | `list[str] \| None` | `None` | Claude CLI tools via `--allowedTools`; ACP best-effort match vs tool kind/title. Rejected for Codex. |
+| `disallowed_tools` | `list[str] \| None` | `None` | Claude CLI tools via `--disallowedTools`; ACP best-effort denylist by kind/title. Rejected for Codex. |
 | `env` | `dict[str, str]` | `{}` | Environment overlay for the spawned backend process (cli + acp), e.g. `CLAUDE_CODE_EFFORT_LEVEL`. Overlaid on the inherited environment at spawn; never replaces it. Per-node tuning is done by selecting a preset variant via `params.preset`. |
-| `cli_args` | `list[str] \| None` | `None` | **cli only** — extra args appended verbatim to the `claude` argv (escape hatch). Ignored by `acp`. |
+| `cli_args` | `list[str] \| None` | `None` | **cli only** — extra args appended verbatim before the stdin prompt marker (escape hatch). Ignored by `acp`. |
 
-> Tool-use defaults (all unset): `cli` runs bare `claude -p` (no tools);
-> `acp` allows all tool calls (its historical behavior). The shape is
-> unified across transports; `permission_mode` is the portable knob,
-> the tool lists are exact on `cli` and best-effort on `acp` (which
-> gates by tool *kind*, not claude tool names).
+> Tool-use defaults (all unset): CLI providers receive no extra tool flags;
+> `acp` allows all tool calls (its historical behavior). Claude-only
+> permission fields are rejected for the Codex provider; use `cli_args` for
+> documented Codex options.
 
 Granting `Task` in `allowed_tools` (with a `permission_mode` that permits
 it) enables an in-node *managed-team* pattern — Claude inside the node
@@ -128,17 +127,19 @@ spawns and supervises sub-agent members itself. See SKILLS.md for the full
 coordinator pattern and its caveats (the members are sub-agents internal to
 one sqrlly node, not isolated sqrlly nodes).
 
-Both supported transports drive Claude Code; the choice is invocation
-shape, not vendor:
+The supported transport/provider combinations are:
 
 | `transport` | Implementation | Characteristics |
 |---|---|---|
 | `acp` | `claude-code-acp` adapter via the `acp` SDK; one warm process per preset, sessions reused across `send_prompt`. | Streaming chunks, MCP-via-session, lower per-call overhead once warm. |
-| `cli` | `claude -p --model <model>` subprocess per `send_prompt`; stdin carries the prompt, stdout is the response. | No warm state, real `asyncio` parallelism per call (each subprocess is independent), simpler lifecycle (`close()` is a no-op). |
+| `cli` | `codex exec --skip-git-repo-check --model <model> -` for `provider: openai`, or `claude -p --model <model>` for `provider: anthropic`; stdin carries the prompt. | No warm state, real `asyncio` parallelism per call (each subprocess is independent), simpler lifecycle (`close()` is a no-op). |
 
-Both currently pair with `provider: anthropic` because both run
-Claude Code. Additional `cli` providers (codex / gemini / custom) are
-tracked as TODO 36. The api transport — direct calls to
+Omitting `transport` selects `cli`; omitting `provider` selects `openai`.
+Therefore a Codex preset needs only `model`. `provider: anthropic` without
+an explicit transport selects the Claude CLI, while ACP pairs only with
+`provider: anthropic`. Codex does not accept the
+Claude-specific `permission_mode`, `allowed_tools`, or `disallowed_tools`
+fields; use `cli_args` for documented Codex options. The api transport — direct calls to
 Anthropic / OpenAI / DeepSeek / custom OpenAI-compatible endpoints —
 was removed in 0.2.x; re-introduction remains on the roadmap.
 
@@ -179,11 +180,10 @@ as the default at run time. The named preset must exist in
 
 ### Secrets
 
-Both transports inherit credentials from the local `claude` CLI
-session — no API keys are required for `transport: acp` or
-`transport: cli`. **Auth is per LLM CLI, not sqrlly's job**: log in
-to each tool with its own command (`claude /login`, future
-`codex auth`, etc.). Workflow-defined values reach sqrlly through
+The selected local CLI owns authentication — no API keys are required by
+sqrlly for `transport: acp` or `transport: cli`. **Auth is per LLM CLI,
+not sqrlly's job**: authenticate each tool with its own normal login flow
+(`claude /login` or `codex login`). Workflow-defined values reach sqrlly through
 `settings.url_headers` `${VAR}` expansion: process env first, then a
 project-local `.env` file (discovered by walking up from CWD).
 sqrlly never reads machine-global keystores. Script nodes needing

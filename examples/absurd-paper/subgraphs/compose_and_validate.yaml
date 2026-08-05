@@ -52,8 +52,8 @@ settings:
   presets:
     default:
       transport: cli
-      provider: anthropic
-      model: sonnet
+      provider: openai
+      model: gpt-5.6-luna
       default: true
     uv_script:
       kind: command

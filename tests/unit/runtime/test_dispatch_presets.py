@@ -211,6 +211,18 @@ class TestSafeMode:
         # acp built fine; --safe-mode is cli-only, never injected.
         assert isinstance(be, ACPBackend)
 
+    def test_safe_mode_does_not_add_claude_flag_to_codex(self):
+        from sqrlly.runtime.executor.backends.factory import (
+            create_backend_from_preset,
+        )
+        be = create_backend_from_preset(
+            LlmPreset(
+                transport="cli", provider="openai", model="gpt-5.6-luna",
+            ),
+            safe_mode=True,
+        )
+        assert "--safe-mode" not in (be._cli_args or [])
+
 
 class TestFactoryThreadsAcpEnv:
     """ACPBackend construction is offline-safe (spawn deferred to first

@@ -307,47 +307,56 @@ class LlmPreset(BaseModel):
     The ``--preset`` CLI flag overrides at run time. Resolution order:
     CLI flag > ``params.preset:`` > the preset marked ``default: true``.
 
-    Two transports are supported today, both driving Claude Code:
+    Two transports are supported today:
 
     - ``transport: acp`` — the ``claude-code-acp`` adapter (warm
       process, streaming chunks, MCP-capable).
-    - ``transport: cli`` — subprocess-per-call ``claude -p`` (no warm
-      state, real ``asyncio`` parallelism per call).
+    - ``transport: cli`` — subprocess-per-call Codex/OpenAI (the default) or
+      Claude (no warm state, real ``asyncio`` parallelism per call).
 
-    Both currently pair with ``provider: anthropic`` because both
-    invoke Claude Code under the hood; the transport choice determines
-    invocation shape, not vendor. The api transport (direct Anthropic /
-    OpenAI / DeepSeek) was removed in the 0.2 strip experiment.
-    Additional ``cli`` providers (codex / gemini / custom) are
-    on the roadmap (TODO 36); restoring a transport means
-    extending these literals AND adding a factory builder row.
+    Both fields have Codex-friendly defaults: omitted ``transport`` means
+    ``cli`` and omitted ``provider`` means ``openai``. ACP therefore requires
+    an explicit ``provider: anthropic``; ``provider: anthropic`` without a
+    transport selects the Claude CLI. The api transport was removed in 0.2.x.
     """
     model_config = ConfigDict(extra="forbid")
 
     kind: Literal["llm"] = "llm"
-    transport: Literal["acp", "cli"]
-    provider: Literal["anthropic"]
+    transport: Literal["acp", "cli"] = "cli"
+    provider: Literal["anthropic", "openai"] = "openai"
     model: str
     default: bool = False
 
-    # Tool-use permissions. Unified shape across transports, but the
-    # fidelity differs: `cli` maps to exact `claude` flags; `acp` gates
-    # by tool *kind* (read/edit/execute/…) in its permission callback,
-    # so `permission_mode` is the portable knob and the tool lists are
-    # exact on cli / best-effort (kind+title match) on acp. All unset →
+    # Tool-use permissions. Claude CLI maps these fields to its exact flags;
+    # ACP gates by tool *kind* (read/edit/execute/…) in its permission
+    # callback. Codex currently accepts its own options through cli_args,
+    # so Claude-only fields are rejected for provider: openai. All unset →
     # today's behavior (cli: no tools; acp: allow-all).
     permission_mode: Literal[
         "default", "acceptEdits", "bypassPermissions", "plan"
     ] | None = None
     allowed_tools: list[str] | None = None
     disallowed_tools: list[str] | None = None
-    # Escape hatch: extra args appended verbatim to the `claude` argv
-    # (cli only) for anything the fields above don't cover.
+    # Escape hatch: extra args appended verbatim to the selected CLI's argv
+    # (cli only) for anything the provider-specific fields don't cover.
     cli_args: list[str] | None = None
     # Per-preset environment overlay for the spawned backend process
     # (e.g. CLAUDE_CODE_EFFORT_LEVEL). Overlaid on os.environ at spawn —
     # never replaces it. Mirrors SubprocessParams.env for script nodes.
     env: dict[str, str] = {}
+
+    @model_validator(mode="after")
+    def _provider_matches_transport(self) -> Self:
+        if self.transport == "acp" and self.provider != "anthropic":
+            raise ValueError("transport: acp requires provider: anthropic")
+        if self.provider == "openai" and any(
+            (self.permission_mode, self.allowed_tools, self.disallowed_tools)
+        ):
+            raise ValueError(
+                "permission_mode and tool allow/deny lists are only supported "
+                "by provider: anthropic"
+            )
+        return self
 
 
 class CommandPreset(BaseModel):

@@ -29,16 +29,11 @@ nodes:
       url: "examples/jokes/select.md"
 
 settings:
-  # Run cli calls as `claude --safe-mode` so an operator's Claude
-  # customizations (output styles, CLAUDE.md, skills, MCP, hooks) don't
-  # leak into the generated jokes. Default-off feature; opted in here so
-  # the bundled example is reproducible out of the box.
-  safe_mode: true
   presets:
     cli:
       transport: cli
-      provider: anthropic
-      model: "sonnet"
+      provider: openai
+      model: "gpt-5.6-luna"
       default: true
     acp:
       transport: acp
